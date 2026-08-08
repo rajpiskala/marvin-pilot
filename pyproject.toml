@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "amazing-marvin-pilot"
+version = "0.1.0.dev0"
+description = "Human-reviewed, reversible AI task changes for Amazing Marvin"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Marvin Pilot contributors" }]
+keywords = [
+  "amazing-marvin",
+  "mcp",
+  "model-context-protocol",
+  "human-in-the-loop",
+  "task-management",
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
+dependencies = [
+  "httpx>=0.27",
+  "keyring>=25",
+  "platformdirs>=4.3",
+  "pydantic>=2.10",
+  "rich>=13.9",
+  "typer>=0.15",
+]
+
+[project.optional-dependencies]
+dev = [
+  "hypothesis>=6.120",
+  "pytest>=8.3",
+  "pytest-cov>=6",
+  "respx>=0.22",
+  "ruff>=0.9",
+]
+
+[project.scripts]
+marvin-pilot = "marvin_pilot.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/marvin_pilot"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers -ra"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["marvin_pilot"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 85
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
