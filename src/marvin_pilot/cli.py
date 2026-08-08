@@ -159,6 +159,29 @@ def _history_store(config: AppConfig) -> HistoryStore:
     return HistoryStore(effective_history_dir(config))
 
 
+def _resolve_revert_source(store: HistoryStore, path: Path):
+    """Resolve either an apply receipt or its exact original plan to one receipt."""
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PlanSyntaxError(f"could not read revert input {path}: {exc}") from exc
+    if isinstance(raw, dict) and "receiptSchemaVersion" in raw:
+        return path, store.load(path)
+    plan, _source = load_plan(path)
+    matches = store.find_applied_plan(plan_id=plan.planId, digest=plan_digest(plan))
+    if not matches:
+        raise PlanSemanticError(
+            "no applied or partial receipt exactly matches this plan ID and digest"
+        )
+    if len(matches) > 1:
+        paths = ", ".join(str(match[0]) for match in matches)
+        raise PlanSemanticError(
+            f"multiple apply receipts match this plan; use one directly: {paths}"
+        )
+    return matches[0]
+
+
 @app.command("validate")
 def validate_command(
     plan_path: Annotated[str, typer.Argument(help="Plan JSON path, or - for stdin.")],
@@ -272,7 +295,10 @@ def apply_command(
 
 @app.command("revert")
 def revert_command(
-    receipt_path: Annotated[Path, typer.Argument(help="Applied receipt JSON path.")],
+    receipt_path: Annotated[
+        Path,
+        typer.Argument(help="Applied receipt or its exact original plan JSON path."),
+    ],
     only: Annotated[
         list[str] | None,
         typer.Option(
@@ -293,7 +319,7 @@ def revert_command(
     config = _load_config_or_fail()
     history = _history_store(config)
     try:
-        source = history.load(receipt_path)
+        resolved_receipt_path, source = _resolve_revert_source(history, receipt_path)
     except MarvinPilotError as exc:
         _fail(exc)
     selected_count = (
@@ -330,7 +356,7 @@ def revert_command(
     try:
         result = execute_revert(
             source,
-            receipt_path,
+            resolved_receipt_path,
             only or [],
             client=client,
             history=history,

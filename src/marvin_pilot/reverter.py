@@ -122,6 +122,24 @@ def _compile_inverse(
     )
 
 
+def _snapshot_value(snapshot: dict[str, Any]) -> Any:
+    return snapshot.get("value") if snapshot["present"] else "<absent>"
+
+
+def _conflict_details(source: ReceiptOperationV1, document: dict[str, Any]) -> str:
+    details = []
+    for field, applied in source.afterFields.items():
+        current = field_snapshot(document, field)
+        if current == applied:
+            continue
+        original = source.beforeFields.get(field, {"present": False})
+        details.append(
+            f"{field}: original={_snapshot_value(original)!r}, "
+            f"applied={_snapshot_value(applied)!r}, current={_snapshot_value(current)!r}"
+        )
+    return "; ".join(details)
+
+
 def _selected_source_operations(
     source: ReceiptV1,
     only: Sequence[str],
@@ -209,14 +227,9 @@ def preflight_revert(
                 f"operation {source_operation.operationId!r} target is already in Trash"
             )
         if not _snapshot_matches(live, source_operation.afterFields):
-            changed = [
-                field
-                for field, snapshot in source_operation.afterFields.items()
-                if field_snapshot(live, field) != snapshot
-            ]
             raise LivePreconditionError(
                 f"operation {source_operation.operationId!r} cannot be reverted because "
-                f"applied field(s) changed: {', '.join(changed)}"
+                f"applied field(s) changed: {_conflict_details(source_operation, live)}"
             )
         compiled = _compile_inverse(source_operation, live, now_ms=now_ms)
         checked.append(
@@ -250,7 +263,7 @@ def recheck_revert_operation(
     if not _snapshot_matches(current, checked.source_operation.afterFields):
         raise LivePreconditionError(
             f"operation {checked.source_operation.operationId!r} applied fields changed after "
-            "preflight"
+            f"preflight: {_conflict_details(checked.source_operation, current)}"
         )
     if strict_concurrency:
         current_revision = _revision_snapshot(current)

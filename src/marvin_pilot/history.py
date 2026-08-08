@@ -274,6 +274,26 @@ class HistoryStore:
                 return path, receipt
         return None
 
+    def find_applied_plan(
+        self,
+        *,
+        plan_id: str,
+        digest: str,
+    ) -> list[tuple[Path, ReceiptV1]]:
+        """Find apply receipts exactly matching an original plan convenience argument."""
+
+        matches = []
+        for path in self.list_paths():
+            receipt = self.load(path)
+            if (
+                receipt.kind == "apply"
+                and receipt.status in {"applied", "partial"}
+                and receipt.planId == plan_id
+                and receipt.planDigest == digest
+            ):
+                matches.append((path, receipt))
+        return matches
+
     def find_revert_claims(
         self,
         *,

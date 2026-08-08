@@ -343,7 +343,7 @@ def test_apply_and_history_commands_work_end_to_end_with_mocked_marvin(
         app,
         [
             "revert",
-            str(receipt_path),
+            str(path),
             "--only",
             "reschedule-wash-dishes",
             "--full-access-key-file",
@@ -357,6 +357,21 @@ def test_apply_and_history_commands_work_end_to_end_with_mocked_marvin(
     assert client.closed
     assert received_key_files == [key_file, key_file]
     assert "revert  reverted" in runner.invoke(app, ["history", "list"]).stdout
+
+
+def test_revert_plan_lookup_requires_an_exact_apply_receipt(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan_path = isolated_app_dirs / "never-applied.json"
+    write_plan(plan_path, one_operation_plan())
+    monkeypatch.setattr(
+        cli_module,
+        "_client_from_config",
+        lambda *_args: pytest.fail("missing receipt must fail before credentials"),
+    )
+    result = runner.invoke(app, ["revert", str(plan_path)])
+    assert result.exit_code == 3
+    assert "no applied or partial receipt exactly matches" in result.stderr
 
 
 def test_apply_decline_has_exit_6_and_no_receipt(

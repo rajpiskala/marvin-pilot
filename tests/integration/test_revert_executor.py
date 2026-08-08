@@ -231,8 +231,11 @@ def test_touched_field_conflict_fails_whole_preflight_before_any_write(
     client.mutations.clear()
     client.documents["task-dinner-id"]["title"] = "Edited after apply"
 
-    with pytest.raises(LivePreconditionError, match=r"applied field.*changed"):
+    with pytest.raises(LivePreconditionError, match=r"applied field.*changed") as error:
         revert_fixture(tmp_path, client, source, clock)
+    assert "original='Eat dinner with Jacob'" in str(error.value)
+    assert "applied='5:00pm Get deep dish pizza" in str(error.value)
+    assert "current='Edited after apply'" in str(error.value)
     assert client.mutations == []
     assert not list(tmp_path.glob("pending-revert-*.json"))
 
