@@ -23,6 +23,8 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.test-cache/
+.test-tmp/
 .mypy_cache/
 .ruff_cache/
 .hypothesis/

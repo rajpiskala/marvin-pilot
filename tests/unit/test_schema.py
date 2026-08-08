@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+import json
+
+from marvin_pilot.examples import EXAMPLE_PLAN
+from marvin_pilot.plan_io import parse_plan_bytes
+from marvin_pilot.schema import plan_schema_json
+
+
+def test_generated_schema_is_json_and_closed() -> None:
+    schema = json.loads(plan_schema_json())
+    assert schema["title"] == "Marvin Pilot change plan v1"
+    assert schema["additionalProperties"] is False
+    assert all(
+        definition.get("additionalProperties") is False for definition in schema["$defs"].values()
+    )
+
+
+def test_embedded_example_stays_valid() -> None:
+    plan = parse_plan_bytes(json.dumps(EXAMPLE_PLAN).encode())
+    assert [operation.action for operation in plan.operations] == [
+        "update",
+        "update",
+        "create",
+        "trash",
+    ]

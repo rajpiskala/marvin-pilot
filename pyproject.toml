@@ -51,7 +51,8 @@ marvin-pilot = "marvin_pilot.cli:main"
 packages = ["src/marvin_pilot"]
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers -ra"
+addopts = "--strict-config --strict-markers -ra --basetemp=.test-tmp"
+cache_dir = ".test-cache"
 testpaths = ["tests"]
 
 [tool.coverage.run]
