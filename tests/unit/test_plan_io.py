@@ -217,6 +217,14 @@ def test_update_must_include_a_field(example_plan_dict: dict) -> None:
         parse_plan_bytes(encode(example_plan_dict))
 
 
+def test_update_cannot_clear_or_expect_null_title(example_plan_dict: dict) -> None:
+    operation = example_plan_dict["operations"][0]
+    operation["before"] = {"title": "Wash the dishes"}
+    operation["after"] = {"title": None}
+    with pytest.raises(PlanSemanticError, match="null title"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
 def test_update_must_change_a_value(example_plan_dict: dict) -> None:
     example_plan_dict["operations"][0]["after"] = dict(example_plan_dict["operations"][0]["before"])
     with pytest.raises(PlanSemanticError, match="does not change"):

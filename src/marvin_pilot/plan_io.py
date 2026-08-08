@@ -109,6 +109,13 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                 raise PlanSemanticError(
                     f"update operation {operation.operationId!r} must change at least one field"
                 )
+            if "title" in after_keys and (
+                operation.before.title is None or operation.after.title is None
+            ):
+                raise PlanSemanticError(
+                    f"update operation {operation.operationId!r} cannot compare or clear "
+                    "a null title"
+                )
             before = operation.before.model_dump(exclude_unset=True, mode="json")
             after = operation.after.model_dump(exclude_unset=True, mode="json")
             if before == after:
