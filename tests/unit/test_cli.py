@@ -3,12 +3,35 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
+import marvin_pilot.cli as cli_module
+import marvin_pilot.config as config_module
 from marvin_pilot.cli import app
 from marvin_pilot.examples import EXAMPLE_PLAN
 
 runner = CliRunner()
+
+
+@pytest.fixture
+def isolated_app_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    config_path = tmp_path / "roaming" / "marvin-pilot" / "config.toml"
+    history_path = tmp_path / "local" / "marvin-pilot" / "history"
+    monkeypatch.setattr(cli_module, "default_config_path", lambda: config_path)
+    monkeypatch.setattr(cli_module, "default_history_dir", lambda: history_path)
+    monkeypatch.setattr(cli_module, "load_config", lambda: config_module.load_config(config_path))
+    monkeypatch.setattr(
+        cli_module, "save_config", lambda config: config_module.save_config(config, config_path)
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "effective_history_dir",
+        lambda config: (
+            Path(config.history_dir).expanduser() if config.history_dir else history_path
+        ),
+    )
+    return tmp_path
 
 
 def write_plan(path: Path, plan: dict = EXAMPLE_PLAN) -> None:
@@ -112,3 +135,84 @@ def test_plan_format_help_is_llm_complete() -> None:
     assert "comments" in result.stdout
     assert "permanent deletion is unsupported" in result.stdout
     assert "--only op-a --only op-b" in result.stdout
+
+
+def test_config_paths_and_show_are_non_secret(isolated_app_dirs: Path) -> None:
+    paths = runner.invoke(app, ["config", "paths"])
+    show = runner.invoke(app, ["config", "show"])
+    assert paths.exit_code == 0
+    assert show.exit_code == 0
+    assert "marvin-pilot" in paths.stdout
+    assert "Credential mode: keyring" in show.stdout
+    assert "token" not in show.stdout.lower()
+
+
+def test_config_mode_commands_round_trip(isolated_app_dirs: Path) -> None:
+    key_file = isolated_app_dirs / "key.txt"
+    file_mode = runner.invoke(
+        app,
+        ["config", "set-credential-mode", "file", "--key-file", str(key_file)],
+    )
+    show = runner.invoke(app, ["config", "show"])
+    prompt_mode = runner.invoke(app, ["config", "set-credential-mode", "prompt"])
+    assert file_mode.exit_code == 0
+    assert "Credential mode: file" in show.stdout
+    assert prompt_mode.exit_code == 0
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["config", "set-credential-mode", "wrong"],
+        ["config", "set-credential-mode", "file"],
+        ["config", "set-credential-mode", "prompt", "--key-file", "token.txt"],
+    ],
+)
+def test_invalid_config_mode_commands_fail(isolated_app_dirs: Path, arguments: list[str]) -> None:
+    result = runner.invoke(app, arguments)
+    assert result.exit_code == 2
+
+
+def test_config_history_directory_round_trip(isolated_app_dirs: Path) -> None:
+    history = isolated_app_dirs / "my-history"
+    result = runner.invoke(app, ["config", "set-history-dir", str(history)])
+    paths = runner.invoke(app, ["config", "paths"])
+    assert result.exit_code == 0
+    assert str(history) in paths.stdout
+
+
+def test_config_token_command_never_echoes_secret(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[str] = []
+    monkeypatch.setattr(cli_module, "store_keyring_token", captured.append)
+    result = runner.invoke(app, ["config", "set-full-access-token"], input="very-secret\n")
+    assert result.exit_code == 0
+    assert captured == ["very-secret"]
+    assert "very-secret" not in result.stdout
+
+
+def test_config_token_requires_keyring_mode(isolated_app_dirs: Path) -> None:
+    runner.invoke(app, ["config", "set-credential-mode", "prompt"])
+    result = runner.invoke(app, ["config", "set-full-access-token"])
+    assert result.exit_code == 2
+    assert "requires keyring mode" in result.stderr
+
+
+def test_config_unset_calls_keyring_without_secret_output(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[bool] = []
+    monkeypatch.setattr(cli_module, "delete_keyring_token", lambda: calls.append(True))
+    result = runner.invoke(app, ["config", "unset-full-access-token"])
+    assert result.exit_code == 0
+    assert calls == [True]
+    assert "Removed" in result.stdout
+
+
+def test_guided_config_can_select_prompt_mode(isolated_app_dirs: Path) -> None:
+    result = runner.invoke(app, ["config"], input="prompt\n\n")
+    assert result.exit_code == 0
+    assert "Saved non-secret configuration" in result.stdout
+    show = runner.invoke(app, ["config", "show"])
+    assert "Credential mode: prompt" in show.stdout

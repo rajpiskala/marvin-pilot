@@ -11,6 +11,15 @@ import typer
 from rich.console import Console
 
 from marvin_pilot import __version__
+from marvin_pilot.config import (
+    AppConfig,
+    default_config_path,
+    default_history_dir,
+    effective_history_dir,
+    load_config,
+    save_config,
+)
+from marvin_pilot.credentials import delete_keyring_token, store_keyring_token
 from marvin_pilot.describe import render_plan_description
 from marvin_pilot.errors import MarvinPilotError, PlanSyntaxError
 from marvin_pilot.examples import EXAMPLE_PLAN
@@ -32,7 +41,12 @@ app = typer.Typer(
     rich_markup_mode=None,
 )
 help_app = typer.Typer(help="Detailed reference material for plan authors.")
+config_app = typer.Typer(
+    help="Configure non-secret settings and the native OS keyring.",
+    invoke_without_command=True,
+)
 app.add_typer(help_app, name="help")
+app.add_typer(config_app, name="config")
 console = Console(stderr=False)
 error_console = Console(stderr=True)
 
@@ -79,6 +93,23 @@ def _write_or_print(content: str, output: Path | None) -> None:
     except OSError as exc:
         _fail(PlanSyntaxError(f"could not write {output}: {exc}"))
     typer.echo(str(output))
+
+
+def _load_config_or_fail() -> AppConfig:
+    try:
+        return load_config()
+    except MarvinPilotError as exc:
+        _fail(exc)
+
+
+def _config_summary(config: AppConfig) -> str:
+    return (
+        f"Config: {default_config_path()}\n"
+        f"History: {effective_history_dir(config)}\n"
+        f"Credential mode: {config.credential_mode}\n"
+        f"Strict concurrency: {'on' if config.strict_concurrency else 'off'}\n"
+        f"Minimum request interval: {config.minimum_request_interval_ms} ms"
+    )
 
 
 @app.command("validate")
@@ -179,6 +210,133 @@ Review without credentials or network access with:
   marvin-pilot describe PLAN.json
 """
     typer.echo(content)
+
+
+@config_app.callback()
+def config_root(ctx: typer.Context) -> None:
+    """Run guided initial configuration when no config subcommand is given."""
+
+    if ctx.invoked_subcommand is not None:
+        return
+    config = _load_config_or_fail()
+    typer.echo(_config_summary(config))
+    typer.echo("\nChoose how mutating commands obtain the full-access token.")
+    mode = typer.prompt(
+        "Credential mode",
+        default=config.credential_mode,
+    )
+    if mode not in {"keyring", "prompt", "file"}:
+        _fail(PlanSyntaxError("credential mode must be one of: keyring, prompt, file"))
+    updates: dict[str, object] = {"credential_mode": mode}
+    if mode == "file":
+        updates["key_file"] = typer.prompt("Full-access key file path", default=config.key_file)
+    else:
+        updates["key_file"] = ""
+    history_default = config.history_dir or str(default_history_dir())
+    history = typer.prompt("History directory", default=history_default)
+    updates["history_dir"] = "" if Path(history) == default_history_dir() else history
+    try:
+        updated = config.model_copy(update=updates)
+        updated = AppConfig.model_validate(updated.model_dump())
+        if mode == "keyring" and typer.confirm("Store the full-access token now?", default=True):
+            token = typer.prompt("Amazing Marvin full-access token", hide_input=True)
+            store_keyring_token(token)
+        path = save_config(updated)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(f"Saved non-secret configuration: {path}")
+
+
+@config_app.command("paths")
+def config_paths() -> None:
+    """Print the config and effective audit-history paths."""
+
+    config = _load_config_or_fail()
+    typer.echo(f"Config: {default_config_path()}")
+    typer.echo(f"History: {effective_history_dir(config)}")
+
+
+@config_app.command("show")
+def config_show() -> None:
+    """Show effective non-secret settings; never print token material."""
+
+    typer.echo(_config_summary(_load_config_or_fail()))
+
+
+@config_app.command("set-history-dir")
+def config_set_history_dir(
+    path: Annotated[Path, typer.Argument(help="Directory for apply/revert receipts.")],
+) -> None:
+    """Set a non-default audit-history directory."""
+
+    config = _load_config_or_fail()
+    try:
+        saved_path = save_config(config.model_copy(update={"history_dir": str(path)}))
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(f"History directory: {path}")
+    typer.echo(f"Saved: {saved_path}")
+
+
+@config_app.command("set-credential-mode")
+def config_set_credential_mode(
+    mode: Annotated[
+        str,
+        typer.Argument(help="One of: keyring, prompt, file."),
+    ],
+    key_file: Annotated[
+        Path | None,
+        typer.Option("--key-file", help="Required path when selecting file mode."),
+    ] = None,
+) -> None:
+    """Select keyring, hidden interactive prompt, or key-file credentials."""
+
+    if mode not in {"keyring", "prompt", "file"}:
+        _fail(PlanSyntaxError("credential mode must be one of: keyring, prompt, file"))
+    if mode == "file" and key_file is None:
+        _fail(PlanSyntaxError("--key-file is required for file credential mode"))
+    if mode != "file" and key_file is not None:
+        _fail(PlanSyntaxError("--key-file is accepted only for file credential mode"))
+    config = _load_config_or_fail()
+    updates = {"credential_mode": mode, "key_file": str(key_file or "")}
+    try:
+        updated = AppConfig.model_validate(config.model_copy(update=updates).model_dump())
+        path = save_config(updated)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(f"Credential mode: {mode}")
+    typer.echo(f"Saved: {path}")
+
+
+@config_app.command("set-full-access-token")
+def config_set_full_access_token() -> None:
+    """Store the token via hidden input in the native OS keyring."""
+
+    config = _load_config_or_fail()
+    if config.credential_mode != "keyring":
+        _fail(
+            PlanSyntaxError(
+                "set-full-access-token requires keyring mode; run "
+                "'marvin-pilot config set-credential-mode keyring' first"
+            )
+        )
+    token = typer.prompt("Amazing Marvin full-access token", hide_input=True)
+    try:
+        store_keyring_token(token)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo("Stored the full-access token in the native OS keyring.")
+
+
+@config_app.command("unset-full-access-token")
+def config_unset_full_access_token() -> None:
+    """Remove Marvin Pilot's token from the native OS keyring."""
+
+    try:
+        delete_keyring_token()
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo("Removed the full-access token from the native OS keyring.")
 
 
 def main() -> None:
