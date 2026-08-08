@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -9,9 +10,42 @@ from typer.testing import CliRunner
 import marvin_pilot.cli as cli_module
 import marvin_pilot.config as config_module
 from marvin_pilot.cli import app
+from marvin_pilot.errors import CredentialError
 from marvin_pilot.examples import EXAMPLE_PLAN
 
 runner = CliRunner()
+
+
+class CliMarvinClient:
+    api_base_host = "https://marvin.test"
+
+    def __init__(self, document: dict) -> None:
+        self.document = copy.deepcopy(document)
+        self.closed = False
+        self.mutations = 0
+
+    def get_doc(self, item_id: str):
+        if self.document.get("_id") == item_id:
+            return copy.deepcopy(self.document)
+        return None
+
+    def update_doc(self, item_id: str, setters: list[dict]):
+        assert item_id == self.document["_id"]
+        for setter in setters:
+            key = setter["key"]
+            if key.startswith("fieldUpdates."):
+                self.document.setdefault("fieldUpdates", {})[key.split(".", 1)[1]] = setter["val"]
+            else:
+                self.document[key] = setter["val"]
+        self.document["_rev"] = "2-updated"
+        self.mutations += 1
+        return {"ok": True}
+
+    def create_doc(self, document: dict):
+        raise AssertionError("not expected in this CLI fixture")
+
+    def close(self) -> None:
+        self.closed = True
 
 
 @pytest.fixture
@@ -36,6 +70,12 @@ def isolated_app_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def write_plan(path: Path, plan: dict = EXAMPLE_PLAN) -> None:
     path.write_text(json.dumps(plan), encoding="utf-8")
+
+
+def one_operation_plan() -> dict:
+    plan = json.loads(json.dumps(EXAMPLE_PLAN))
+    plan["operations"] = [plan["operations"][0]]
+    return plan
 
 
 def test_main_help_leads_with_safety_contract() -> None:
@@ -88,12 +128,21 @@ def test_describe_is_offline_and_readable(tmp_path: Path) -> None:
     assert "Totals: 1 create, 2 updates, 1 trash" in result.stdout
 
 
-def test_live_describe_is_safely_disabled_until_preflight_lands(tmp_path: Path) -> None:
+def test_live_describe_requires_a_credential_before_network_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "plan.json"
     write_plan(path)
+    monkeypatch.setattr(
+        cli_module,
+        "load_full_access_token",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            CredentialError("no full-access token is stored")
+        ),
+    )
     result = runner.invoke(app, ["describe", str(path), "--live"])
-    assert result.exit_code == 2
-    assert "credentialed preflight milestone" in result.stderr
+    assert result.exit_code == 4
+    assert "no full-access token is stored" in result.stderr
 
 
 def test_schema_command_outputs_json() -> None:
@@ -216,3 +265,132 @@ def test_guided_config_can_select_prompt_mode(isolated_app_dirs: Path) -> None:
     assert "Saved non-secret configuration" in result.stdout
     show = runner.invoke(app, ["config", "show"])
     assert "Credential mode: prompt" in show.stdout
+
+
+def test_live_describe_runs_preflight_with_injected_client(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, one_operation_plan())
+    client = CliMarvinClient(
+        {
+            "_id": "task-wash-dishes-id",
+            "_rev": "1-task",
+            "db": "Tasks",
+            "title": "Wash the dishes",
+            "day": "2026-08-08",
+            "firstScheduled": "2026-01-01",
+            "updatedAt": 1,
+        }
+    )
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    result = runner.invoke(app, ["describe", str(path), "--live"])
+    assert result.exit_code == 0
+    assert "Live preflight: PASSED for 1 operation(s)" in result.stdout
+    assert client.closed
+
+
+def test_apply_and_history_commands_work_end_to_end_with_mocked_marvin(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    key_file = isolated_app_dirs / "token.key"
+    write_plan(path, one_operation_plan())
+    client = CliMarvinClient(
+        {
+            "_id": "task-wash-dishes-id",
+            "_rev": "1-task",
+            "db": "Tasks",
+            "title": "Wash the dishes",
+            "day": "2026-08-08",
+            "firstScheduled": "2026-01-01",
+            "updatedAt": 1,
+        }
+    )
+    received_key_files: list[Path | None] = []
+
+    def make_client(_config, received_key_file):
+        received_key_files.append(received_key_file)
+        return client
+
+    monkeypatch.setattr(cli_module, "_client_from_config", make_client)
+    monkeypatch.setattr(cli_module, "confirm_apply", lambda count: count == 1)
+    applied = runner.invoke(
+        app,
+        ["apply", str(path), "--full-access-key-file", str(key_file)],
+    )
+    assert applied.exit_code == 0
+    assert "Live preflight: PASSED" in applied.stdout
+    assert "Receipt:" in applied.stdout
+    assert "Operation 1/1 applied" in applied.stderr
+    assert received_key_files == [key_file]
+    assert client.document["day"] == "2026-08-09"
+    assert client.closed
+
+    receipt_path = Path(applied.stdout.strip().split("Receipt: ")[-1])
+    listed = runner.invoke(app, ["history", "list"])
+    shown = runner.invoke(app, ["history", "show", "latest"])
+    verified = runner.invoke(app, ["history", "verify", str(receipt_path)])
+    history_path = runner.invoke(app, ["history", "path"])
+    assert "apply  applied" in listed.stdout
+    assert '"status": "applied"' in shown.stdout
+    assert "Valid receipt:" in verified.stdout
+    assert str(receipt_path.parent) in history_path.stdout
+
+
+def test_apply_decline_has_exit_6_and_no_receipt(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, one_operation_plan())
+    client = CliMarvinClient(
+        {
+            "_id": "task-wash-dishes-id",
+            "db": "Tasks",
+            "title": "Wash the dishes",
+            "day": "2026-08-08",
+        }
+    )
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    monkeypatch.setattr(cli_module, "confirm_apply", lambda _count: False)
+    result = runner.invoke(app, ["apply", str(path)])
+    assert result.exit_code == 6
+    assert client.mutations == 0
+    assert runner.invoke(app, ["history", "list"]).stdout.strip() == "No receipts."
+
+
+def test_apply_enforces_configured_operation_limit_before_credentials(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path)
+    cli_module.save_config(
+        config_module.AppConfig(max_operations=1, large_plan_warning_operations=1)
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_client_from_config",
+        lambda *_args: pytest.fail("credential/client must not load"),
+    )
+    result = runner.invoke(app, ["apply", str(path)])
+    assert result.exit_code == 3
+    assert "configured maximum is 1" in result.stderr
+
+
+def test_apply_has_no_inline_token_or_noninteractive_bypass(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, one_operation_plan())
+    monkeypatch.setattr(
+        cli_module,
+        "_client_from_config",
+        lambda *_args: pytest.fail("invalid options must fail before credentials"),
+    )
+    inline = runner.invoke(app, ["apply", str(path), "--full-access-key", "secret"])
+    bypass = runner.invoke(app, ["apply", str(path), "--yes"])
+    help_result = runner.invoke(app, ["apply", "--help"])
+    assert inline.exit_code == 2
+    assert bypass.exit_code == 2
+    assert "--full-access-key-file" in help_result.stdout
+    assert "--yes" not in help_result.stdout

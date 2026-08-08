@@ -8,6 +8,7 @@ from typing import Any
 
 from marvin_pilot.models.plan_v1 import ChangePlanV1, CreateOperation, UpdateOperation
 from marvin_pilot.plan_io import plan_digest
+from marvin_pilot.preflight import PreflightResult
 
 FIELD_LABELS = {
     "title": "title",
@@ -105,4 +106,31 @@ def render_plan_description(plan: ChangePlanV1) -> str:
         if counts[action]
     ]
     lines.append("Totals: " + ", ".join(ordered_totals))
+    return "\n".join(lines) + "\n"
+
+
+def render_live_preflight(result: PreflightResult) -> str:
+    """Add live-state and compiler-managed changes to the offline reviewed diff."""
+
+    rendered = render_plan_description(result.plan).rstrip()
+    lines = [
+        rendered,
+        "",
+        f"Live preflight: PASSED for {len(result.operations)} operation(s)",
+        f"Strict concurrency recheck: {'on' if result.strict_concurrency else 'off'}",
+    ]
+    for checked in result.operations:
+        operation = checked.operation
+        desired = checked.compiled.desired_fields
+        compiler_fields: list[str] = []
+        if "firstScheduled" in desired:
+            compiler_fields.append(f"firstScheduled={desired['firstScheduled']}")
+        if operation.action == "create":
+            compiler_fields.append("task identity/defaults/timestamps")
+        if operation.action == "trash":
+            compiler_fields.append("deletedAt and field update timestamps")
+        if compiler_fields:
+            lines.append(
+                f"Compiler-managed [{operation.operationId}]: {', '.join(compiler_fields)}"
+            )
     return "\n".join(lines) + "\n"

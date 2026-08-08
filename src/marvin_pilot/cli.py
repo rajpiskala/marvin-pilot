@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -11,6 +12,7 @@ import typer
 from rich.console import Console
 
 from marvin_pilot import __version__
+from marvin_pilot.approval import confirm_apply
 from marvin_pilot.config import (
     AppConfig,
     default_config_path,
@@ -19,11 +21,19 @@ from marvin_pilot.config import (
     load_config,
     save_config,
 )
-from marvin_pilot.credentials import delete_keyring_token, store_keyring_token
-from marvin_pilot.describe import render_plan_description
-from marvin_pilot.errors import MarvinPilotError, PlanSyntaxError
+from marvin_pilot.credentials import (
+    delete_keyring_token,
+    load_full_access_token,
+    store_keyring_token,
+)
+from marvin_pilot.describe import render_live_preflight, render_plan_description
+from marvin_pilot.errors import MarvinPilotError, PlanSemanticError, PlanSyntaxError
 from marvin_pilot.examples import EXAMPLE_PLAN
+from marvin_pilot.executor import execute_apply, unix_milliseconds
+from marvin_pilot.history import HistoryStore
+from marvin_pilot.marvin_client import MarvinClient
 from marvin_pilot.plan_io import MAX_PLAN_BYTES, load_plan, parse_plan_bytes, plan_digest
+from marvin_pilot.preflight import preflight_plan
 from marvin_pilot.schema import plan_schema_json
 
 SAFETY_CONTRACT = """This CLI separates AI-authored proposals from human-authorized
@@ -45,8 +55,10 @@ config_app = typer.Typer(
     help="Configure non-secret settings and the native OS keyring.",
     invoke_without_command=True,
 )
+history_app = typer.Typer(help="Inspect and verify durable apply/revert receipts.")
 app.add_typer(help_app, name="help")
 app.add_typer(config_app, name="config")
+app.add_typer(history_app, name="history")
 console = Console(stderr=False)
 error_console = Console(stderr=True)
 
@@ -72,13 +84,18 @@ def _fail(error: MarvinPilotError) -> None:
     raise typer.Exit(error.exit_code)
 
 
-def _read_plan_argument(path: str):
+def _read_plan_argument_with_bytes(path: str):
     try:
         if path == "-":
-            return parse_plan_bytes(sys.stdin.buffer.read(MAX_PLAN_BYTES + 1))
-        return load_plan(Path(path))[0]
+            raw = sys.stdin.buffer.read(MAX_PLAN_BYTES + 1)
+            return parse_plan_bytes(raw), raw
+        return load_plan(Path(path))
     except MarvinPilotError as exc:
         _fail(exc)
+
+
+def _read_plan_argument(path: str):
+    return _read_plan_argument_with_bytes(path)[0]
 
 
 def _write_or_print(content: str, output: Path | None) -> None:
@@ -112,6 +129,31 @@ def _config_summary(config: AppConfig) -> str:
     )
 
 
+def _credential_warning(message: str) -> None:
+    error_console.print(f"Warning: {message}", markup=False)
+
+
+def _client_from_config(config: AppConfig, key_file: Path | None) -> MarvinClient:
+    try:
+        token = load_full_access_token(
+            config,
+            key_file_override=key_file,
+            warn=_credential_warning,
+        )
+        return MarvinClient(
+            token,
+            api_base_url=config.api_base_url,
+            timeout_seconds=float(config.request_timeout_seconds),
+            minimum_request_interval_ms=config.minimum_request_interval_ms,
+        )
+    except MarvinPilotError as exc:
+        _fail(exc)
+
+
+def _history_store(config: AppConfig) -> HistoryStore:
+    return HistoryStore(effective_history_dir(config))
+
+
 @app.command("validate")
 def validate_command(
     plan_path: Annotated[str, typer.Argument(help="Plan JSON path, or - for stdin.")],
@@ -132,13 +174,95 @@ def describe_command(
         bool,
         typer.Option("--live", help="Also check current Marvin state (requires a credential)."),
     ] = False,
+    full_access_key_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--full-access-key-file",
+            help="Read the secret from this file; the token itself is never a CLI argument.",
+        ),
+    ] = None,
 ) -> None:
     """Render an exact, deterministic human-readable plan diff."""
 
-    if live:
-        _fail(PlanSyntaxError("--live will be enabled with the credentialed preflight milestone"))
     plan = _read_plan_argument(plan_path)
-    typer.echo(render_plan_description(plan), nl=False)
+    if not live:
+        typer.echo(render_plan_description(plan), nl=False)
+        return
+    config = _load_config_or_fail()
+    client = _client_from_config(config, full_access_key_file)
+    try:
+        result = preflight_plan(
+            plan,
+            client,
+            now_ms=unix_milliseconds(),
+            strict_concurrency=config.strict_concurrency,
+        )
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        client.close()
+    typer.echo(render_live_preflight(result), nl=False)
+
+
+@app.command("apply")
+def apply_command(
+    plan_path: Annotated[str, typer.Argument(help="Plan JSON path, or - for stdin.")],
+    full_access_key_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--full-access-key-file",
+            help="Read the secret from this file; the token itself is never a CLI argument.",
+        ),
+    ] = None,
+) -> None:
+    """Human-review, apply, verify, and durably journal a complete plan."""
+
+    plan, raw = _read_plan_argument_with_bytes(plan_path)
+    config = _load_config_or_fail()
+    if len(plan.operations) > config.max_operations:
+        _fail(
+            PlanSemanticError(
+                f"plan has {len(plan.operations)} operations; configured maximum is "
+                f"{config.max_operations}"
+            )
+        )
+    client = _client_from_config(config, full_access_key_file)
+    started = time.monotonic()
+
+    def approve(result) -> bool:
+        typer.echo(render_live_preflight(result), nl=False)
+        if len(result.operations) >= config.large_plan_warning_operations:
+            typer.echo(
+                f"Large plan: {len(result.operations)} operations will run sequentially at "
+                f"a minimum {config.minimum_request_interval_ms} ms request interval."
+            )
+        return confirm_apply(len(result.operations))
+
+    def progress(current: int, total: int, operation_id: str) -> None:
+        elapsed = time.monotonic() - started
+        remaining = (elapsed / current) * (total - current) if current else 0
+        typer.echo(
+            f"Operation {current}/{total} applied [{operation_id}] "
+            f"(elapsed {elapsed:.1f}s, ETA {remaining:.1f}s)",
+            err=True,
+        )
+
+    try:
+        result = execute_apply(
+            plan,
+            raw,
+            client=client,
+            history=_history_store(config),
+            approve=approve,
+            strict_concurrency=config.strict_concurrency,
+            progress=progress,
+        )
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        client.close()
+    typer.echo(f"Applied {len(result.receipt.operations)} operation(s).")
+    typer.echo(f"Receipt: {result.receipt_path}")
 
 
 @app.command("schema")
@@ -337,6 +461,83 @@ def config_unset_full_access_token() -> None:
     except MarvinPilotError as exc:
         _fail(exc)
     typer.echo("Removed the full-access token from the native OS keyring.")
+
+
+@history_app.command("path")
+def history_path() -> None:
+    """Print the effective receipt-history directory."""
+
+    config = _load_config_or_fail()
+    typer.echo(str(effective_history_dir(config)))
+
+
+@history_app.command("list")
+def history_list() -> None:
+    """List receipt status, kind, plan identity, and interrupted pending work."""
+
+    store = _history_store(_load_config_or_fail())
+    try:
+        paths = store.list_paths()
+        if not paths:
+            typer.echo("No receipts.")
+            return
+        for path in paths:
+            receipt = store.load(path)
+            warning = (
+                " [PENDING: inspect before continuing]"
+                if receipt.status
+                in {
+                    "pending",
+                    "applying",
+                    "pending-revert",
+                    "reverting",
+                }
+                else ""
+            )
+            typer.echo(f"{path.name}  {receipt.kind}  {receipt.status}  {receipt.planId}{warning}")
+    except MarvinPilotError as exc:
+        _fail(exc)
+
+
+@history_app.command("show")
+def history_show(
+    receipt: Annotated[str, typer.Argument(help="Receipt path, or latest.")],
+) -> None:
+    """Print a receipt, including its reviewed plan and per-operation outcomes."""
+
+    store = _history_store(_load_config_or_fail())
+    try:
+        if receipt == "latest":
+            latest = store.latest()
+            if latest is None:
+                _fail(PlanSyntaxError("no receipts exist"))
+            path, value = latest
+        else:
+            path = Path(receipt)
+            value = store.load(path)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(f"Receipt: {path}")
+    typer.echo(json.dumps(value.model_dump(mode="json", exclude_none=True), indent=2))
+
+
+@history_app.command("verify")
+def history_verify(
+    receipt_path: Annotated[Path, typer.Argument(help="Receipt JSON path.")],
+) -> None:
+    """Validate a receipt schema and its SHA-256 content integrity."""
+
+    store = _history_store(_load_config_or_fail())
+    try:
+        receipt = store.load(receipt_path)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(
+        f"Valid receipt: {receipt.receiptId}\n"
+        f"Kind/status: {receipt.kind}/{receipt.status}\n"
+        f"Plan ID: {receipt.planId}\n"
+        f"Receipt hash: {receipt.receiptHash}"
+    )
 
 
 def main() -> None:

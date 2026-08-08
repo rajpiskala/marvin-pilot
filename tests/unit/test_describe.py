@@ -5,6 +5,7 @@ import json
 from marvin_pilot.describe import render_plan_description
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.plan_io import parse_plan_bytes
+from marvin_pilot.preflight import preflight_plan
 
 
 def test_description_contains_review_critical_information() -> None:
@@ -49,3 +50,29 @@ def test_description_formats_lists_booleans_and_dependencies() -> None:
     assert "dependencies: none -> task-a, task-b" in rendered
     assert "backburner: none -> yes" in rendered
     assert "depends on: reschedule-wash-dishes" in rendered
+
+
+def test_live_description_surfaces_preflight_and_compiler_managed_fields() -> None:
+    from marvin_pilot.describe import render_live_preflight
+
+    class Reader:
+        def __init__(self) -> None:
+            self.documents = {
+                "task-wash-dishes-id": {
+                    "db": "Tasks",
+                    "title": "Wash the dishes",
+                    "day": "2026-08-08",
+                },
+            }
+
+        def get_doc(self, item_id: str):
+            return self.documents.get(item_id)
+
+    value = json.loads(json.dumps(EXAMPLE_PLAN))
+    value["operations"] = [value["operations"][0]]
+    plan = parse_plan_bytes(json.dumps(value).encode())
+    result = preflight_plan(plan, Reader(), now_ms=123)
+    rendered = render_live_preflight(result)
+    assert "Live preflight: PASSED for 1 operation(s)" in rendered
+    assert "Strict concurrency recheck: on" in rendered
+    assert "Compiler-managed [reschedule-wash-dishes]: firstScheduled=2026-08-09" in rendered

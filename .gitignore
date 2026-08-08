@@ -25,6 +25,7 @@ venv/
 .pytest_cache/
 .test-cache/
 .test-tmp/
+.test-runs/
 .mypy_cache/
 .ruff_cache/
 .hypothesis/
