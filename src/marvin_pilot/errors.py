@@ -51,6 +51,10 @@ class RemoteError(MarvinPilotError):
     exit_code = 8
 
 
+class AmbiguousMutationError(RemoteError):
+    """A mutating request timed out and its remote outcome must be reconciled."""
+
+
 class HistoryError(MarvinPilotError):
     """Audit history could not be written safely."""
 
