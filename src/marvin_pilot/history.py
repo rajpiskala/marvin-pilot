@@ -179,6 +179,37 @@ class HistoryStore:
         exclusive_write_bytes(path, receipt_file_bytes(receipt))
         return ReceiptHandle(receipt=receipt, path=path)
 
+    def begin_revert(
+        self,
+        source_receipt: ReceiptV1,
+        source_receipt_path: Path,
+        operations: list[ReceiptOperationV1],
+        *,
+        api_base_host: str,
+    ) -> ReceiptHandle:
+        """Exclusively create a pending revert journal before the first mutation."""
+
+        started_at = rfc3339_utc(self._now())
+        receipt = ReceiptV1(
+            receiptId=str(uuid4()),
+            kind="revert",
+            status="pending-revert",
+            startedAt=started_at,
+            cliVersion=__version__,
+            sourcePlan=source_receipt.sourcePlan,
+            sourcePlanText=source_receipt.sourcePlanText,
+            planId=source_receipt.planId,
+            planDigest=source_receipt.planDigest,
+            apiBaseHost=api_base_host,
+            sourceApplyReceiptId=source_receipt.receiptId,
+            sourceApplyReceiptPath=str(source_receipt_path.resolve()),
+            selectedOperationIds=[operation.operationId for operation in operations],
+            operations=operations,
+        )
+        path = self._pending_path(receipt)
+        exclusive_write_bytes(path, receipt_file_bytes(receipt))
+        return ReceiptHandle(receipt=receipt, path=path)
+
     def persist(self, handle: ReceiptHandle) -> None:
         atomic_write_bytes(handle.path, receipt_file_bytes(handle.receipt))
 
@@ -242,6 +273,34 @@ class HistoryStore:
             ):
                 return path, receipt
         return None
+
+    def find_revert_claims(
+        self,
+        *,
+        source_apply_receipt_id: str,
+        operation_ids: set[str],
+    ) -> dict[str, Path]:
+        """Find operations already reverted or held by an unresolved revert journal."""
+
+        claims: dict[str, Path] = {}
+        guarded_statuses = {
+            "pending-revert",
+            "reverting",
+            "reverted",
+            "partial-revert",
+        }
+        for path in self.list_paths():
+            receipt = self.load(path)
+            if (
+                receipt.kind != "revert"
+                or receipt.sourceApplyReceiptId != source_apply_receipt_id
+                or receipt.status not in guarded_statuses
+            ):
+                continue
+            for operation_id in receipt.selectedOperationIds:
+                if operation_id in operation_ids:
+                    claims.setdefault(operation_id, path)
+        return claims
 
     def latest(self) -> tuple[Path, ReceiptV1] | None:
         paths = self.list_paths()

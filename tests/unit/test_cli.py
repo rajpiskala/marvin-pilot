@@ -337,6 +337,27 @@ def test_apply_and_history_commands_work_end_to_end_with_mocked_marvin(
     assert "Valid receipt:" in verified.stdout
     assert str(receipt_path.parent) in history_path.stdout
 
+    monkeypatch.setattr(cli_module, "confirm_revert", lambda count: count == 1)
+    client.closed = False
+    reverted = runner.invoke(
+        app,
+        [
+            "revert",
+            str(receipt_path),
+            "--only",
+            "reschedule-wash-dishes",
+            "--full-access-key-file",
+            str(key_file),
+        ],
+    )
+    assert reverted.exit_code == 0
+    assert "Live revert preflight: PASSED" in reverted.stdout
+    assert "Operation 1/1 reverted" in reverted.stderr
+    assert client.document["day"] == "2026-08-08"
+    assert client.closed
+    assert received_key_files == [key_file, key_file]
+    assert "revert  reverted" in runner.invoke(app, ["history", "list"]).stdout
+
 
 def test_apply_decline_has_exit_6_and_no_receipt(
     isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
@@ -392,5 +413,25 @@ def test_apply_has_no_inline_token_or_noninteractive_bypass(
     help_result = runner.invoke(app, ["apply", "--help"])
     assert inline.exit_code == 2
     assert bypass.exit_code == 2
+    assert "--full-access-key-file" in help_result.stdout
+    assert "--yes" not in help_result.stdout
+
+
+def test_revert_accepts_repeated_only_and_has_no_unsafe_bypasses(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing = isolated_app_dirs / "missing-receipt.json"
+    monkeypatch.setattr(
+        cli_module,
+        "_client_from_config",
+        lambda *_args: pytest.fail("receipt/options must fail before credentials"),
+    )
+    inline = runner.invoke(app, ["revert", str(missing), "--full-access-key", "secret"])
+    bypass = runner.invoke(app, ["revert", str(missing), "--yes"])
+    help_result = runner.invoke(app, ["revert", "--help"])
+    assert inline.exit_code == 2
+    assert bypass.exit_code == 2
+    assert "--only" in help_result.stdout
+    assert "repeat for multiple operations" in " ".join(help_result.stdout.split())
     assert "--full-access-key-file" in help_result.stdout
     assert "--yes" not in help_result.stdout

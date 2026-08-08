@@ -9,6 +9,7 @@ from typing import Any
 from marvin_pilot.models.plan_v1 import ChangePlanV1, CreateOperation, UpdateOperation
 from marvin_pilot.plan_io import plan_digest
 from marvin_pilot.preflight import PreflightResult
+from marvin_pilot.reverter import RevertPreflight
 
 FIELD_LABELS = {
     "title": "title",
@@ -133,4 +134,40 @@ def render_live_preflight(result: PreflightResult) -> str:
             lines.append(
                 f"Compiler-managed [{operation.operationId}]: {', '.join(compiler_fields)}"
             )
+    return "\n".join(lines) + "\n"
+
+
+def render_revert_preflight(result: RevertPreflight) -> str:
+    """Render the selected receipt inverses in their actual reverse execution order."""
+
+    lines = [
+        f"Revert apply receipt: {result.source_receipt.receiptId}",
+        f"Source: {result.source_receipt_path}",
+        f"Plan: {result.source_receipt.sourcePlan.get('summary', result.source_receipt.planId)}",
+        f"Selected operations: {len(result.operations)}",
+        "Execution order: reverse apply order",
+        "",
+    ]
+    for index, checked in enumerate(result.operations, start=1):
+        source = checked.source_operation
+        title = checked.live_document.get("title") or source.targetTitle or source.targetId
+        lines.append(
+            f'{index}. REVERT {source.action.upper()} "{title}" '
+            f"({source.targetId}) [{source.operationId}]"
+        )
+        if source.action == "create":
+            lines.append("   move the task created by this operation to Marvin Trash")
+        elif source.action == "trash":
+            lines.append("   restore the task from Marvin Trash")
+        for field, desired in checked.compiled.desired_fields.items():
+            before = checked.compiled.before_fields[field]
+            old_value = before.get("value") if before["present"] else "<absent>"
+            lines.append(f"   Marvin {field}: {old_value!r} -> {desired!r}")
+        lines.append("")
+    lines.extend(
+        [
+            f"Live revert preflight: PASSED for {len(result.operations)} operation(s)",
+            f"Strict concurrency recheck: {'on' if result.strict_concurrency else 'off'}",
+        ]
+    )
     return "\n".join(lines) + "\n"

@@ -29,13 +29,14 @@ def _open_controlling_terminal(stack: ExitStack) -> tuple[TextIO, TextIO]:
     return input_stream, output_stream
 
 
-def confirm_apply(
+def _confirm(
+    verb: str,
     operation_count: int,
     *,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> bool:
-    """Ask once for plan-level approval; default to no for every other response."""
+    """Ask once for operation-level approval; default to no for every other response."""
 
     with ExitStack() as stack:
         if input_stream is None:
@@ -47,7 +48,39 @@ def confirm_apply(
                 output_stream = output_stream or terminal_output
         if output_stream is None:
             output_stream = sys.stderr
-        output_stream.write(f"Apply these {operation_count} operations? [y/N] ")
+        output_stream.write(f"{verb} these {operation_count} operations? [y/N] ")
         output_stream.flush()
         answer = input_stream.readline()
         return answer.strip().lower() in {"y", "yes"}
+
+
+def confirm_apply(
+    operation_count: int,
+    *,
+    input_stream: TextIO | None = None,
+    output_stream: TextIO | None = None,
+) -> bool:
+    """Ask once for apply approval."""
+
+    return _confirm(
+        "Apply",
+        operation_count,
+        input_stream=input_stream,
+        output_stream=output_stream,
+    )
+
+
+def confirm_revert(
+    operation_count: int,
+    *,
+    input_stream: TextIO | None = None,
+    output_stream: TextIO | None = None,
+) -> bool:
+    """Ask once for revert approval."""
+
+    return _confirm(
+        "Revert",
+        operation_count,
+        input_stream=input_stream,
+        output_stream=output_stream,
+    )

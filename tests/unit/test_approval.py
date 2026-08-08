@@ -5,7 +5,7 @@ from io import StringIO
 import pytest
 
 import marvin_pilot.approval as approval
-from marvin_pilot.approval import confirm_apply
+from marvin_pilot.approval import confirm_apply, confirm_revert
 from marvin_pilot.errors import PlanSyntaxError
 
 
@@ -33,3 +33,9 @@ def test_missing_controlling_terminal_is_actionable(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(approval, "_open_controlling_terminal", fail)
     with pytest.raises(PlanSyntaxError, match="no terminal"):
         confirm_apply(2)
+
+
+def test_revert_uses_an_explicit_revert_prompt() -> None:
+    output = StringIO()
+    assert confirm_revert(2, input_stream=StringIO("yes\n"), output_stream=output)
+    assert output.getvalue() == "Revert these 2 operations? [y/N] "

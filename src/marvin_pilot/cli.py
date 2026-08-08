@@ -12,7 +12,7 @@ import typer
 from rich.console import Console
 
 from marvin_pilot import __version__
-from marvin_pilot.approval import confirm_apply
+from marvin_pilot.approval import confirm_apply, confirm_revert
 from marvin_pilot.config import (
     AppConfig,
     default_config_path,
@@ -26,7 +26,11 @@ from marvin_pilot.credentials import (
     load_full_access_token,
     store_keyring_token,
 )
-from marvin_pilot.describe import render_live_preflight, render_plan_description
+from marvin_pilot.describe import (
+    render_live_preflight,
+    render_plan_description,
+    render_revert_preflight,
+)
 from marvin_pilot.errors import MarvinPilotError, PlanSemanticError, PlanSyntaxError
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.executor import execute_apply, unix_milliseconds
@@ -34,6 +38,7 @@ from marvin_pilot.history import HistoryStore
 from marvin_pilot.marvin_client import MarvinClient
 from marvin_pilot.plan_io import MAX_PLAN_BYTES, load_plan, parse_plan_bytes, plan_digest
 from marvin_pilot.preflight import preflight_plan
+from marvin_pilot.reverter import execute_revert
 from marvin_pilot.schema import plan_schema_json
 
 SAFETY_CONTRACT = """This CLI separates AI-authored proposals from human-authorized
@@ -262,6 +267,82 @@ def apply_command(
     finally:
         client.close()
     typer.echo(f"Applied {len(result.receipt.operations)} operation(s).")
+    typer.echo(f"Receipt: {result.receipt_path}")
+
+
+@app.command("revert")
+def revert_command(
+    receipt_path: Annotated[Path, typer.Argument(help="Applied receipt JSON path.")],
+    only: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--only",
+            help="Revert only this operation ID; repeat for multiple operations.",
+        ),
+    ] = None,
+    full_access_key_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--full-access-key-file",
+            help="Read the secret from this file; the token itself is never a CLI argument.",
+        ),
+    ] = None,
+) -> None:
+    """Human-review and revert all or selected applied operations from a receipt."""
+
+    config = _load_config_or_fail()
+    history = _history_store(config)
+    try:
+        source = history.load(receipt_path)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    selected_count = (
+        len(only) if only else sum(operation.status == "applied" for operation in source.operations)
+    )
+    if selected_count > config.max_operations:
+        _fail(
+            PlanSemanticError(
+                f"revert selects {selected_count} operations; configured maximum is "
+                f"{config.max_operations}"
+            )
+        )
+    client = _client_from_config(config, full_access_key_file)
+    started = time.monotonic()
+
+    def approve(result) -> bool:
+        typer.echo(render_revert_preflight(result), nl=False)
+        if len(result.operations) >= config.large_plan_warning_operations:
+            typer.echo(
+                f"Large revert: {len(result.operations)} operations will run sequentially at "
+                f"a minimum {config.minimum_request_interval_ms} ms request interval."
+            )
+        return confirm_revert(len(result.operations))
+
+    def progress(current: int, total: int, operation_id: str) -> None:
+        elapsed = time.monotonic() - started
+        remaining = (elapsed / current) * (total - current) if current else 0
+        typer.echo(
+            f"Operation {current}/{total} reverted [{operation_id}] "
+            f"(elapsed {elapsed:.1f}s, ETA {remaining:.1f}s)",
+            err=True,
+        )
+
+    try:
+        result = execute_revert(
+            source,
+            receipt_path,
+            only or [],
+            client=client,
+            history=history,
+            approve=approve,
+            strict_concurrency=config.strict_concurrency,
+            progress=progress,
+        )
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        client.close()
+    typer.echo(f"Reverted {len(result.receipt.operations)} operation(s).")
     typer.echo(f"Receipt: {result.receipt_path}")
 
 
