@@ -259,7 +259,7 @@ def test_timeout_that_applied_is_reconciled_without_retry(tmp_path: Path, docume
     client.timeout_modes["task-wash-dishes-id"] = "apply-then-timeout"
     result = run_apply(tmp_path, client)
     first = result.receipt.operations[0]
-    assert first.outcome == "applied-after-timeout"
+    assert first.outcome == "applied-after-reconciliation"
     assert client.attempts["task-wash-dishes-id"] == 1
 
 

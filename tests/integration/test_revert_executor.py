@@ -398,7 +398,7 @@ def test_ambiguous_timeout_is_reconciled_and_second_timeout_is_partial(
     client.attempts.clear()
     client.timeout_modes[target] = "apply-then-timeout"
     result = revert_fixture(tmp_path, client, source, clock, only=["reschedule-wash-dishes"])
-    assert result.receipt.operations[0].outcome == "reverted-after-timeout"
+    assert result.receipt.operations[0].outcome == "reverted-after-reconciliation"
     assert client.attempts[target] == 1
 
     second_client = InMemoryMarvin(documents)

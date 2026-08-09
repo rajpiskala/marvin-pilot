@@ -1,4 +1,4 @@
-"""Journal-first apply state machine with strict rechecks and timeout reconciliation."""
+"""Journal-first apply state machine with strict rechecks and response reconciliation."""
 
 from __future__ import annotations
 
@@ -66,13 +66,17 @@ def _reconcile_or_retry(
     *,
     strict_concurrency: bool,
 ) -> str:
-    """Resolve an ambiguous timeout without blindly repeating a mutating POST."""
+    """Resolve an ambiguous mutation response without blindly repeating its POST."""
 
     last_error: AmbiguousMutationError | None = None
     for attempt in range(MAX_RECONCILED_MUTATION_RETRIES):
         current = client.get_doc(checked.compiled.target_id)
         if desired_fields_match(current, checked.compiled.desired_fields):
-            return "applied-after-timeout" if attempt == 0 else "applied-after-timeout-retry"
+            return (
+                "applied-after-reconciliation"
+                if attempt == 0
+                else "applied-after-reconciled-retry"
+            )
         delay = getattr(client, "delay_before_reconciled_retry", None)
         if delay is not None:
             delay(attempt)
@@ -91,7 +95,7 @@ def _reconcile_or_retry(
         return "applied-after-safe-retry"
     current = client.get_doc(checked.compiled.target_id)
     if desired_fields_match(current, checked.compiled.desired_fields):
-        return "applied-after-timeout-retry"
+        return "applied-after-reconciled-retry"
     assert last_error is not None
     raise last_error
 

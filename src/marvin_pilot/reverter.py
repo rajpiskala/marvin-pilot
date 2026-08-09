@@ -323,7 +323,11 @@ def _reconcile_or_retry(
     for attempt in range(MAX_RECONCILED_MUTATION_RETRIES):
         current = client.get_doc(checked.compiled.target_id)
         if desired_fields_match(current, checked.compiled.desired_fields):
-            return "reverted-after-timeout" if attempt == 0 else "reverted-after-timeout-retry"
+            return (
+                "reverted-after-reconciliation"
+                if attempt == 0
+                else "reverted-after-reconciled-retry"
+            )
         delay = getattr(client, "delay_before_reconciled_retry", None)
         if delay is not None:
             delay(attempt)
@@ -342,7 +346,7 @@ def _reconcile_or_retry(
         return "reverted-after-safe-retry"
     current = client.get_doc(checked.compiled.target_id)
     if desired_fields_match(current, checked.compiled.desired_fields):
-        return "reverted-after-timeout-retry"
+        return "reverted-after-reconciled-retry"
     assert last_error is not None
     raise last_error
 
