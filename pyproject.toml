@@ -41,6 +41,7 @@ dev = [
   "build>=1.2",
   "hatchling>=1.27",
   "hypothesis>=6.120",
+  "playwright>=1.54",
   "pytest>=8.3",
   "pytest-cov>=6",
   "respx>=0.22",
@@ -56,6 +57,9 @@ packages = ["src/marvin_pilot"]
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers -ra -p no:cacheprovider"
 testpaths = ["tests"]
+markers = [
+  "browser: opt-in Chromium tests (set MARVIN_PILOT_BROWSER_TESTS=1)",
+]
 
 [tool.coverage.run]
 branch = true
