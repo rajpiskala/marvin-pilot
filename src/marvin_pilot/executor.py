@@ -30,6 +30,8 @@ from marvin_pilot.preflight import (
     recheck_operation,
 )
 
+MAX_RECONCILED_MUTATION_RETRIES = 3
+
 
 class MutationClient(Protocol):
     api_base_host: str
@@ -66,23 +68,32 @@ def _reconcile_or_retry(
 ) -> str:
     """Resolve an ambiguous timeout without blindly repeating a mutating POST."""
 
-    current = client.get_doc(checked.compiled.target_id)
-    if desired_fields_match(current, checked.compiled.desired_fields):
-        return "applied-after-timeout"
-    try:
-        recheck_operation(checked, client, strict_concurrency=strict_concurrency)
-    except LivePreconditionError as exc:
-        raise AmbiguousMutationError(
-            f"operation {checked.operation.operationId!r} timed out and live state is mixed"
-        ) from exc
-    try:
-        _send_mutation(client, checked.compiled)
-    except AmbiguousMutationError:
+    last_error: AmbiguousMutationError | None = None
+    for attempt in range(MAX_RECONCILED_MUTATION_RETRIES):
         current = client.get_doc(checked.compiled.target_id)
         if desired_fields_match(current, checked.compiled.desired_fields):
-            return "applied-after-timeout-retry"
-        raise
-    return "applied-after-safe-retry"
+            return "applied-after-timeout" if attempt == 0 else "applied-after-timeout-retry"
+        delay = getattr(client, "delay_before_reconciled_retry", None)
+        if delay is not None:
+            delay(attempt)
+        try:
+            recheck_operation(checked, client, strict_concurrency=strict_concurrency)
+        except LivePreconditionError as exc:
+            raise AmbiguousMutationError(
+                f"operation {checked.operation.operationId!r} has an ambiguous response "
+                "and live state is mixed"
+            ) from exc
+        try:
+            _send_mutation(client, checked.compiled)
+        except AmbiguousMutationError as exc:
+            last_error = exc
+            continue
+        return "applied-after-safe-retry"
+    current = client.get_doc(checked.compiled.target_id)
+    if desired_fields_match(current, checked.compiled.desired_fields):
+        return "applied-after-timeout-retry"
+    assert last_error is not None
+    raise last_error
 
 
 def _finish_failure(

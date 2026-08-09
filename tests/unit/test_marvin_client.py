@@ -155,6 +155,16 @@ def test_pacer_enforces_monotonic_start_interval() -> None:
     assert fake.sleeps == [0.5]
 
 
+def test_reconciled_mutation_retry_uses_capped_exponential_backoff() -> None:
+    fake = FakeTime()
+    pacer = RequestPacer(0, clock=fake.clock, sleep=fake.sleep)
+    with client_for(lambda _request: json_response(200, {}), pacer=pacer) as client:
+        client.delay_before_reconciled_retry(0)
+        client.delay_before_reconciled_retry(1)
+        client.delay_before_reconciled_retry(8)
+    assert fake.sleeps == [1.0, 2.0, 30.0]
+
+
 def test_get_retries_429_and_honors_retry_after() -> None:
     fake = FakeTime()
     pacer = RequestPacer(0, clock=fake.clock, sleep=fake.sleep)

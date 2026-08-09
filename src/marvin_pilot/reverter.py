@@ -18,7 +18,11 @@ from marvin_pilot.errors import (
     RemoteError,
     UserDeclinedError,
 )
-from marvin_pilot.executor import MutationClient, unix_milliseconds
+from marvin_pilot.executor import (
+    MAX_RECONCILED_MUTATION_RETRIES,
+    MutationClient,
+    unix_milliseconds,
+)
 from marvin_pilot.field_registry import field_snapshot
 from marvin_pilot.history import HistoryStore, ReceiptHandle, rfc3339_utc
 from marvin_pilot.models.receipt_v1 import ReceiptOperationV1, ReceiptV1, RequestRecord
@@ -315,23 +319,32 @@ def _reconcile_or_retry(
     *,
     strict_concurrency: bool,
 ) -> str:
-    current = client.get_doc(checked.compiled.target_id)
-    if desired_fields_match(current, checked.compiled.desired_fields):
-        return "reverted-after-timeout"
-    try:
-        recheck_revert_operation(checked, client, strict_concurrency=strict_concurrency)
-    except LivePreconditionError as exc:
-        raise AmbiguousMutationError(
-            f"operation {checked.source_operation.operationId!r} timed out and live state is mixed"
-        ) from exc
-    try:
-        _send_inverse(client, checked.compiled)
-    except AmbiguousMutationError:
+    last_error: AmbiguousMutationError | None = None
+    for attempt in range(MAX_RECONCILED_MUTATION_RETRIES):
         current = client.get_doc(checked.compiled.target_id)
         if desired_fields_match(current, checked.compiled.desired_fields):
-            return "reverted-after-timeout-retry"
-        raise
-    return "reverted-after-safe-retry"
+            return "reverted-after-timeout" if attempt == 0 else "reverted-after-timeout-retry"
+        delay = getattr(client, "delay_before_reconciled_retry", None)
+        if delay is not None:
+            delay(attempt)
+        try:
+            recheck_revert_operation(checked, client, strict_concurrency=strict_concurrency)
+        except LivePreconditionError as exc:
+            raise AmbiguousMutationError(
+                f"operation {checked.source_operation.operationId!r} has an ambiguous response "
+                "and live state is mixed"
+            ) from exc
+        try:
+            _send_inverse(client, checked.compiled)
+        except AmbiguousMutationError as exc:
+            last_error = exc
+            continue
+        return "reverted-after-safe-retry"
+    current = client.get_doc(checked.compiled.target_id)
+    if desired_fields_match(current, checked.compiled.desired_fields):
+        return "reverted-after-timeout-retry"
+    assert last_error is not None
+    raise last_error
 
 
 def _finish_failure(

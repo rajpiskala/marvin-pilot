@@ -271,7 +271,7 @@ def test_timeout_with_unchanged_state_gets_one_safe_retry(tmp_path: Path, docume
     assert client.attempts["task-wash-dishes-id"] == 2
 
 
-def test_second_ambiguous_timeout_stops_unknown_even_before_completed_op(
+def test_repeated_ambiguous_timeouts_stop_after_bounded_safe_retries(
     tmp_path: Path, documents: dict
 ) -> None:
     client = InMemoryMarvin(documents)
@@ -280,7 +280,7 @@ def test_second_ambiguous_timeout_stops_unknown_even_before_completed_op(
         run_apply(tmp_path, client)
     receipt = HistoryStore(tmp_path).load(next(tmp_path.glob("partial-*.json")))
     assert receipt.operations[0].status == "unknown"
-    assert client.attempts["task-wash-dishes-id"] == 2
+    assert client.attempts["task-wash-dishes-id"] == 4
 
 
 def test_success_response_without_state_change_is_partial_unknown(

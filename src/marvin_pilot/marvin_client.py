@@ -103,6 +103,11 @@ class MarvinClient:
     def close(self) -> None:
         self._client.close()
 
+    def delay_before_reconciled_retry(self, attempt: int) -> None:
+        """Back off before an executor retries a mutation proven not to have happened."""
+
+        self._pacer.delay(min(30.0, (2**attempt) + self._jitter()))
+
     def __enter__(self) -> MarvinClient:
         return self
 
