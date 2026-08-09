@@ -20,6 +20,8 @@ from marvin_pilot.models.plan_v1 import (
 class DocumentReader(Protocol):
     def get_doc(self, item_id: str) -> dict[str, Any] | None: ...
 
+    def get_labels(self) -> list[dict[str, Any]]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class PreflightOperation:
@@ -180,6 +182,7 @@ def _verify_references(
     operation: Operation,
     reader: DocumentReader,
     cache: dict[str, dict[str, Any] | None],
+    metadata_cache: dict[str, Any],
 ) -> None:
     parents, labels, dependencies = _reference_hints(operation)
     seen: set[tuple[str, str, str | None]] = set()
@@ -198,14 +201,21 @@ def _verify_references(
     for label in labels:
         key = ("label", label["id"], label.get("title"))
         if key not in seen:
-            _verify_reference(
-                kind="label",
-                reference_id=label["id"],
-                title_hint=label.get("title"),
-                operation_id=operation.operationId,
-                reader=reader,
-                cache=cache,
-            )
+            if "labels" not in metadata_cache:
+                metadata_cache["labels"] = {item["_id"]: item for item in reader.get_labels()}
+            label_document = metadata_cache["labels"].get(label["id"])
+            if label_document is None:
+                raise LivePreconditionError(
+                    f"operation {operation.operationId!r} references missing label ID "
+                    f"{label['id']!r}"
+                )
+            title_hint = label.get("title")
+            if title_hint is not None and label_document.get("title") != title_hint:
+                raise LivePreconditionError(
+                    f"operation {operation.operationId!r} label title is stale for "
+                    f"{label['id']!r}: expected {title_hint!r}, found "
+                    f"{label_document.get('title')!r}"
+                )
             seen.add(key)
     for dependency_id in set(dependencies):
         _verify_reference(
@@ -228,6 +238,7 @@ def preflight_plan(
     """Read and validate every target/reference, then compile every operation."""
 
     cache: dict[str, dict[str, Any] | None] = {}
+    metadata_cache: dict[str, Any] = {}
     checked: list[PreflightOperation] = []
     for operation in plan.operations:
         target_id = operation.target.id
@@ -247,7 +258,7 @@ def preflight_plan(
                 )
             _check_existing_preconditions(operation, live)
             revision = _revision_snapshot(live)
-        _verify_references(operation, reader, cache)
+        _verify_references(operation, reader, cache, metadata_cache)
         checked.append(
             PreflightOperation(
                 operation=operation,

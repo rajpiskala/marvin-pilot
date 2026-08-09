@@ -85,6 +85,29 @@ def test_get_doc_rejects_other_200_error_documents() -> None:
         client.get_doc("task")
 
 
+def test_get_labels_uses_full_access_header_and_validates_metadata() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return json_response(200, [{"_id": "label-a", "title": "Math"}])
+
+    with client_for(handler) as client:
+        assert client.get_labels() == [{"_id": "label-a", "title": "Math"}]
+    assert seen[0].url.path == "/api/labels"
+    assert seen[0].headers["X-Full-Access-Token"] == "full-secret-token"
+    assert "X-API-Token" not in seen[0].headers
+
+
+@pytest.mark.parametrize("value", [{"labels": []}, ["not-an-object"], [{"title": "No ID"}]])
+def test_get_labels_rejects_malformed_metadata(value: object) -> None:
+    with (
+        client_for(lambda _request: json_response(200, value)) as client,
+        pytest.raises(RemoteError, match="malformed label metadata"),
+    ):
+        client.get_labels()
+
+
 def test_update_sends_one_item_with_all_setters() -> None:
     seen: list[dict] = []
 

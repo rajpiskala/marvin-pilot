@@ -209,6 +209,17 @@ class MarvinClient:
             raise RemoteError(f"GET doc returned an error document: {error}: {reason}")
         return document
 
+    def get_labels(self) -> list[dict[str, Any]]:
+        """Fetch label metadata using the full token's compatible read endpoint."""
+
+        response = self._request("GET", "labels")
+        value = self._json_value(response, required_object=False)
+        if not isinstance(value, list) or not all(
+            isinstance(item, dict) and isinstance(item.get("_id"), str) for item in value
+        ):
+            raise RemoteError("Amazing Marvin returned malformed label metadata")
+        return value
+
     def update_doc(self, item_id: str, setters: list[dict[str, Any]]) -> Any:
         """Update multiple fields on exactly one document."""
 

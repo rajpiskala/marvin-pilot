@@ -23,11 +23,20 @@ class FakeReader:
     def __init__(self, documents: dict[str, dict[str, Any]]) -> None:
         self.documents = copy.deepcopy(documents)
         self.calls: list[str] = []
+        self.label_calls = 0
 
     def get_doc(self, item_id: str) -> dict[str, Any] | None:
         self.calls.append(item_id)
         document = self.documents.get(item_id)
         return copy.deepcopy(document) if document is not None else None
+
+    def get_labels(self) -> list[dict[str, Any]]:
+        self.label_calls += 1
+        return [
+            copy.deepcopy(document | {"_id": item_id})
+            for item_id, document in self.documents.items()
+            if document.get("db") == "Labels"
+        ]
 
 
 @pytest.fixture
@@ -178,7 +187,9 @@ def test_label_and_dependency_references_are_verified(documents: dict) -> None:
     with pytest.raises(LivePreconditionError, match="missing dependency"):
         preflight_plan(plan, FakeReader(documents), now_ms=NOW_MS)
     documents["task-dependency"] = {"db": "Tasks", "title": "Dependency"}
-    preflight_plan(plan, FakeReader(documents), now_ms=NOW_MS)
+    reader = FakeReader(documents)
+    preflight_plan(plan, reader, now_ms=NOW_MS)
+    assert reader.label_calls == 1
 
 
 def test_recheck_detects_revision_change_and_disappearance(documents: dict) -> None:
