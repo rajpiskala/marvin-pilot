@@ -109,7 +109,7 @@ class PlanView:
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe view without exposing Pydantic or mutation objects."""
 
-        return asdict(self)
+        return json.loads(json.dumps(asdict(self), ensure_ascii=False))
 
 
 def _exact_json(value: Any) -> str:

@@ -129,6 +129,72 @@ def test_describe_is_offline_and_readable(tmp_path: Path) -> None:
     assert "Totals: 1 create, 2 updates, 1 trash" in result.stdout
 
 
+def test_visualize_preloads_without_credentials_and_opens_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "plan.json"
+    write_plan(path)
+    calls: dict[str, object] = {}
+
+    class FakeServer:
+        url = "http://127.0.0.1:1234/session/"
+
+        def __init__(self, *, preloaded_plan, source_name):
+            calls["plan"] = preloaded_plan
+            calls["source_name"] = source_name
+
+        def serve_forever(self):
+            calls["served"] = True
+
+        def shutdown(self):
+            calls["shutdown"] = True
+
+    monkeypatch.setattr(cli_module, "VisualizerServer", FakeServer)
+    monkeypatch.setattr(cli_module.webbrowser, "open", lambda url: calls.setdefault("url", url))
+    monkeypatch.setattr(
+        cli_module,
+        "_load_config_or_fail",
+        lambda: pytest.fail("visualize must not load config or credentials"),
+    )
+    result = runner.invoke(app, ["visualize", str(path)])
+    assert result.exit_code == 0
+    assert calls["source_name"] == "plan.json"
+    assert calls["url"] == FakeServer.url
+    assert calls["served"] is True
+    assert calls["shutdown"] is True
+    assert "Preview only" in result.stdout
+    assert "No Marvin credential" in result.stdout
+
+
+def test_visualize_no_open_and_missing_path_behavior(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "plan.json"
+    write_plan(path)
+    opened: list[str] = []
+
+    class FakeServer:
+        url = "http://127.0.0.1:1234/session/"
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def serve_forever(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(cli_module, "VisualizerServer", FakeServer)
+    monkeypatch.setattr(cli_module.webbrowser, "open", opened.append)
+    result = runner.invoke(app, ["visualize", str(path), "--no-open"])
+    missing = runner.invoke(app, ["visualize", str(tmp_path / "missing.json"), "--no-open"])
+    assert result.exit_code == 0
+    assert opened == []
+    assert missing.exit_code == 2
+    assert "not a regular file" in missing.stderr
+
+
 def test_live_describe_requires_a_credential_before_network_access(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

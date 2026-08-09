@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+import webbrowser
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated
@@ -54,6 +55,7 @@ from marvin_pilot.plan_io import MAX_PLAN_BYTES, load_plan, parse_plan_bytes, pl
 from marvin_pilot.preflight import preflight_plan
 from marvin_pilot.reverter import execute_revert
 from marvin_pilot.schema import plan_schema_json
+from marvin_pilot.visualizer_server import VisualizerServer
 
 SAFETY_CONTRACT = """This CLI separates AI-authored proposals from human-authorized
 Marvin mutations.
@@ -248,6 +250,43 @@ def describe_command(
     finally:
         client.close()
     typer.echo(render_live_preflight(result), nl=False)
+
+
+@app.command("visualize")
+def visualize_command(
+    plan_path: Annotated[
+        str | None,
+        typer.Argument(help="Optional plan JSON path, or - for stdin."),
+    ] = None,
+    no_open: Annotated[
+        bool,
+        typer.Option("--no-open", help="Print the local URL without opening a browser."),
+    ] = False,
+) -> None:
+    """Open an offline, credential-free, read-only browser preview."""
+
+    plan = None
+    source_name = None
+    if plan_path is not None:
+        plan = _read_plan_argument(plan_path)
+        source_name = "stdin" if plan_path == "-" else Path(plan_path).name
+    server = VisualizerServer(preloaded_plan=plan, source_name=source_name)
+    typer.echo(f"Visualizer: {server.url}")
+    typer.echo("Preview only — nothing has been applied.")
+    typer.echo("No Marvin credential or API connection is used. Press Ctrl+C to stop.")
+    if not no_open:
+        try:
+            opened = webbrowser.open(server.url)
+        except (OSError, webbrowser.Error):
+            opened = False
+        if not opened:
+            typer.echo("Could not open a browser automatically; use the URL above.", err=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        typer.echo("\nVisualizer stopped.")
+    finally:
+        server.shutdown()
 
 
 @app.command("apply")
