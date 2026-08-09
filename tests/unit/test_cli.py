@@ -12,6 +12,7 @@ import marvin_pilot.config as config_module
 from marvin_pilot.cli import app
 from marvin_pilot.errors import CredentialError
 from marvin_pilot.examples import EXAMPLE_PLAN
+from marvin_pilot.field_registry import FIELD_SPECS
 
 runner = CliRunner()
 
@@ -184,6 +185,9 @@ def test_plan_format_help_is_llm_complete() -> None:
     assert "comments" in result.stdout
     assert "permanent deletion is unsupported" in result.stdout
     assert "--only op-a --only op-b" in result.stdout
+    assert all(field in result.stdout for field in FIELD_SPECS)
+    example_text = result.stdout.split("COMPLETE VERSION 1 EXAMPLE\n", maxsplit=1)[1]
+    assert json.loads(example_text) == EXAMPLE_PLAN
 
 
 def test_config_paths_and_show_are_non_secret(isolated_app_dirs: Path) -> None:

@@ -401,6 +401,7 @@ def example_command(
 def plan_format_help() -> None:
     """Explain the JSON plan contract for humans and AI assistants."""
 
+    complete_example = json.dumps(EXAMPLE_PLAN, ensure_ascii=False, indent=2)
     content = f"""{SAFETY_CONTRACT}
 PLAN FORMAT
 
@@ -430,6 +431,29 @@ block. JSON comments, trailing commas, locale dates, the string "none", raw sett
 API URLs, system timestamps, completion, recurrence, reminders, calendar sync, and permanent
 deletion are rejected.
 
+Allowlisted task fields:
+  title                       non-empty task title
+  parent                      {{"id": "...", "title": "optional review hint"}}
+  scheduledDate               YYYY-MM-DD or null to unschedule
+  dueDate/startDate/endDate   YYYY-MM-DD or null
+  plannedWeek                 Monday date (YYYY-MM-DD) or null
+  plannedMonth                YYYY-MM or null
+  labels                      array of {{"id": "...", "title": "optional hint"}} or null
+  estimatedTimeDuration       duration string or null; maps to Marvin timeEstimate
+  note                        string or null
+  dayRank/masterRank          finite number or null
+  dailySection                Morning, Afternoon, Evening, or null
+  bonusSection                Essential, Bonus, or null
+  customSectionId             existing section ID or null
+  timeBlockSectionId          existing time-block section ID or null
+  starPriority                yellow, orange, red, or null
+  frogSize                    normal, baby, monster, or null
+  backburner                  true, false, or null
+  reviewDate                  YYYY-MM-DD or null
+  snoozedUntil                RFC 3339 timestamp with offset or null
+  permanentSnoozeUntil        HH:mm or null
+  dependencies                array of task/project IDs or null
+
 Generate a complete example with:
   marvin-pilot example
 
@@ -439,6 +463,9 @@ Generate machine-readable JSON Schema with:
 Review without credentials or network access with:
   marvin-pilot validate PLAN.json
   marvin-pilot describe PLAN.json
+
+COMPLETE VERSION 1 EXAMPLE
+{complete_example}
 """
     typer.echo(content)
 
