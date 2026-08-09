@@ -14,7 +14,7 @@ from marvin_pilot.models.plan_v1 import (
     TrashOperation,
     UpdateOperation,
 )
-from marvin_pilot.plan_io import plan_digest
+from marvin_pilot.plan_io import SUPPORTED_SCHEMA_VERSIONS, plan_digest
 from marvin_pilot.visualizer_fields import presentation_for, short_value
 
 Action = Literal["create", "update", "trash"]
@@ -361,7 +361,7 @@ def build_plan_view(plan: ChangePlanV1, *, source_name: str | None = None) -> Pl
     )
     return PlanView(
         schema_version=plan.schemaVersion,
-        supported_schema_versions=(1,),
+        supported_schema_versions=SUPPORTED_SCHEMA_VERSIONS,
         plan_id=plan.planId,
         created_at=plan.createdAt,
         summary=plan.summary,

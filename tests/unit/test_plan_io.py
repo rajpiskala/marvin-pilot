@@ -32,6 +32,15 @@ def test_example_is_valid_and_preserves_explicit_nulls() -> None:
     assert len(plan.operations) == 4
 
 
+def test_unsupported_schema_version_has_an_upgrade_error(example_plan_dict: dict) -> None:
+    example_plan_dict["schemaVersion"] = 2
+    with pytest.raises(
+        PlanSyntaxError,
+        match=r"unsupported schemaVersion 2.*supports: 1.*Upgrade Marvin Pilot",
+    ):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
 def test_display_metadata_is_closed_and_validated(example_plan_dict: dict) -> None:
     display = example_plan_dict["operations"][0]["display"]
     display["invented"] = "not allowed"

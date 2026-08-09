@@ -13,6 +13,8 @@ from marvin_pilot.errors import PlanSemanticError, PlanSyntaxError
 from marvin_pilot.models.plan_v1 import ChangePlanV1, UpdateOperation
 
 MAX_PLAN_BYTES = 4 * 1024 * 1024
+PLAN_MODELS = {1: ChangePlanV1}
+SUPPORTED_SCHEMA_VERSIONS = tuple(PLAN_MODELS)
 
 
 def _object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -52,8 +54,16 @@ def parse_plan_bytes(raw: bytes) -> ChangePlanV1:
         ) from exc
     if not isinstance(value, dict):
         raise PlanSyntaxError("the plan root must be a JSON object, not an array or scalar")
+    schema_version = value.get("schemaVersion")
+    if type(schema_version) is int and schema_version not in PLAN_MODELS:
+        supported = ", ".join(str(version) for version in SUPPORTED_SCHEMA_VERSIONS)
+        raise PlanSyntaxError(
+            f"unsupported schemaVersion {schema_version}; this Marvin Pilot build supports: "
+            f"{supported}. Upgrade Marvin Pilot before reviewing or applying this plan"
+        )
+    model = PLAN_MODELS.get(schema_version, ChangePlanV1)
     try:
-        plan = ChangePlanV1.model_validate(value)
+        plan = model.model_validate(value)
     except ValidationError as exc:
         messages = []
         for error in exc.errors(include_url=False):
