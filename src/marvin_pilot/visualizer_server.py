@@ -8,6 +8,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from typing import Any
+from urllib.parse import unquote
 
 from marvin_pilot.errors import MarvinPilotError
 from marvin_pilot.models.plan_v1 import ChangePlanV1
@@ -31,9 +32,11 @@ SECURITY_HEADERS = {
 }
 
 
-def _safe_source_name(value: str | None) -> str | None:
+def _safe_source_name(value: str | None, *, url_encoded: bool = False) -> str | None:
     if value is None:
         return None
+    if url_encoded:
+        value = unquote(value, errors="replace")
     name = value.replace("\\", "/").rsplit("/", maxsplit=1)[-1].strip()
     if not name:
         return None
@@ -98,9 +101,7 @@ class VisualizerServer:
                     return False
                 return True
 
-            def _send_headers(
-                self, status: HTTPStatus, content_type: str, length: int
-            ) -> None:
+            def _send_headers(self, status: HTTPStatus, content_type: str, length: int) -> None:
                 self.send_response(status)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(length))
@@ -110,9 +111,7 @@ class VisualizerServer:
                     self.send_header("Connection", "close")
                 self.end_headers()
 
-            def _send_bytes(
-                self, status: HTTPStatus, content_type: str, body: bytes
-            ) -> None:
+            def _send_bytes(self, status: HTTPStatus, content_type: str, body: bytes) -> None:
                 self._send_headers(status, content_type, len(body))
                 if self.command != "HEAD":
                     self.wfile.write(body)
@@ -199,11 +198,9 @@ class VisualizerServer:
                 try:
                     plan = parse_plan_bytes(raw)
                     source_name = _safe_source_name(
-                        self.headers.get("X-Marvin-Pilot-Filename")
+                        self.headers.get("X-Marvin-Pilot-Filename"), url_encoded=True
                     )
-                    owner._current = build_plan_view(
-                        plan, source_name=source_name
-                    ).to_dict()
+                    owner._current = build_plan_view(plan, source_name=source_name).to_dict()
                 except MarvinPilotError as exc:
                     self._send_json(
                         HTTPStatus.UNPROCESSABLE_ENTITY,

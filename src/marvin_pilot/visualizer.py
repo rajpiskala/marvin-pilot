@@ -226,7 +226,7 @@ def _side_section(
 def _display_warnings(
     operation: UpdateOperation | CreateOperation | TrashOperation,
 ) -> tuple[str, ...]:
-    if operation.display is None:
+    if not isinstance(operation, UpdateOperation) or operation.display is None:
         return ()
     warnings = []
     for side in ("before", "after"):
@@ -318,9 +318,7 @@ def _section_entries(
     return entries
 
 
-def _sections(
-    entries: list[tuple[str, OperationView]], layout: str
-) -> tuple[SectionView, ...]:
+def _sections(entries: list[tuple[str, OperationView]], layout: str) -> tuple[SectionView, ...]:
     grouped: OrderedDict[str, list[OperationView]] = OrderedDict()
     for title, operation in entries:
         grouped.setdefault(title, []).append(operation)

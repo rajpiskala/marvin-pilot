@@ -20,9 +20,7 @@ FIELD_PRESENTATIONS: dict[str, FieldPresentationSpec] = {
     "title": FieldPresentationSpec("Title", "title", 0),
     "parent": FieldPresentationSpec("Parent", "parent", 10),
     "labels": FieldPresentationSpec("Labels", "labels", 20),
-    "estimatedTimeDuration": FieldPresentationSpec(
-        "Estimated time duration", "estimate", 30
-    ),
+    "estimatedTimeDuration": FieldPresentationSpec("Estimated time duration", "estimate", 30),
     "scheduledDate": FieldPresentationSpec("Scheduled date", "date", 40),
     "dueDate": FieldPresentationSpec("Due date", "date", 41),
     "startDate": FieldPresentationSpec("Start date", "date", 42),
@@ -38,9 +36,7 @@ FIELD_PRESENTATIONS: dict[str, FieldPresentationSpec] = {
     "backburner": FieldPresentationSpec("Backburner", "indicator", 62),
     "reviewDate": FieldPresentationSpec("Review date", "date", 63),
     "snoozedUntil": FieldPresentationSpec("Snoozed until", "datetime", 64),
-    "permanentSnoozeUntil": FieldPresentationSpec(
-        "Permanent snooze time", "time", 65
-    ),
+    "permanentSnoozeUntil": FieldPresentationSpec("Permanent snooze time", "time", 65),
     "dependencies": FieldPresentationSpec("Dependencies", "dependencies", 70),
     "dayRank": FieldPresentationSpec("Day rank", "rank", 80),
     "masterRank": FieldPresentationSpec("Master rank", "rank", 81),
