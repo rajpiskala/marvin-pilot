@@ -16,6 +16,7 @@ import httpx
 from marvin_pilot import __version__
 from marvin_pilot.errors import (
     AmbiguousMutationError,
+    AmbiguousServerResponseError,
     CredentialError,
     RemoteError,
 )
@@ -200,6 +201,11 @@ class MarvinClient:
                         self._retry_after_seconds(response, transient_attempts - 1)
                     )
                     continue
+            if mutation and response.status_code >= 500:
+                raise AmbiguousServerResponseError(
+                    f"{method} {endpoint} returned HTTP {response.status_code}; "
+                    "remote outcome must be reconciled"
+                )
             if response.status_code >= 400:
                 detail = self._safe_response_text(response)
                 suffix = f": {detail}" if detail else ""

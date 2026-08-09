@@ -52,7 +52,11 @@ class RemoteError(MarvinPilotError):
 
 
 class AmbiguousMutationError(RemoteError):
-    """A mutating request timed out and its remote outcome must be reconciled."""
+    """A mutating request has an uncertain remote outcome that must be reconciled."""
+
+
+class AmbiguousServerResponseError(AmbiguousMutationError):
+    """A mutating request returned 5xx and its remote outcome must be reconciled."""
 
 
 class HistoryError(MarvinPilotError):

@@ -6,7 +6,12 @@ from typing import Any
 import httpx
 import pytest
 
-from marvin_pilot.errors import AmbiguousMutationError, CredentialError, RemoteError
+from marvin_pilot.errors import (
+    AmbiguousMutationError,
+    AmbiguousServerResponseError,
+    CredentialError,
+    RemoteError,
+)
 from marvin_pilot.marvin_client import MarvinClient, RequestPacer
 
 
@@ -239,7 +244,7 @@ def test_get_retries_503_with_capped_backoff() -> None:
     assert fake.sleeps == [1.0, 2.0]
 
 
-def test_mutation_retries_explicit_429_but_not_503() -> None:
+def test_mutation_retries_explicit_429_but_reconciles_503() -> None:
     calls = 0
 
     def rate_limited(_request: httpx.Request) -> httpx.Response:
@@ -253,7 +258,7 @@ def test_mutation_retries_explicit_429_but_not_503() -> None:
 
     with (
         client_for(lambda _request: httpx.Response(503, text="unavailable")) as client,
-        pytest.raises(RemoteError, match="HTTP 503"),
+        pytest.raises(AmbiguousServerResponseError, match="must be reconciled"),
     ):
         client.create_doc({"_id": "task"})
 
