@@ -28,14 +28,9 @@ def replace_with_retry(source: Path, target: Path) -> None:
             os.replace(source, target)
             return
         except OSError as exc:
-            if (
-                not _is_retryable_replace_error(exc)
-                or attempt + 1 == WINDOWS_REPLACE_ATTEMPTS
-            ):
+            if not _is_retryable_replace_error(exc) or attempt + 1 == WINDOWS_REPLACE_ATTEMPTS:
                 raise
-            time.sleep(
-                min(0.8, WINDOWS_REPLACE_INITIAL_DELAY_SECONDS * (2**attempt))
-            )
+            time.sleep(min(0.8, WINDOWS_REPLACE_INITIAL_DELAY_SECONDS * (2**attempt)))
 
 
 def ensure_private_directory(path: Path) -> None:

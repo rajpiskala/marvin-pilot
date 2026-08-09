@@ -238,9 +238,7 @@ class HistoryStore:
 
         receipt = self.load(path)
         expected_active = (
-            {"pending", "applying"}
-            if receipt.kind == "apply"
-            else {"pending-revert", "reverting"}
+            {"pending", "applying"} if receipt.kind == "apply" else {"pending-revert", "reverting"}
         )
         if receipt.status not in expected_active:
             raise HistoryError(f"receipt is not an interrupted active journal: {path}")

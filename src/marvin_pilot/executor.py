@@ -73,9 +73,7 @@ def _reconcile_or_retry(
         current = client.get_doc(checked.compiled.target_id)
         if desired_fields_match(current, checked.compiled.desired_fields):
             return (
-                "applied-after-reconciliation"
-                if attempt == 0
-                else "applied-after-reconciled-retry"
+                "applied-after-reconciliation" if attempt == 0 else "applied-after-reconciled-retry"
             )
         delay = getattr(client, "delay_before_reconciled_retry", None)
         if delay is not None:

@@ -328,9 +328,7 @@ def test_partial_revert_can_resume_unknown_and_not_started_operations(
         "not-started",
     ]
     remaining = [
-        operation.operationId
-        for operation in partial.operations
-        if operation.status != "reverted"
+        operation.operationId for operation in partial.operations if operation.status != "reverted"
     ]
 
     resumed = revert_fixture(tmp_path, client, source, clock, only=remaining)

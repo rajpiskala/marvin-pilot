@@ -169,9 +169,7 @@ class MarvinClient:
                     ) from exc
                 transient_attempts += 1
                 if transient_attempts < MAX_TRANSIENT_ATTEMPTS:
-                    self._pacer.delay(
-                        min(30.0, (2 ** (transient_attempts - 1)) + self._jitter())
-                    )
+                    self._pacer.delay(min(30.0, (2 ** (transient_attempts - 1)) + self._jitter()))
                     continue
                 raise RemoteError(f"{method} {endpoint} timed out") from exc
             except httpx.HTTPError as exc:
@@ -191,9 +189,7 @@ class MarvinClient:
             if response.status_code == 429 or self._is_logical_rate_limit(response):
                 rate_limit_attempts += 1
                 if rate_limit_attempts < MAX_RATE_LIMIT_ATTEMPTS:
-                    self._pacer.delay(
-                        self._retry_after_seconds(response, rate_limit_attempts - 1)
-                    )
+                    self._pacer.delay(self._retry_after_seconds(response, rate_limit_attempts - 1))
                     continue
                 raise RemoteError(
                     f"{method} {endpoint} remained rate limited after "
@@ -202,9 +198,7 @@ class MarvinClient:
             if not mutation and response.status_code == 503:
                 transient_attempts += 1
                 if transient_attempts < MAX_TRANSIENT_ATTEMPTS:
-                    self._pacer.delay(
-                        self._retry_after_seconds(response, transient_attempts - 1)
-                    )
+                    self._pacer.delay(self._retry_after_seconds(response, transient_attempts - 1))
                     continue
             if mutation and response.status_code >= 500:
                 raise AmbiguousServerResponseError(
