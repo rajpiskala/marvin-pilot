@@ -13,6 +13,7 @@ from marvin_pilot.errors import (
     LivePreconditionError,
     PartialMutationError,
     PlanSemanticError,
+    RemoteError,
     UserDeclinedError,
 )
 from marvin_pilot.examples import EXAMPLE_PLAN
@@ -297,6 +298,46 @@ def test_second_revert_of_same_operation_is_refused(tmp_path: Path, documents: d
     with pytest.raises(PlanSemanticError, match="already reverted or claimed"):
         revert_fixture(tmp_path, client, source, clock, only=selection)
     assert client.mutations == []
+
+
+def test_partial_revert_can_resume_unknown_and_not_started_operations(
+    tmp_path: Path, documents: dict
+) -> None:
+    client = InMemoryMarvin(documents)
+    clock = Clock()
+    source = apply_fixture(tmp_path, client, clock)
+    client.mutations.clear()
+    calls = 0
+
+    def fail_second_send(_item_id: str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            client.before_send = None
+            raise RemoteError("injected unambiguous server response")
+
+    client.before_send = fail_second_send
+    with pytest.raises(PartialMutationError, match="stopped after 1/4"):
+        revert_fixture(tmp_path, client, source, clock)
+
+    partial = HistoryStore(tmp_path).load(next(tmp_path.glob("partial-revert-*.json")))
+    assert [operation.status for operation in partial.operations] == [
+        "reverted",
+        "unknown",
+        "not-started",
+        "not-started",
+    ]
+    remaining = [
+        operation.operationId
+        for operation in partial.operations
+        if operation.status != "reverted"
+    ]
+
+    resumed = revert_fixture(tmp_path, client, source, clock, only=remaining)
+
+    assert resumed.receipt.status == "reverted"
+    assert [operation.operationId for operation in resumed.receipt.operations] == remaining
+    assert all(operation.status == "reverted" for operation in resumed.receipt.operations)
 
 
 def test_recheck_after_approval_detects_stale_revision_and_journals_failure(

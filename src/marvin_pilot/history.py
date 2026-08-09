@@ -317,7 +317,15 @@ class HistoryStore:
                 or receipt.status not in guarded_statuses
             ):
                 continue
-            for operation_id in receipt.selectedOperationIds:
+            if receipt.status in {"pending-revert", "reverting"}:
+                claimed_ids = receipt.selectedOperationIds
+            else:
+                claimed_ids = [
+                    operation.operationId
+                    for operation in receipt.operations
+                    if operation.status in {"reverted", "already-reverted"}
+                ]
+            for operation_id in claimed_ids:
                 if operation_id in operation_ids:
                     claims.setdefault(operation_id, path)
         return claims
