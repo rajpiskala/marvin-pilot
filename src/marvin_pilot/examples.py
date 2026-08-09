@@ -17,6 +17,7 @@ EXAMPLE_PLAN = {
                 "title": "Wash the dishes",
             },
             "reason": "Move this non-math task out of today's plan.",
+            "display": {"beforeSection": "Household", "afterSection": "Household"},
             "before": {"scheduledDate": "2026-08-08"},
             "after": {"scheduledDate": "2026-08-09"},
         },
@@ -29,6 +30,7 @@ EXAMPLE_PLAN = {
                 "title": "Eat dinner with Jacob",
             },
             "reason": "Record the agreed time, place, attendees, and expected length.",
+            "display": {"beforeSection": "Inbox", "afterSection": "People"},
             "before": {
                 "title": "Eat dinner with Jacob",
                 "estimatedTimeDuration": None,
@@ -48,6 +50,7 @@ EXAMPLE_PLAN = {
                 "id": "40d06376-9125-4e9e-a6bd-631cb0e6dc55",
             },
             "reason": "The requested email-follow-up block has no existing task.",
+            "display": {"afterSection": "Operations"},
             "after": {
                 "title": "1:00pm Follow up on emails and respond to people",
                 "scheduledDate": "2026-08-08",
@@ -64,6 +67,7 @@ EXAMPLE_PLAN = {
                 "title": "Study chapter 3",
             },
             "reason": "Duplicate of the more detailed chapter 3 task.",
+            "display": {"beforeSection": "Math"},
             "expectedUpdatedAt": 1786221000123,
         },
     ],

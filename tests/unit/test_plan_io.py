@@ -26,7 +26,22 @@ def test_example_is_valid_and_preserves_explicit_nulls() -> None:
     dinner = plan.operations[1]
     assert dinner.before.model_fields_set == {"title", "estimatedTimeDuration", "parent"}
     assert dinner.before.estimatedTimeDuration is None
+    assert dinner.display is not None
+    assert dinner.display.beforeSection == "Inbox"
+    assert dinner.display.afterSection == "People"
     assert len(plan.operations) == 4
+
+
+def test_display_metadata_is_closed_and_validated(example_plan_dict: dict) -> None:
+    display = example_plan_dict["operations"][0]["display"]
+    display["invented"] = "not allowed"
+    with pytest.raises(PlanSyntaxError, match="Extra inputs are not permitted"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+    del display["invented"]
+    display["beforeSection"] = " "
+    with pytest.raises(PlanSyntaxError, match=r"display\.beforeSection must not be empty"):
+        parse_plan_bytes(encode(example_plan_dict))
 
 
 def test_canonical_digest_is_independent_of_json_key_order() -> None:

@@ -139,3 +139,16 @@ def test_dispatch_and_affected_fields() -> None:
     assert compile_operation(create, None, NOW_MS).action == "create"
     assert compile_operation(trash, {}, NOW_MS).action == "trash"
     assert affected_marvin_fields(update) == ["day"]
+
+
+def test_display_metadata_never_compiles_to_marvin() -> None:
+    update, _, create, trash = operations()
+    compiled = [
+        compile_operation(update, {"day": "2026-08-08"}, NOW_MS),
+        compile_operation(create, None, NOW_MS),
+        compile_operation(trash, {}, NOW_MS),
+    ]
+    serialized = json.dumps([mutation.payload for mutation in compiled])
+    assert "display" not in serialized
+    assert "beforeSection" not in serialized
+    assert "afterSection" not in serialized

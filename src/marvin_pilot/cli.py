@@ -542,6 +542,12 @@ Every operation requires a unique lowercase-hyphen operationId, a task target, a
 Use operationId—not task ID—for selective revert. A single revert may repeat --only:
   marvin-pilot revert RECEIPT.json --only op-a --only op-b
 
+Optional review-only section metadata:
+  display.beforeSection    section title for the Before visualization
+  display.afterSection     section title for the After visualization
+The closed display object is included in the plan digest but never compiles to a Marvin setter.
+Create normally uses afterSection, Trash normally uses beforeSection, and update may use both.
+
 Conventions:
   dates                   YYYY-MM-DD
   plannedMonth            YYYY-MM

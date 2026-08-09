@@ -8,6 +8,7 @@ from marvin_pilot.field_registry import (
     field_snapshot,
     live_field_matches,
 )
+from marvin_pilot.models.plan_v1 import TaskFields
 
 
 @pytest.mark.parametrize(
@@ -62,6 +63,7 @@ def test_registry_covers_exact_plan_field_allowlist() -> None:
         "permanentSnoozeUntil",
         "dependencies",
     ]
+    assert list(FIELD_SPECS) == list(TaskFields.model_fields)
 
 
 @pytest.mark.parametrize(

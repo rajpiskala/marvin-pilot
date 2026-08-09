@@ -258,10 +258,26 @@ class NewTaskTarget(ClosedModel):
         return str(parsed)
 
 
+class OperationDisplay(ClosedModel):
+    """Optional review-only metadata; it never authorizes a Marvin mutation."""
+
+    beforeSection: StrictStr | None = None
+    afterSection: StrictStr | None = None
+
+    @field_validator("beforeSection", "afterSection")
+    @classmethod
+    def validate_section_title(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
+        field_name = f"display.{getattr(info, 'field_name', 'section')}"
+        return _non_empty(value, field_name, maximum=200)
+
+
 class BaseOperation(ClosedModel):
     operationId: StrictStr
     reason: StrictStr
     dependsOnOperations: list[StrictStr] = Field(default_factory=list)
+    display: OperationDisplay | None = None
 
     @field_validator("operationId")
     @classmethod

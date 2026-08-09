@@ -18,6 +18,17 @@
           "title": "Dependsonoperations",
           "type": "array"
         },
+        "display": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperationDisplay"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "operationId": {
           "title": "Operationid",
           "type": "string"
@@ -431,6 +442,38 @@
       "title": "NewTaskTarget",
       "type": "object"
     },
+    "OperationDisplay": {
+      "additionalProperties": false,
+      "description": "Optional review-only metadata; it never authorizes a Marvin mutation.",
+      "properties": {
+        "afterSection": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Aftersection"
+        },
+        "beforeSection": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Beforesection"
+        }
+      },
+      "title": "OperationDisplay",
+      "type": "object"
+    },
     "ParentRef": {
       "additionalProperties": false,
       "properties": {
@@ -798,6 +841,17 @@
           "title": "Dependsonoperations",
           "type": "array"
         },
+        "display": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperationDisplay"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "expectedUpdatedAt": {
           "anyOf": [
             {
@@ -852,6 +906,17 @@
           },
           "title": "Dependsonoperations",
           "type": "array"
+        },
+        "display": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperationDisplay"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "expectedUpdatedAt": {
           "anyOf": [
