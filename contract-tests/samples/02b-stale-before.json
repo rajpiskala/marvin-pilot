@@ -1,0 +1,25 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "bec10461-eb3b-55ff-9189-07d7bd4e5284",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Negative preflight contract: before-value mismatch.",
+  "operations": [
+    {
+      "operationId": "reject-stale-before",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "22bb8d3b-348f-5ba4-b586-68425119ddcc",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - rich field fixture - 22222222"
+      },
+      "reason": "Prove a stale normalized before value blocks all writes.",
+      "before": {
+        "note": "value that is not present"
+      },
+      "after": {
+        "note": "must never be written"
+      }
+    }
+  ]
+}

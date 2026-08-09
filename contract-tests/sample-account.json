@@ -1,0 +1,24 @@
+{
+  "sampleOnly": true,
+  "fixturePrefix": "DO NOT APPLY - Marvin Pilot bundled sample",
+  "parent": {
+    "id": "sample-only-parent-id",
+    "title": "Sample parent"
+  },
+  "label": {
+    "id": "sample-only-label-id",
+    "title": "Sample label"
+  },
+  "customSectionIds": [
+    "sample-custom-section-a",
+    "sample-custom-section-b"
+  ],
+  "timeBlockSectionIds": [
+    "sample-time-block-section-a",
+    "sample-time-block-section-b"
+  ],
+  "nonTaskDocument": {
+    "id": "sample-only-non-task-id",
+    "title": "Sample non-task document"
+  }
+}

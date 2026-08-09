@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "LabelRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "LabelRef",
+      "type": "object"
+    },
+    "ParentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "ParentRef",
+      "type": "object"
+    }
+  },
+  "$id": "https://example.invalid/marvin-pilot/contract-account-v1.schema.json",
+  "additionalProperties": false,
+  "description": "Optional live-account references needed for complete field/reference coverage.",
+  "properties": {
+    "customSectionIds": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 2,
+      "title": "Customsectionids",
+      "type": "array"
+    },
+    "fixturePrefix": {
+      "default": "Marvin Pilot Contract",
+      "title": "Fixtureprefix",
+      "type": "string"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LabelRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "nonTaskDocument": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ParentRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "parent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ParentRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "sampleOnly": {
+      "default": false,
+      "title": "Sampleonly",
+      "type": "boolean"
+    },
+    "timeBlockSectionIds": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 2,
+      "title": "Timeblocksectionids",
+      "type": "array"
+    }
+  },
+  "title": "Marvin Pilot contract-test account configuration v1",
+  "type": "object"
+}

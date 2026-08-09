@@ -159,6 +159,21 @@ history integrity. Dedicated-account API and browser contract testing has also c
 field plus create, schedule, unschedule, Trash, restore, revert, and a 200-operation scale run. See
 [`docs/live-contract-test-report.md`](docs/live-contract-test-report.md) for sanitized results.
 
+The successful live cases are packaged as a reusable contract-test kit. It generates fresh,
+isolated plans for another development account, bundles schema-valid sample plans and schemas,
+records expected results and hashes in a manifest, and verifies the entire suite offline:
+
+```console
+marvin-pilot contract-tests verify contract-tests/samples
+marvin-pilot contract-tests generate plans/my-contract-run \
+  --base-date 2026-08-10 \
+  --account-config plans/contract-account.json
+```
+
+See [`contract-tests/README.md`](contract-tests/README.md) before running any live case. The bundled
+sample plans are deliberately marked `DO NOT APPLY`; live suites must be freshly generated into
+ignored local storage.
+
 The full research, API mapping, threat model, design decisions, and rollout gates are in
 [`Implementation-Plan.md`](Implementation-Plan.md).
 

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "cef6cce2-da1b-516e-a6f5-48881b8a5f80",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Clear every configured optional field and unschedule the rich fixture.",
+  "operations": [
+    {
+      "operationId": "clear-every-configured-field",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "22bb8d3b-348f-5ba4-b586-68425119ddcc",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - field variants - 22222222"
+      },
+      "reason": "Verify JSON null clearing and Marvin semantic empty representations.",
+      "before": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - field variants - 22222222",
+        "scheduledDate": "2026-08-11",
+        "dueDate": "2026-08-21",
+        "startDate": "2026-08-10",
+        "endDate": "2026-08-19",
+        "plannedWeek": "2026-08-17",
+        "plannedMonth": "2026-09",
+        "estimatedTimeDuration": "2h",
+        "note": "",
+        "dayRank": -50.25,
+        "masterRank": 0,
+        "dailySection": "Afternoon",
+        "bonusSection": "Bonus",
+        "starPriority": "orange",
+        "frogSize": "monster",
+        "backburner": false,
+        "reviewDate": "2026-08-16",
+        "snoozedUntil": "2026-08-11T11:30:00+00:00",
+        "permanentSnoozeUntil": "18:45",
+        "dependencies": null,
+        "parent": {
+          "id": "unassigned",
+          "title": "Inbox"
+        },
+        "labels": null,
+        "customSectionId": "sample-custom-section-b",
+        "timeBlockSectionId": "sample-time-block-section-b"
+      },
+      "after": {
+        "scheduledDate": null,
+        "dueDate": null,
+        "startDate": null,
+        "endDate": null,
+        "plannedWeek": null,
+        "plannedMonth": null,
+        "estimatedTimeDuration": null,
+        "note": null,
+        "dayRank": null,
+        "masterRank": null,
+        "dailySection": null,
+        "bonusSection": null,
+        "starPriority": null,
+        "frogSize": null,
+        "backburner": null,
+        "reviewDate": null,
+        "snoozedUntil": null,
+        "permanentSnoozeUntil": null,
+        "dependencies": null,
+        "parent": null,
+        "labels": null,
+        "customSectionId": null,
+        "timeBlockSectionId": null,
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - fields cleared - 22222222"
+      }
+    }
+  ]
+}

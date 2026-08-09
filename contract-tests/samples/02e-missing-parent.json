@@ -1,0 +1,31 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "81c278ba-5496-5ef3-a1cd-a95596793b4f",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Negative preflight contract: missing parent reference.",
+  "operations": [
+    {
+      "operationId": "reject-missing-parent",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "22bb8d3b-348f-5ba4-b586-68425119ddcc",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - rich field fixture - 22222222"
+      },
+      "reason": "Prove missing parent references fail live preflight.",
+      "before": {
+        "parent": {
+          "id": "unassigned",
+          "title": "Inbox"
+        }
+      },
+      "after": {
+        "parent": {
+          "id": "e6834e8a-3eff-59fe-a3be-a4bf97445333",
+          "title": "Missing parent"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "b69c34ce-1d07-5eba-967a-62710aaf7122",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Apply a title-only change before an unrelated note edit.",
+  "operations": [
+    {
+      "operationId": "apply-title-before-unrelated-edit",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "ba7eafd0-88fb-507e-bdb2-6b94e314110a",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - conflict fixture - 22222222"
+      },
+      "reason": "Prove field-scoped revert preserves an untouched-field edit.",
+      "before": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - conflict fixture - 22222222"
+      },
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - unrelated edit base - 22222222"
+      }
+    }
+  ]
+}

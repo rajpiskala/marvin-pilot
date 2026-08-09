@@ -1,0 +1,156 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "fe590e0a-a947-5930-8f15-3356f12214d0",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Create 10 disposable tasks for scale and rate-limit testing.",
+  "operations": [
+    {
+      "operationId": "scale-create-001",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "fde435a2-6d64-5bf7-b1fd-012d8b9d82e2"
+      },
+      "reason": "Exercise sustainable sequential execution and durable audit history.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - scale 10 fixture 001 - 22222222"
+      }
+    },
+    {
+      "operationId": "scale-create-002",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "64b73fb7-241c-5d97-a0c3-09ca3ed9e63c"
+      },
+      "reason": "Exercise sustainable sequential execution and durable audit history.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - scale 10 fixture 002 - 22222222"
+      },
+      "dependsOnOperations": [
+        "scale-create-001"
+      ]
+    },
+    {
+      "operationId": "scale-create-003",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "e7ef7984-7eab-5e3f-9857-af797c10cc2d"
+      },
+      "reason": "Exercise sustainable sequential execution and durable audit history.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - scale 10 fixture 003 - 22222222"
+      },
+      "dependsOnOperations": [
+        "scale-create-002"
+      ]
+    },
+    {
+      "operationId": "scale-create-004",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "b977f430-8fa2-5e18-9380-dcbe1b9a019d"
+      },
+      "reason": "Exercise sustainable sequential execution and durable audit history.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - scale 10 fixture 004 - 22222222"
+      },
+      "dependsOnOperations": [
+        "scale-create-003"
+      ]
+    },
+    {
+      "operationId": "scale-create-005",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "57a7458c-bd45-5332-a4e2-2d32db1f2db0"
+      },
+      "reason": "Exercise sustainable sequential execution and durable audit history.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - scale 10 fixture 005 - 22222222"
+      },
+      "dependsOnOperations": [
+        "scale-create-004"
+      ]
+    },
+    {
+      "operationId": "scale-create-006",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "0d639c48-a571-521f-9a29-42b4b0a504ba"
+      },
+      "reason": "Exercise sustainable sequential execution and durable audit history.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - scale 10 fixture 006 - 22222222"
+      },
+      "dependsOnOperations": [
+        "scale-create-005"
+      ]
+    },
+    {
+      "operationId": "scale-create-007",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "543289da-59b5-5ffd-9237-4d64943959eb"
+      },
+      "reason": "Exercise sustainable sequential execution and durable audit history.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - scale 10 fixture 007 - 22222222"
+      },
+      "dependsOnOperations": [
+        "scale-create-006"
+      ]
+    },
+    {
+      "operationId": "scale-create-008",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "22182082-a8c9-52f5-9cbf-2e80a6fb8c84"
+      },
+      "reason": "Exercise sustainable sequential execution and durable audit history.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - scale 10 fixture 008 - 22222222"
+      },
+      "dependsOnOperations": [
+        "scale-create-007"
+      ]
+    },
+    {
+      "operationId": "scale-create-009",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "d6a13306-9d0e-5cb1-834c-b22947edca72"
+      },
+      "reason": "Exercise sustainable sequential execution and durable audit history.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - scale 10 fixture 009 - 22222222"
+      },
+      "dependsOnOperations": [
+        "scale-create-008"
+      ]
+    },
+    {
+      "operationId": "scale-create-010",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "3409c1b7-f531-5fe2-b676-e42a7d407613"
+      },
+      "reason": "Exercise sustainable sequential execution and durable audit history.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - scale 10 fixture 010 - 22222222"
+      },
+      "dependsOnOperations": [
+        "scale-create-009"
+      ]
+    }
+  ]
+}

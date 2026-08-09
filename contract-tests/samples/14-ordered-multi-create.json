@@ -1,0 +1,51 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "0700ecd0-785b-55f4-8f20-108f04adb058",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Create three explicitly ordered fixtures for selective revert.",
+  "operations": [
+    {
+      "operationId": "ordered-create-1",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "3be045c2-0cef-512f-a0ed-1156c1f36e63"
+      },
+      "reason": "Verify explicit operation dependency order.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - ordered fixture 1 - 22222222"
+      }
+    },
+    {
+      "operationId": "ordered-create-2",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "1f232c45-0152-55d7-a10c-a7fa8436c272"
+      },
+      "reason": "Verify explicit operation dependency order.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - ordered fixture 2 - 22222222"
+      },
+      "dependsOnOperations": [
+        "ordered-create-1"
+      ]
+    },
+    {
+      "operationId": "ordered-create-3",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "3d82707d-adb3-5567-8db0-f340de0c6cbf"
+      },
+      "reason": "Verify explicit operation dependency order.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - ordered fixture 3 - 22222222"
+      },
+      "dependsOnOperations": [
+        "ordered-create-2"
+      ]
+    }
+  ]
+}

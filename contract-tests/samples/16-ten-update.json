@@ -1,0 +1,169 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "99563f10-3e3f-5bb8-92e0-d048c4e629ff",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Update ten disposable tasks sequentially for pacing and progress tests.",
+  "operations": [
+    {
+      "operationId": "paced-update-01",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "553c7c10-a4d9-5cad-a87e-c2b08c18f828",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 01 - 22222222"
+      },
+      "reason": "Exercise sequential multi-task updates and progress reporting.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "DO NOT APPLY - Marvin Pilot bundled sample - paced update 01 - 22222222"
+      }
+    },
+    {
+      "operationId": "paced-update-02",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "4b678de4-cf12-56e5-a627-ab3c4fd42827",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 02 - 22222222"
+      },
+      "reason": "Exercise sequential multi-task updates and progress reporting.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "DO NOT APPLY - Marvin Pilot bundled sample - paced update 02 - 22222222"
+      }
+    },
+    {
+      "operationId": "paced-update-03",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "7f33e3f8-c46a-5b6a-9b36-f3126ac7ca0c",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 03 - 22222222"
+      },
+      "reason": "Exercise sequential multi-task updates and progress reporting.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "DO NOT APPLY - Marvin Pilot bundled sample - paced update 03 - 22222222"
+      }
+    },
+    {
+      "operationId": "paced-update-04",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "767b11d8-2ce1-598b-9d17-78dba7d31baf",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 04 - 22222222"
+      },
+      "reason": "Exercise sequential multi-task updates and progress reporting.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "DO NOT APPLY - Marvin Pilot bundled sample - paced update 04 - 22222222"
+      }
+    },
+    {
+      "operationId": "paced-update-05",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "c0f0ac81-9251-5f3e-9203-5a59a8b275bf",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 05 - 22222222"
+      },
+      "reason": "Exercise sequential multi-task updates and progress reporting.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "DO NOT APPLY - Marvin Pilot bundled sample - paced update 05 - 22222222"
+      }
+    },
+    {
+      "operationId": "paced-update-06",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "b85835eb-9ef4-5813-afea-d67521fb1475",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 06 - 22222222"
+      },
+      "reason": "Exercise sequential multi-task updates and progress reporting.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "DO NOT APPLY - Marvin Pilot bundled sample - paced update 06 - 22222222"
+      }
+    },
+    {
+      "operationId": "paced-update-07",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "564eb337-2c96-5054-a27a-4d17d063a875",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 07 - 22222222"
+      },
+      "reason": "Exercise sequential multi-task updates and progress reporting.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "DO NOT APPLY - Marvin Pilot bundled sample - paced update 07 - 22222222"
+      }
+    },
+    {
+      "operationId": "paced-update-08",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "9ff69b32-b098-5c96-91df-a648339a93b6",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 08 - 22222222"
+      },
+      "reason": "Exercise sequential multi-task updates and progress reporting.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "DO NOT APPLY - Marvin Pilot bundled sample - paced update 08 - 22222222"
+      }
+    },
+    {
+      "operationId": "paced-update-09",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "e0b2fb3b-127f-5f40-9f39-8a279bb6b532",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 09 - 22222222"
+      },
+      "reason": "Exercise sequential multi-task updates and progress reporting.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "DO NOT APPLY - Marvin Pilot bundled sample - paced update 09 - 22222222"
+      }
+    },
+    {
+      "operationId": "paced-update-10",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "868125b9-b166-58dc-9b7d-87ef687747a0",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 10 - 22222222"
+      },
+      "reason": "Exercise sequential multi-task updates and progress reporting.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "DO NOT APPLY - Marvin Pilot bundled sample - paced update 10 - 22222222"
+      }
+    }
+  ]
+}

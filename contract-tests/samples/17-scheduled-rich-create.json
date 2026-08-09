@@ -1,0 +1,54 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "c3611ee4-9272-5817-8164-7890db4d8fbc",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Create a scheduled task with every configured create-time field.",
+  "operations": [
+    {
+      "operationId": "create-scheduled-rich-fixture",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "00e99f71-c302-5143-8402-d279afe89315"
+      },
+      "reason": "Verify create shape, firstScheduled, fields, and create inverse.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - scheduled rich fixture - 22222222",
+        "scheduledDate": "2026-08-12",
+        "dueDate": "2026-08-22",
+        "startDate": "2026-08-11",
+        "endDate": "2026-08-19",
+        "plannedWeek": "2026-08-10",
+        "plannedMonth": "2026-08",
+        "estimatedTimeDuration": "45m",
+        "note": "Disposable rich-create note for the Marvin Pilot contract suite.",
+        "dayRank": 1.5,
+        "masterRank": 2.5,
+        "dailySection": "Morning",
+        "bonusSection": "Essential",
+        "starPriority": "yellow",
+        "frogSize": "baby",
+        "backburner": false,
+        "reviewDate": "2026-08-16",
+        "snoozedUntil": "2026-08-12T12:00:00+00:00",
+        "permanentSnoozeUntil": "12:30",
+        "dependencies": [
+          "463b5dec-63a7-56e6-8878-553a26f1eaa2"
+        ],
+        "parent": {
+          "id": "sample-only-parent-id",
+          "title": "Sample parent"
+        },
+        "labels": [
+          {
+            "id": "sample-only-label-id",
+            "title": "Sample label"
+          }
+        ],
+        "customSectionId": "sample-custom-section-a",
+        "timeBlockSectionId": "sample-time-block-section-a"
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "sampleOnly": true,
+  "fixturePrefix": "Marvin Pilot Contract",
+  "parent": {
+    "id": "replace-with-real-category-or-project-id",
+    "title": "Replace with exact parent title"
+  },
+  "label": {
+    "id": "replace-with-real-label-id",
+    "title": "Replace with exact label title"
+  },
+  "customSectionIds": [
+    "replace-with-first-custom-section-id",
+    "replace-with-second-custom-section-id"
+  ],
+  "timeBlockSectionIds": [],
+  "nonTaskDocument": {
+    "id": "replace-with-real-category-or-project-id",
+    "title": "Replace with exact non-task title"
+  }
+}

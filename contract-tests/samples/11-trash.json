@@ -1,0 +1,19 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "bde2cf28-a234-59e8-8e0d-79b6cdda6271",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Move the isolated Trash fixture into Marvin's reversible UI Trash.",
+  "operations": [
+    {
+      "operationId": "trash-fixture",
+      "action": "trash",
+      "target": {
+        "type": "task",
+        "id": "ca4e6845-708a-5899-a775-11b0d9655500",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - trash fixture - 22222222"
+      },
+      "reason": "Verify client-side Trash setters without permanent deletion."
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "ba3c505d-3996-55d0-afbe-e7bc81527c0c",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Negative preflight contract: document is not a task.",
+  "operations": [
+    {
+      "operationId": "reject-non-task",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "sample-only-non-task-id",
+        "title": "Sample non-task document"
+      },
+      "reason": "Prove the v1 task-only boundary rejects category/project documents.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "must never be written"
+      }
+    }
+  ]
+}

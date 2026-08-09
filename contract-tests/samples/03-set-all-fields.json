@@ -1,0 +1,84 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "f647f4d2-cfa4-5ee3-a9b6-983c8a0a3306",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Set every configured v1 field on the isolated rich fixture.",
+  "operations": [
+    {
+      "operationId": "set-every-configured-field",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "22bb8d3b-348f-5ba4-b586-68425119ddcc",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - rich field fixture - 22222222"
+      },
+      "reason": "Verify public field mappings, metadata timestamps, and live state.",
+      "before": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - rich field fixture - 22222222",
+        "scheduledDate": null,
+        "dueDate": null,
+        "startDate": null,
+        "endDate": null,
+        "plannedWeek": null,
+        "plannedMonth": null,
+        "estimatedTimeDuration": null,
+        "note": null,
+        "dayRank": null,
+        "masterRank": null,
+        "dailySection": null,
+        "bonusSection": null,
+        "starPriority": null,
+        "frogSize": null,
+        "backburner": null,
+        "reviewDate": null,
+        "snoozedUntil": null,
+        "permanentSnoozeUntil": null,
+        "dependencies": null,
+        "parent": {
+          "id": "unassigned",
+          "title": "Inbox"
+        },
+        "labels": null,
+        "customSectionId": null,
+        "timeBlockSectionId": null
+      },
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - every field set - 22222222",
+        "scheduledDate": "2026-08-10",
+        "dueDate": "2026-08-20",
+        "startDate": "2026-08-09",
+        "endDate": "2026-08-18",
+        "plannedWeek": "2026-08-10",
+        "plannedMonth": "2026-08",
+        "estimatedTimeDuration": "1h30m",
+        "note": "Disposable rich-field note for the Marvin Pilot contract suite.",
+        "dayRank": 100.5,
+        "masterRank": 200.25,
+        "dailySection": "Morning",
+        "bonusSection": "Essential",
+        "starPriority": "yellow",
+        "frogSize": "baby",
+        "backburner": true,
+        "reviewDate": "2026-08-15",
+        "snoozedUntil": "2026-08-10T10:00:00+00:00",
+        "permanentSnoozeUntil": "09:15",
+        "dependencies": [
+          "463b5dec-63a7-56e6-8878-553a26f1eaa2"
+        ],
+        "parent": {
+          "id": "sample-only-parent-id",
+          "title": "Sample parent"
+        },
+        "labels": [
+          {
+            "id": "sample-only-label-id",
+            "title": "Sample label"
+          }
+        ],
+        "customSectionId": "sample-custom-section-a",
+        "timeBlockSectionId": "sample-time-block-section-a"
+      }
+    }
+  ]
+}

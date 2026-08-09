@@ -1,0 +1,25 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "5e82d9b3-739e-5acf-abf0-3c18a917f71e",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Establish an applied title for a three-way revert conflict.",
+  "operations": [
+    {
+      "operationId": "apply-conflict-base-title",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "ba7eafd0-88fb-507e-bdb2-6b94e314110a",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - conflict fixture - 22222222"
+      },
+      "reason": "Establish the applied value in before/applied/current.",
+      "before": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - conflict fixture - 22222222"
+      },
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - conflict base applied - 22222222"
+      }
+    }
+  ]
+}

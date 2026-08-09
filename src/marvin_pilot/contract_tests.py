@@ -10,7 +10,15 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID, uuid5
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 from marvin_pilot.errors import PlanSemanticError, PlanSyntaxError
 from marvin_pilot.models.plan_v1 import LabelRef, ParentRef
@@ -49,6 +57,21 @@ class ContractAccountConfig(BaseModel):
         if any(not item.strip() or len(item) > 500 for item in value):
             raise ValueError("section IDs must contain 1-500 characters")
         return value
+
+    @model_validator(mode="after")
+    def reject_live_placeholders(self) -> ContractAccountConfig:
+        if self.sampleOnly:
+            return self
+        values = [
+            *(item.id for item in (self.parent, self.label, self.nonTaskDocument) if item),
+            *self.customSectionIds,
+            *self.timeBlockSectionIds,
+        ]
+        if any(value.startswith("replace-with-") for value in values):
+            raise ValueError(
+                "replace or remove every replace-with-* placeholder before setting sampleOnly=false"
+            )
+        return self
 
 
 def account_config_schema_json() -> str:

@@ -1,0 +1,156 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "266ee75d-f099-5153-90a9-abfcb30d5678",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Create ten disposable tasks through stdin for pacing and audit tests.",
+  "operations": [
+    {
+      "operationId": "stdin-create-01",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "553c7c10-a4d9-5cad-a87e-c2b08c18f828"
+      },
+      "reason": "Exercise stdin durability, progress, pacing, and ETA.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 01 - 22222222"
+      }
+    },
+    {
+      "operationId": "stdin-create-02",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "4b678de4-cf12-56e5-a627-ab3c4fd42827"
+      },
+      "reason": "Exercise stdin durability, progress, pacing, and ETA.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 02 - 22222222"
+      },
+      "dependsOnOperations": [
+        "stdin-create-01"
+      ]
+    },
+    {
+      "operationId": "stdin-create-03",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "7f33e3f8-c46a-5b6a-9b36-f3126ac7ca0c"
+      },
+      "reason": "Exercise stdin durability, progress, pacing, and ETA.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 03 - 22222222"
+      },
+      "dependsOnOperations": [
+        "stdin-create-02"
+      ]
+    },
+    {
+      "operationId": "stdin-create-04",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "767b11d8-2ce1-598b-9d17-78dba7d31baf"
+      },
+      "reason": "Exercise stdin durability, progress, pacing, and ETA.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 04 - 22222222"
+      },
+      "dependsOnOperations": [
+        "stdin-create-03"
+      ]
+    },
+    {
+      "operationId": "stdin-create-05",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "c0f0ac81-9251-5f3e-9203-5a59a8b275bf"
+      },
+      "reason": "Exercise stdin durability, progress, pacing, and ETA.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 05 - 22222222"
+      },
+      "dependsOnOperations": [
+        "stdin-create-04"
+      ]
+    },
+    {
+      "operationId": "stdin-create-06",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "b85835eb-9ef4-5813-afea-d67521fb1475"
+      },
+      "reason": "Exercise stdin durability, progress, pacing, and ETA.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 06 - 22222222"
+      },
+      "dependsOnOperations": [
+        "stdin-create-05"
+      ]
+    },
+    {
+      "operationId": "stdin-create-07",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "564eb337-2c96-5054-a27a-4d17d063a875"
+      },
+      "reason": "Exercise stdin durability, progress, pacing, and ETA.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 07 - 22222222"
+      },
+      "dependsOnOperations": [
+        "stdin-create-06"
+      ]
+    },
+    {
+      "operationId": "stdin-create-08",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "9ff69b32-b098-5c96-91df-a648339a93b6"
+      },
+      "reason": "Exercise stdin durability, progress, pacing, and ETA.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 08 - 22222222"
+      },
+      "dependsOnOperations": [
+        "stdin-create-07"
+      ]
+    },
+    {
+      "operationId": "stdin-create-09",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "e0b2fb3b-127f-5f40-9f39-8a279bb6b532"
+      },
+      "reason": "Exercise stdin durability, progress, pacing, and ETA.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 09 - 22222222"
+      },
+      "dependsOnOperations": [
+        "stdin-create-08"
+      ]
+    },
+    {
+      "operationId": "stdin-create-10",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "868125b9-b166-58dc-9b7d-87ef687747a0"
+      },
+      "reason": "Exercise stdin durability, progress, pacing, and ETA.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - stdin fixture 10 - 22222222"
+      },
+      "dependsOnOperations": [
+        "stdin-create-09"
+      ]
+    }
+  ]
+}

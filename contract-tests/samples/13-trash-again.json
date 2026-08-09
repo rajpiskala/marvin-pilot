@@ -1,0 +1,19 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "9c4e2378-d224-5061-919c-65a62a1f8c92",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Prove duplicate Trash attempts are refused.",
+  "operations": [
+    {
+      "operationId": "reject-trash-again",
+      "action": "trash",
+      "target": {
+        "type": "task",
+        "id": "ca4e6845-708a-5899-a775-11b0d9655500",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - trash fixture - 22222222"
+      },
+      "reason": "Negative Trash-state preflight fixture."
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "056e26af-fb45-56bb-9a08-5e18a9a6c090",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Negative preflight contract: exact target title mismatch.",
+  "operations": [
+    {
+      "operationId": "reject-wrong-title",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "22bb8d3b-348f-5ba4-b586-68425119ddcc",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - deliberately wrong title - 22222222"
+      },
+      "reason": "Prove the whole plan stops before writes when the target title is stale.",
+      "before": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - rich field fixture - 22222222"
+      },
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - must never be written - 22222222"
+      }
+    }
+  ]
+}

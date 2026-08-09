@@ -1,0 +1,357 @@
+{
+  "suiteVersion": 1,
+  "runId": "22222222-2222-4222-8222-222222222222",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "baseDate": "2026-08-10",
+  "sampleOnly": true,
+  "fixturePrefix": "DO NOT APPLY - Marvin Pilot bundled sample",
+  "scaleCount": 10,
+  "coverage": {
+    "parent": true,
+    "label": true,
+    "customSectionId": true,
+    "timeBlockSectionId": true,
+    "nonTaskBoundary": true
+  },
+  "schemas": {
+    "changePlan": {
+      "file": "change-plan-v1.schema.json",
+      "sha256": "c3c0515308c4d506d45913438ccc2efc30db1816a37fa26cc11b5cc2f1ffd2c1"
+    },
+    "accountConfig": {
+      "file": "account-config-v1.schema.json",
+      "sha256": "24808e969c26c763638b4ac6f8bcd1815c873d2b3d5a6988647e8748979e8991"
+    }
+  },
+  "cases": [
+    {
+      "caseId": "create-fixtures",
+      "file": "01-create-fixtures.json",
+      "sha256": "fa53ac30cb493052e5589a921279d4185550d2aa88ea4858a6a662526ef40889",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds; retain receipt for final cleanup",
+      "matrix": [
+        "C02",
+        "C06",
+        "E10",
+        "G02",
+        "G03"
+      ],
+      "notes": "Run first. Revert this receipt last to move every remaining fixture to Trash."
+    },
+    {
+      "caseId": "negative-wrong-title",
+      "file": "02a-wrong-title.json",
+      "sha256": "2e40233660f93ffe679ceb7338785b684cc3a602e63a7f361d75abbe59276707",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply exits 5 with zero writes and no mutation receipt",
+      "matrix": [
+        "E01"
+      ],
+      "notes": "Run after 01 and before 03 while the rich fixture is unchanged."
+    },
+    {
+      "caseId": "negative-stale-before",
+      "file": "02b-stale-before.json",
+      "sha256": "4031e310e2d08215a92e5beb7965ef3d95f2b027cc4dcde9472b8a97075c4646",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply exits 5 with zero writes and no mutation receipt",
+      "matrix": [
+        "E02"
+      ],
+      "notes": "Run after 01 and before 03 while the rich fixture is unchanged."
+    },
+    {
+      "caseId": "negative-stale-updated-at",
+      "file": "02c-stale-updated-at.json",
+      "sha256": "90463cf39b987f6822946961774af809e24013604dbf32107117a0b94c46b485",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply exits 5 with zero writes and no mutation receipt",
+      "matrix": [
+        "E03"
+      ],
+      "notes": "Run after 01 and before 03 while the rich fixture is unchanged."
+    },
+    {
+      "caseId": "negative-missing-label",
+      "file": "02d-missing-label.json",
+      "sha256": "bccebb0d1bf47142c232cc6eb258323030e1a45fb2a4120cee8b1214449ea444",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply exits 5 with zero writes and no mutation receipt",
+      "matrix": [
+        "E05"
+      ],
+      "notes": "Run after 01 and before 03 while the rich fixture is unchanged."
+    },
+    {
+      "caseId": "negative-missing-parent",
+      "file": "02e-missing-parent.json",
+      "sha256": "1417d9fe381fc87cac743491d2f49fb71fc9b46a38e2586cc4208ba12e11fbf8",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply exits 5 with zero writes and no mutation receipt",
+      "matrix": [
+        "E05"
+      ],
+      "notes": "Run after 01 and before 03 while the rich fixture is unchanged."
+    },
+    {
+      "caseId": "negative-missing-dependency",
+      "file": "02f-missing-dependency.json",
+      "sha256": "faa3ca4a2627f7ce366dae4aac609c952e6aac43733b875da2d793298cee2242",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply exits 5 with zero writes and no mutation receipt",
+      "matrix": [
+        "E05"
+      ],
+      "notes": "Run after 01 and before 03 while the rich fixture is unchanged."
+    },
+    {
+      "caseId": "negative-create-collision",
+      "file": "02g-create-collision.json",
+      "sha256": "e3132032b1ca1a221afcc8a463d6966605083af32358b5c7474ded61d7b48d62",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply exits 5 with zero writes and no mutation receipt",
+      "matrix": [
+        "C05"
+      ],
+      "notes": "Run after 01 and before 03 while the rich fixture is unchanged."
+    },
+    {
+      "caseId": "negative-non-task",
+      "file": "02h-non-task.json",
+      "sha256": "3ef65fe7204d10d94f2cf8e69fb5502db89f742ae38c7f0e90c9a13e552f37e8",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply exits 5 with zero writes and no mutation receipt",
+      "matrix": [
+        "E04"
+      ],
+      "notes": "Run after 01 and before 03 while the rich fixture is unchanged."
+    },
+    {
+      "caseId": "set-all-fields",
+      "file": "03-set-all-fields.json",
+      "sha256": "921afdaacfb216734283f7f45c9db5a5c97e5d8e7dedb6993171d8412eb373c7",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds",
+      "matrix": [
+        "D01",
+        "D02",
+        "D03",
+        "D04",
+        "D05",
+        "D06",
+        "D07",
+        "D08",
+        "D09",
+        "D10",
+        "D11",
+        "D12",
+        "D13",
+        "D14",
+        "D15",
+        "D16",
+        "D17",
+        "D18",
+        "D19",
+        "D20",
+        "D21",
+        "D22",
+        "D23",
+        "D24",
+        "D25"
+      ],
+      "notes": "Coverage of parent/label/custom/time-block references follows account config."
+    },
+    {
+      "caseId": "field-variants",
+      "file": "04-field-variants.json",
+      "sha256": "29a9a699a865a8248a63dc949c473bd65b4bb043e67acf6d87f99bbfd1d40324",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds",
+      "matrix": [
+        "D01-D25"
+      ],
+      "notes": "Run immediately after 03; retain receipt for reverse-order cleanup."
+    },
+    {
+      "caseId": "clear-all-fields",
+      "file": "05-clear-all-fields.json",
+      "sha256": "4ec0655fb7ff59bf83f2cd7958f268e28ad831e9181dd158a3c54728944089bf",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds",
+      "matrix": [
+        "D03-D24"
+      ],
+      "notes": "Run immediately after 04; verify tracked duration remains untouched."
+    },
+    {
+      "caseId": "enum-extremes",
+      "file": "06-enum-extremes.json",
+      "sha256": "de3f20311f7e349f92fa57384224e6f380690b2257ec6e7718ca728d01d3b08d",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds",
+      "matrix": [
+        "D14",
+        "D18",
+        "D19",
+        "D20"
+      ],
+      "notes": "Revert 06, 05, 04, and 03 in reverse order before reverting 01."
+    },
+    {
+      "caseId": "conflict-base",
+      "file": "07-conflict-base.json",
+      "sha256": "18e2e3f048037cf500e3cc04e859f5c64449bbf7e4ada2deed0eda0b953bb6db",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds; later revert is expected to conflict",
+      "matrix": [
+        "F07"
+      ],
+      "notes": "Apply 08 next, then try reverting 07 and expect exit 5 with no write."
+    },
+    {
+      "caseId": "conflict-later-edit",
+      "file": "08-conflict-later-edit.json",
+      "sha256": "413d05572a27528d76467c60d09175e7f0ebc766c15ea7df07aef8427f08036b",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds",
+      "matrix": [
+        "F07"
+      ],
+      "notes": "After the conflict assertion, revert 08 and then 07 to reset the fixture."
+    },
+    {
+      "caseId": "unrelated-title",
+      "file": "09-unrelated-title.json",
+      "sha256": "6b34c05c66505ab91dc70551adf0724c1c85305ea7a2da604787469b3ddd99e4",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds; revert after 10 also succeeds",
+      "matrix": [
+        "F08"
+      ],
+      "notes": "Apply 10, then revert 09 and confirm the note from 10 survives."
+    },
+    {
+      "caseId": "unrelated-note",
+      "file": "10-unrelated-note.json",
+      "sha256": "47353d4737e13a341c3e25267631d0d345b496969f32f48a2ae590ffd7d7aeae",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds",
+      "matrix": [
+        "F08"
+      ],
+      "notes": "After reverting 09, revert 10 to restore the note."
+    },
+    {
+      "caseId": "trash",
+      "file": "11-trash.json",
+      "sha256": "db017655ffaf6c82050d12e07cea2a644473b16fd87a15b4e105b1e52c9c659e",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds; browser shows Trash; revert restores",
+      "matrix": [
+        "F01",
+        "F02",
+        "F10",
+        "G12"
+      ],
+      "notes": "Run 12 and 13 while trashed, then revert this receipt and verify restoration."
+    },
+    {
+      "caseId": "update-trashed",
+      "file": "12-update-trashed.json",
+      "sha256": "881581b418f271f41725ad3ecd994ed34862014b68322bdc7873e3a900cc535c",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply exits 5 with zero writes",
+      "matrix": [
+        "E07"
+      ],
+      "notes": "Run only after 11 and before reverting 11."
+    },
+    {
+      "caseId": "trash-again",
+      "file": "13-trash-again.json",
+      "sha256": "4945ab2b5bfcf7a6096b93ef89c70a70a0613044e3bee367b89fcf2dd200daa9",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply exits 5 with zero writes",
+      "matrix": [
+        "E07"
+      ],
+      "notes": "Run only after 11 and before reverting 11."
+    },
+    {
+      "caseId": "ordered-multi-create",
+      "file": "14-ordered-multi-create.json",
+      "sha256": "dc6924f5adbc15870e7e039ae82064bbd3933711e8f82dfc8e278a66b94e25b3",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds; multi-ID selective revert succeeds in reverse order",
+      "matrix": [
+        "C06",
+        "F04",
+        "E10"
+      ],
+      "notes": "Revert two operation IDs in one command, then revert the final operation."
+    },
+    {
+      "caseId": "stdin-ten-create",
+      "file": "15-stdin-ten-create.json",
+      "sha256": "7eb8864c1f73ca41dc8dc84c3338fe236e8f22e022322cdf653d32be80ee1ac7",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "piped apply succeeds only with a real controlling TTY",
+      "matrix": [
+        "G05",
+        "G06",
+        "G08"
+      ],
+      "notes": "Pipe file bytes to apply - while confirmation is read from the controlling TTY."
+    },
+    {
+      "caseId": "ten-update",
+      "file": "16-ten-update.json",
+      "sha256": "484f05e26a2057ec70f54687baab5462fa1e7f36541f228697a530f9be3e8536",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds",
+      "matrix": [
+        "G06",
+        "G08"
+      ],
+      "notes": "Run after 15; revert 16 before reverting 15."
+    },
+    {
+      "caseId": "scheduled-rich-create",
+      "file": "17-scheduled-rich-create.json",
+      "sha256": "60c0504b50e89848d34e9bd53c8be9ac6c9879175bd897cdda937fb1194f8d71",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply succeeds; revert moves created task to UI Trash",
+      "matrix": [
+        "C03",
+        "C04",
+        "C07",
+        "F09",
+        "G12"
+      ],
+      "notes": "Verify firstScheduled in API/browser state, then revert the apply receipt."
+    },
+    {
+      "caseId": "scale-create",
+      "file": "18-scale-10-create.json",
+      "sha256": "54574dca7adc45e588933ab5285c16bfd2979763b91a43a145d1c67a8158ee90",
+      "expectedOfflineValidation": "valid",
+      "expectedLiveResult": "apply and complete/partial-resume revert ultimately confirm every operation",
+      "matrix": [
+        "G07",
+        "G09",
+        "G11"
+      ],
+      "notes": "Record elapsed time, response failures, retry gaps, receipts, and aggregate cleanup."
+    }
+  ],
+  "workflow": [
+    "Validate the suite offline before loading any credential.",
+    "Apply 01, then run every 02 negative case before mutating the rich fixture.",
+    "Apply 03-06 in order; revert 06-03 in reverse order after inspecting each state.",
+    "Run 07/08 conflict and 09/10 unrelated-field workflows exactly as their notes say.",
+    "Apply 11, assert 12/13 fail, then revert 11 to verify restore.",
+    "Run and clean up 14-18; use repeated --only IDs for the selective-revert case.",
+    "Finally revert receipt 01 so all remaining base fixtures move to Marvin Trash."
+  ]
+}

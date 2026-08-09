@@ -1,0 +1,66 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "b4807189-08a8-5485-8f1c-ceb72d3595a9",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Create ordered disposable fixtures for the Marvin Pilot contract suite.",
+  "operations": [
+    {
+      "operationId": "create-reference-fixture",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "463b5dec-63a7-56e6-8878-553a26f1eaa2"
+      },
+      "reason": "Provide a real task ID for dependency field tests.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - reference fixture - 22222222"
+      }
+    },
+    {
+      "operationId": "create-rich-fixture",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "22bb8d3b-348f-5ba4-b586-68425119ddcc"
+      },
+      "reason": "Provide the isolated target for every supported task field.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - rich field fixture - 22222222"
+      },
+      "dependsOnOperations": [
+        "create-reference-fixture"
+      ]
+    },
+    {
+      "operationId": "create-conflict-fixture",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "ba7eafd0-88fb-507e-bdb2-6b94e314110a"
+      },
+      "reason": "Provide the isolated target for conflict and unrelated-edit tests.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - conflict fixture - 22222222"
+      },
+      "dependsOnOperations": [
+        "create-rich-fixture"
+      ]
+    },
+    {
+      "operationId": "create-trash-fixture",
+      "action": "create",
+      "target": {
+        "type": "task",
+        "id": "ca4e6845-708a-5899-a775-11b0d9655500"
+      },
+      "reason": "Provide the isolated target for Trash and restore tests.",
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - trash fixture - 22222222"
+      },
+      "dependsOnOperations": [
+        "create-conflict-fixture"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "cfd5a170-ab38-5284-9b10-3bed39169b25",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Change the same touched field after the base apply.",
+  "operations": [
+    {
+      "operationId": "apply-later-title-edit",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "ba7eafd0-88fb-507e-bdb2-6b94e314110a",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - conflict base applied - 22222222"
+      },
+      "reason": "Create a later touched-field value that revert must not clobber.",
+      "before": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - conflict base applied - 22222222"
+      },
+      "after": {
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - later touched edit - 22222222"
+      }
+    }
+  ]
+}

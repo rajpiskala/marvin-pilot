@@ -1,0 +1,26 @@
+{
+  "$schema": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "schemaVersion": 1,
+  "planId": "f83bbd2f-b90e-5f6f-a33f-60c1c89ea9cb",
+  "createdAt": "2026-08-08T20:00:00-07:00",
+  "summary": "Negative preflight contract: expectedUpdatedAt mismatch.",
+  "operations": [
+    {
+      "operationId": "reject-stale-updated-at",
+      "action": "update",
+      "target": {
+        "type": "task",
+        "id": "22bb8d3b-348f-5ba4-b586-68425119ddcc",
+        "title": "DO NOT APPLY - Marvin Pilot bundled sample - rich field fixture - 22222222"
+      },
+      "reason": "Prove stale document revision metadata blocks all writes.",
+      "before": {
+        "note": null
+      },
+      "after": {
+        "note": "must never be written"
+      },
+      "expectedUpdatedAt": 0
+    }
+  ]
+}

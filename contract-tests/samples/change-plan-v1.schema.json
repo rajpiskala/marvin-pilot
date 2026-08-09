@@ -1,0 +1,962 @@
+{
+  "$defs": {
+    "CreateOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "create",
+          "title": "Action",
+          "type": "string"
+        },
+        "after": {
+          "$ref": "#/$defs/CreateTaskFields"
+        },
+        "dependsOnOperations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependsonoperations",
+          "type": "array"
+        },
+        "operationId": {
+          "title": "Operationid",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/NewTaskTarget"
+        }
+      },
+      "required": [
+        "operationId",
+        "reason",
+        "action",
+        "target",
+        "after"
+      ],
+      "title": "CreateOperation",
+      "type": "object"
+    },
+    "CreateTaskFields": {
+      "additionalProperties": false,
+      "properties": {
+        "backburner": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Backburner"
+        },
+        "bonusSection": {
+          "anyOf": [
+            {
+              "enum": [
+                "Essential",
+                "Bonus"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bonussection"
+        },
+        "customSectionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Customsectionid"
+        },
+        "dailySection": {
+          "anyOf": [
+            {
+              "enum": [
+                "Morning",
+                "Afternoon",
+                "Evening"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dailysection"
+        },
+        "dayRank": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dayrank"
+        },
+        "dependencies": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dependencies"
+        },
+        "dueDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duedate"
+        },
+        "endDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "estimatedTimeDuration": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimatedtimeduration"
+        },
+        "frogSize": {
+          "anyOf": [
+            {
+              "enum": [
+                "normal",
+                "baby",
+                "monster"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Frogsize"
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/LabelRef"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Labels"
+        },
+        "masterRank": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Masterrank"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ParentRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "permanentSnoozeUntil": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Permanentsnoozeuntil"
+        },
+        "plannedMonth": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plannedmonth"
+        },
+        "plannedWeek": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plannedweek"
+        },
+        "reviewDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewdate"
+        },
+        "scheduledDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scheduleddate"
+        },
+        "snoozedUntil": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snoozeduntil"
+        },
+        "starPriority": {
+          "anyOf": [
+            {
+              "enum": [
+                "yellow",
+                "orange",
+                "red"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Starpriority"
+        },
+        "startDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Startdate"
+        },
+        "timeBlockSectionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeblocksectionid"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "CreateTaskFields",
+      "type": "object"
+    },
+    "ExistingTaskTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "const": "task",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "title"
+      ],
+      "title": "ExistingTaskTarget",
+      "type": "object"
+    },
+    "LabelRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "LabelRef",
+      "type": "object"
+    },
+    "NewTaskTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "task",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "title": "NewTaskTarget",
+      "type": "object"
+    },
+    "ParentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "ParentRef",
+      "type": "object"
+    },
+    "TaskFields": {
+      "additionalProperties": false,
+      "description": "Normal, allowlisted task fields; unset and explicit null remain distinguishable.",
+      "properties": {
+        "backburner": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Backburner"
+        },
+        "bonusSection": {
+          "anyOf": [
+            {
+              "enum": [
+                "Essential",
+                "Bonus"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bonussection"
+        },
+        "customSectionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Customsectionid"
+        },
+        "dailySection": {
+          "anyOf": [
+            {
+              "enum": [
+                "Morning",
+                "Afternoon",
+                "Evening"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dailysection"
+        },
+        "dayRank": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dayrank"
+        },
+        "dependencies": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dependencies"
+        },
+        "dueDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duedate"
+        },
+        "endDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "estimatedTimeDuration": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimatedtimeduration"
+        },
+        "frogSize": {
+          "anyOf": [
+            {
+              "enum": [
+                "normal",
+                "baby",
+                "monster"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Frogsize"
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/LabelRef"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Labels"
+        },
+        "masterRank": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Masterrank"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ParentRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "permanentSnoozeUntil": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Permanentsnoozeuntil"
+        },
+        "plannedMonth": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plannedmonth"
+        },
+        "plannedWeek": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plannedweek"
+        },
+        "reviewDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewdate"
+        },
+        "scheduledDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scheduleddate"
+        },
+        "snoozedUntil": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snoozeduntil"
+        },
+        "starPriority": {
+          "anyOf": [
+            {
+              "enum": [
+                "yellow",
+                "orange",
+                "red"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Starpriority"
+        },
+        "startDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Startdate"
+        },
+        "timeBlockSectionId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeblocksectionid"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "title": "TaskFields",
+      "type": "object"
+    },
+    "TrashOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "trash",
+          "title": "Action",
+          "type": "string"
+        },
+        "dependsOnOperations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependsonoperations",
+          "type": "array"
+        },
+        "expectedUpdatedAt": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expectedupdatedat"
+        },
+        "operationId": {
+          "title": "Operationid",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/ExistingTaskTarget"
+        }
+      },
+      "required": [
+        "operationId",
+        "reason",
+        "action",
+        "target"
+      ],
+      "title": "TrashOperation",
+      "type": "object"
+    },
+    "UpdateOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "update",
+          "title": "Action",
+          "type": "string"
+        },
+        "after": {
+          "$ref": "#/$defs/TaskFields"
+        },
+        "before": {
+          "$ref": "#/$defs/TaskFields"
+        },
+        "dependsOnOperations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependsonoperations",
+          "type": "array"
+        },
+        "expectedUpdatedAt": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expectedupdatedat"
+        },
+        "operationId": {
+          "title": "Operationid",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/ExistingTaskTarget"
+        }
+      },
+      "required": [
+        "operationId",
+        "reason",
+        "action",
+        "target",
+        "before",
+        "after"
+      ],
+      "title": "UpdateOperation",
+      "type": "object"
+    }
+  },
+  "$id": "https://example.invalid/marvin-pilot/v1/schema.json",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "$Schema"
+    },
+    "createdAt": {
+      "title": "Createdat",
+      "type": "string"
+    },
+    "operations": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "create": "#/$defs/CreateOperation",
+            "trash": "#/$defs/TrashOperation",
+            "update": "#/$defs/UpdateOperation"
+          },
+          "propertyName": "action"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/UpdateOperation"
+          },
+          {
+            "$ref": "#/$defs/CreateOperation"
+          },
+          {
+            "$ref": "#/$defs/TrashOperation"
+          }
+        ]
+      },
+      "maxItems": 500,
+      "minItems": 1,
+      "title": "Operations",
+      "type": "array"
+    },
+    "planId": {
+      "title": "Planid",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": 1,
+      "title": "Schemaversion",
+      "type": "integer"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "planId",
+    "createdAt",
+    "summary",
+    "operations"
+  ],
+  "title": "Marvin Pilot change plan v1",
+  "type": "object"
+}
