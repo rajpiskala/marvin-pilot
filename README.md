@@ -52,6 +52,44 @@ Revert is deliberately conflict-aware. It restores only fields the apply changed
 unrelated later edits, and refuses to proceed if a touched field has since changed. It creates a
 new append-oriented receipt; it never rewrites the apply receipt.
 
+## Visual review
+
+Open any valid change plan in the credential-free browser visualizer:
+
+```console
+marvin-pilot visualize plan.json
+
+# Or open the file-picker landing page
+marvin-pilot visualize
+```
+
+The page shows Marvin-inspired task cards in sectioned Before/After rows. Review in the default
+Split layout or switch to full-width Before and After layouts; choose Light, Dusk, or Night; filter
+by Create, Update, or Trash; and expand an operation to see its reason, IDs, and exact JSON field
+diff. Create and Trash placeholders ensure that the single-pane layouts still account for every
+operation. Display order is always deterministic, while each row retains its original JSON index
+because apply continues to use original plan order.
+
+The visualizer runs on an ephemeral `127.0.0.1` URL, accepts at most one 4 MiB JSON plan, and sends
+the bytes to the same strict Python validator used by `apply`. It loads no Marvin credential,
+makes no Marvin API request, stores no plan or task content in browser storage, and exposes no
+mutation control. Only the selected theme and comparison-layout preferences persist. Press
+Ctrl+C in the launching terminal to stop it; use `--no-open` when you want to open the printed URL
+yourself.
+
+Optional plan-only section hints make sparse update cards easier to group without affecting apply:
+
+```json
+"display": {
+  "beforeSection": "Inbox",
+  "afterSection": "People"
+}
+```
+
+See [`docs/visualizer-test-matrix.md`](docs/visualizer-test-matrix.md) for reusable samples and the
+browser/manual verification matrix. Editing is deliberately deferred: revise the JSON through the
+AI workflow, then reload and review the resulting digest.
+
 ## Installation for development
 
 Marvin Pilot requires Python 3.11 or newer.
@@ -150,7 +188,15 @@ stored key. Use prompt or key-file mode when that threat matters.
 .venv/bin/python -m pytest --cov=marvin_pilot
 .venv/bin/python -m ruff format --check src tests
 .venv/bin/python -m ruff check src tests
+
+# Optional real-Chromium visualizer suite
+.venv/bin/python -m playwright install chromium
+MARVIN_PILOT_BROWSER_TESTS=1 .venv/bin/python -m pytest -m browser tests/browser
 ```
+
+In PowerShell, set the browser-suite flag with
+`$env:MARVIN_PILOT_BROWSER_TESTS = "1"`. CI runs this suite in a dedicated Chromium job and also
+checks that the wheel and source distribution contain every offline visualizer asset.
 
 The suite covers strict schema validation, every field mapping, credential modes, HTTP redaction,
 capped exponential backoff with jitter, full live preflight, journal-first apply, partial failure,
