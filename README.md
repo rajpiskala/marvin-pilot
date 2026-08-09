@@ -63,12 +63,12 @@ marvin-pilot visualize plan.json
 marvin-pilot visualize
 ```
 
-The page shows Marvin-inspired task cards in sectioned Before/After rows. Review in the default
-Split layout or switch to full-width Before and After layouts; choose Light, Dusk, or Night; filter
-by Create, Update, or Trash; and expand an operation to see its reason, IDs, and exact JSON field
-diff. Create and Trash placeholders ensure that the single-pane layouts still account for every
-operation. Display order is always deterministic, while each row retains its original JSON index
-because apply continues to use original plan order.
+The page previews two Marvin states: **Marvin now** and **Marvin after**. Each side is grouped by
+its own real Marvin sections, so a task moved from Inbox to People appears in Inbox now and People
+after. Review both panes in the default Split layout or switch to the full-width Now or After
+layout; choose Light, Dusk, or Night; and open **Review options** to filter actions or inspect exact
+JSON field diffs. Creates exist only after the plan and Trash operations exist only before it, just
+as they would in Marvin. Display order is deterministic; apply still uses original plan order.
 
 The visualizer runs on an ephemeral `127.0.0.1` URL, accepts at most one 4 MiB JSON plan, and sends
 the bytes to the same strict Python validator used by `apply`. It loads no Marvin credential,

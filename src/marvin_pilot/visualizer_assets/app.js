@@ -58,10 +58,6 @@ const elements = {
   trashCount: document.querySelector("#trash-count"),
   sections: document.querySelector("#sections"),
   emptyFilter: document.querySelector("#empty-filter"),
-  comparisonHeading: document.querySelector(".comparison-heading"),
-  beforeHeading: document.querySelector("#before-heading"),
-  afterHeading: document.querySelector("#after-heading"),
-  viewNotice: document.querySelector("#view-notice"),
   expandDetails: document.querySelector("#expand-details"),
   collapseDetails: document.querySelector("#collapse-details"),
 };
@@ -208,20 +204,6 @@ function renderCard(card, sideName) {
   return article;
 }
 
-function renderEmpty(label) {
-  return node("div", "empty-state", label);
-}
-
-function renderSide(operation, sideName) {
-  const side = node("div", `side side-${sideName}`);
-  side.append(node("p", "side-label", sideName === "before" ? "Before" : "After"));
-  const card = operation[sideName];
-  side.append(
-    card ? renderCard(card, sideName) : renderEmpty(operation[`${sideName}_empty_label`]),
-  );
-  return side;
-}
-
 function renderDiffValue(value) {
   const cell = node("td", `diff-state-${value.state}`);
   cell.append(node("span", "diff-summary", value.summary));
@@ -233,7 +215,10 @@ function renderDiffValue(value) {
 
 function renderOperationDetails(operation) {
   const details = node("details", "operation-details");
-  details.append(node("summary", "", "Reason and exact field diff"));
+  const summary = node("summary");
+  summary.setAttribute("aria-label", `Change details for ${operation.target_title}`);
+  summary.append(node("span", "details-glyph", "•••"));
+  details.append(summary);
   const body = node("div", "detail-body");
   const reason = node("p");
   reason.append(node("strong", "", "Reason: "));
@@ -241,6 +226,13 @@ function renderOperationDetails(operation) {
   body.append(reason);
 
   const identity = node("p");
+  identity.append(node("strong", "", "Operation: "));
+  identity.append(
+    document.createTextNode(
+      `#${operation.original_index} ${operation.action.toUpperCase()} · ${operation.operation_id}`,
+    ),
+  );
+  identity.append(document.createElement("br"));
   identity.append(node("strong", "", "Task ID: "));
   identity.append(document.createTextNode(operation.target_id));
   if (operation.depends_on_operations.length > 0) {
@@ -278,50 +270,37 @@ function renderOperationDetails(operation) {
   return details;
 }
 
-function renderOperation(operation) {
+function renderStateOperation(operation, sideName) {
+  const card = operation[sideName];
+  if (!card) {
+    return null;
+  }
   const wrapper = node("article", `operation-row action-${operation.action}`);
   wrapper.dataset.operationId = operation.operation_id;
-  const heading = node("div", "operation-heading");
-  heading.append(node("span", "operation-number", `#${operation.original_index}`));
-  heading.append(node("span", `action-badge ${operation.action}`, operation.action));
-  heading.append(node("code", "operation-id", operation.operation_id));
-  wrapper.append(heading);
-
-  const comparison = node(
-    "div",
-    `comparison-row${selectedView === "split" ? "" : " single"}`,
+  wrapper.setAttribute(
+    "aria-label",
+    `${operation.action} operation ${operation.operation_id}`,
   );
-  if (selectedView === "split" || selectedView === "before") {
-    comparison.append(renderSide(operation, "before"));
-  }
-  if (selectedView === "split" || selectedView === "after") {
-    comparison.append(renderSide(operation, "after"));
-  }
-  wrapper.append(comparison, renderOperationDetails(operation));
+  wrapper.append(renderCard(card, sideName), renderOperationDetails(operation));
   return wrapper;
 }
 
-function visibleSectionCounts(operations) {
-  const counts = { create: 0, update: 0, trash: 0 };
-  operations.forEach((operation) => {
-    counts[operation.action] += 1;
-  });
-  return Object.entries(counts)
-    .filter((entry) => entry[1] > 0)
-    .map((entry) => `${entry[1]} ${entry[0]}`)
-    .join(" · ");
-}
+function renderStatePane(operations, sideName) {
+  const pane = node("section", `preview-pane preview-pane-${sideName}`);
+  const paneHeader = node("header", "preview-pane-header");
+  paneHeader.append(
+    node("h2", "", sideName === "before" ? "Marvin now" : "Marvin after"),
+  );
+  pane.append(paneHeader);
 
-function renderSections() {
-  const operations = new Map(currentPlan.operations.map((operation) => [operation.operation_id, operation]));
-  const layout = currentPlan.layouts[selectedView];
-  const fragment = document.createDocumentFragment();
   let renderedCount = 0;
-
-  layout.forEach((section) => {
+  currentPlan.layouts[sideName].forEach((section) => {
     const members = section.operation_ids
       .map((operationId) => operations.get(operationId))
-      .filter((operation) => operation && visibleActions.has(operation.action));
+      .filter(
+        (operation) =>
+          operation && visibleActions.has(operation.action) && operation[sideName],
+      );
     if (members.length === 0) {
       return;
     }
@@ -329,26 +308,34 @@ function renderSections() {
     const group = node("section", "section-group");
     group.dataset.sectionKey = section.key;
     const header = node("header", "section-header");
-    header.append(node("h2", "", section.title));
-    header.append(node("span", "section-counts", visibleSectionCounts(members)));
+    header.append(node("h3", "", section.title));
     group.append(header);
-    members.forEach((operation) => group.append(renderOperation(operation)));
-    fragment.append(group);
+    members.forEach((operation) => group.append(renderStateOperation(operation, sideName)));
+    pane.append(group);
   });
 
+  if (renderedCount === 0) {
+    pane.append(node("p", "pane-empty", "No visible task changes in this state."));
+  }
+  return { pane, renderedCount };
+}
+
+function renderSections() {
+  const operations = new Map(currentPlan.operations.map((operation) => [operation.operation_id, operation]));
+  const fragment = document.createDocumentFragment();
+  let renderedCount = 0;
+
+  const sides = selectedView === "split" ? ["before", "after"] : [selectedView];
+  sides.forEach((sideName) => {
+    const result = renderStatePane(operations, sideName);
+    renderedCount += result.renderedCount;
+    fragment.append(result.pane);
+  });
+
+  elements.sections.classList.toggle("split-preview", selectedView === "split");
+  elements.sections.classList.toggle("single-preview", selectedView !== "split");
   elements.sections.replaceChildren(fragment);
   elements.emptyFilter.hidden = renderedCount !== 0;
-  elements.comparisonHeading.classList.toggle("single", selectedView !== "split");
-  elements.beforeHeading.hidden = selectedView === "after";
-  elements.afterHeading.hidden = selectedView === "before";
-  if (selectedView === "split") {
-    elements.viewNotice.textContent =
-      "Rows are grouped for review and ordered Create → Update → Trash within each section. Apply still uses original JSON order.";
-  } else {
-    const side = selectedView === "before" ? "before" : "after";
-    elements.viewNotice.textContent =
-      `Showing the full-width ${side} state. Placeholder rows keep every operation accounted for; apply still uses original JSON order.`;
-  }
 }
 
 function renderPlan(plan) {
@@ -476,13 +463,13 @@ document.querySelectorAll("[data-action-filter]").forEach((button) => {
 });
 
 elements.expandDetails.addEventListener("click", () => {
-  elements.sections.querySelectorAll("details").forEach((details) => {
+  elements.sections.querySelectorAll(".operation-details, .task-note").forEach((details) => {
     details.open = true;
   });
 });
 
 elements.collapseDetails.addEventListener("click", () => {
-  elements.sections.querySelectorAll("details").forEach((details) => {
+  elements.sections.querySelectorAll(".operation-details, .task-note").forEach((details) => {
     details.open = false;
   });
 });

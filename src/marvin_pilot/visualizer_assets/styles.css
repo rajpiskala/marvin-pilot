@@ -1365,6 +1365,263 @@ footer {
   font-size: 9px;
 }
 
+/* Two independently sectioned Marvin state previews. */
+.plan-heading {
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.plan-heading h1 {
+  max-width: 980px;
+  font-size: clamp(20px, 2vw, 26px);
+}
+
+.plan-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-badges {
+  margin-top: 7px;
+}
+
+.plan-review-meta {
+  justify-content: flex-start;
+  margin: 12px 0 18px;
+}
+
+.plan-information {
+  position: relative;
+  color: var(--muted-ink);
+  font-size: 10px;
+}
+
+.plan-information > summary,
+.review-options > summary {
+  width: max-content;
+  cursor: pointer;
+  color: var(--muted-ink);
+  font-size: 10px;
+  font-weight: 500;
+  list-style: none;
+}
+
+.plan-information > summary::-webkit-details-marker,
+.review-options > summary::-webkit-details-marker,
+.operation-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.plan-information > summary::before,
+.review-options > summary::before {
+  margin-right: 5px;
+  content: "▸";
+}
+
+.plan-information[open] > summary::before,
+.review-options[open] > summary::before {
+  content: "▾";
+}
+
+.plan-information .plan-metadata {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(90px, 0.45fr) minmax(230px, 1fr) minmax(300px, 1.7fr);
+  gap: 1px;
+  margin-top: 9px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--line);
+}
+
+.plan-information .plan-metadata > div {
+  display: block;
+  padding: 9px 10px;
+  background: var(--card-background);
+}
+
+.plan-information .plan-metadata dd {
+  margin-top: 3px;
+}
+
+.local-guarantee {
+  margin: 7px 1px 0;
+}
+
+.review-options {
+  position: relative;
+  z-index: 18;
+  width: max-content;
+  margin: -34px 0 14px auto;
+}
+
+.review-toolbar {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 19;
+  width: max-content;
+  min-width: 390px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card-background);
+  box-shadow: var(--card-shadow);
+  backdrop-filter: none;
+}
+
+.sections {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.sections.split-preview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 28px;
+}
+
+.sections.single-preview {
+  display: block;
+}
+
+.preview-pane {
+  min-width: 0;
+}
+
+.single-preview .preview-pane {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+}
+
+.preview-pane-after {
+  padding-left: 27px;
+  border-left: 1px solid var(--line);
+}
+
+.single-preview .preview-pane-after {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.preview-pane-header {
+  position: sticky;
+  top: 0;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 28px;
+  padding: 10px 2px 9px;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--toolbar-background);
+  backdrop-filter: blur(12px);
+}
+
+.preview-pane-header h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.preview-pane-caption,
+.section-counts {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.preview-pane .section-group {
+  margin-bottom: 34px;
+}
+
+.preview-pane .section-header {
+  position: static;
+  margin: 0 0 9px;
+  padding: 0 3px;
+  border: 0;
+  background: transparent;
+}
+
+.preview-pane .section-header h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.012em;
+}
+
+.preview-pane .operation-row {
+  position: relative;
+  margin-bottom: 10px;
+}
+
+.preview-pane .task-card {
+  grid-template-columns: minmax(120px, 1fr) auto;
+  padding-right: 17px;
+}
+
+.preview-pane .action-create .task-card {
+  box-shadow: inset -6px 0 var(--create), var(--card-shadow);
+}
+
+.preview-pane .action-trash .task-card {
+  box-shadow: inset 6px 0 var(--trash), var(--card-shadow);
+}
+
+.preview-pane .operation-details {
+  position: static;
+  margin: 0;
+}
+
+.preview-pane .operation-details > summary {
+  position: absolute;
+  top: 15px;
+  right: 8px;
+  z-index: 2;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.preview-pane .operation-row:hover .operation-details > summary,
+.preview-pane .operation-details > summary:focus-visible,
+.preview-pane .operation-details[open] > summary {
+  background: var(--chip-background);
+  opacity: 1;
+}
+
+.details-glyph {
+  letter-spacing: 1px;
+  transform: translateY(-2px);
+}
+
+.preview-pane .detail-body {
+  margin: 6px 0 0;
+}
+
+.pane-empty {
+  margin: 0;
+  padding: 28px 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 9px;
+  color: var(--faint-ink);
+  font-size: 11px;
+  text-align: center;
+}
+
 @media (max-width: 1020px) {
   .plan-metadata {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1412,9 +1669,26 @@ footer {
     display: block;
   }
 
+  .sections.split-preview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 34px;
+  }
+
+  .preview-pane-after {
+    padding-top: 28px;
+    padding-left: 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
   .review-toolbar {
     position: relative;
     top: auto;
+  }
+
+  .review-options .review-toolbar {
+    position: absolute;
+    top: calc(100% + 8px);
   }
 
   .section-header {
@@ -1455,6 +1729,18 @@ footer {
     flex-direction: column;
   }
 
+  .plan-actions {
+    width: 100%;
+  }
+
+  .plan-actions .segmented-control {
+    flex: 1;
+  }
+
+  .plan-actions .segmented-control button {
+    flex: 1;
+  }
+
   .plan-review-meta {
     align-items: stretch;
     flex-direction: column;
@@ -1478,6 +1764,19 @@ footer {
 
   .plan-review-meta .action-summary {
     align-self: flex-start;
+  }
+
+  .plan-information .plan-metadata {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .review-options {
+    margin: -31px 0 12px auto;
+  }
+
+  .review-toolbar {
+    right: 0;
+    min-width: min(390px, calc(100vw - 28px));
   }
 
   .plan-metadata {
@@ -1520,6 +1819,13 @@ footer {
 
   .diff-table {
     min-width: 620px;
+  }
+
+  .review-options .review-toolbar {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: min(390px, calc(100vw - 28px));
   }
 }
 

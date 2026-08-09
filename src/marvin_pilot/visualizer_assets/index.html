@@ -63,57 +63,55 @@
       <section id="plan-view" class="plan-view" hidden aria-labelledby="plan-summary">
         <div class="plan-heading">
           <div>
-            <span class="eyebrow">Change plan preview</span>
             <h1 id="plan-summary"></h1>
             <div class="status-badges">
               <span class="status-badge preview">Preview only — nothing has been applied</span>
-              <span class="status-badge local">Your plan stays on this computer</span>
             </div>
           </div>
-          <button type="button" id="open-another" class="secondary-button">Open another plan</button>
+          <div class="plan-actions">
+            <div class="segmented-control" role="radiogroup" aria-label="Comparison view">
+              <button type="button" role="radio" data-view-choice="split">Split</button>
+              <button type="button" role="radio" data-view-choice="before">Now</button>
+              <button type="button" role="radio" data-view-choice="after">After</button>
+            </div>
+            <button type="button" id="open-another" class="secondary-button">Open plan</button>
+          </div>
         </div>
 
         <div class="plan-review-meta">
-          <dl class="plan-metadata">
-            <div><dt>File</dt><dd id="plan-file-name">Browser upload</dd></div>
-            <div><dt>Operations</dt><dd id="plan-total"></dd></div>
-            <div><dt>Plan ID</dt><dd id="plan-id"></dd></div>
-            <div class="digest"><dt>Canonical digest</dt><dd id="plan-digest"></dd></div>
-          </dl>
-
           <div class="action-summary" aria-label="Operation totals">
             <span class="count-chip create"><b id="create-count">0</b> Create</span>
             <span class="count-chip update"><b id="update-count">0</b> Update</span>
             <span class="count-chip trash"><b id="trash-count">0</b> Trash</span>
           </div>
+          <details class="plan-information">
+            <summary>Plan information</summary>
+            <dl class="plan-metadata">
+              <div><dt>File</dt><dd id="plan-file-name">Browser upload</dd></div>
+              <div><dt>Operations</dt><dd id="plan-total"></dd></div>
+              <div><dt>Plan ID</dt><dd id="plan-id"></dd></div>
+              <div class="digest"><dt>Canonical digest</dt><dd id="plan-digest"></dd></div>
+            </dl>
+            <p class="local-guarantee">Your plan stays on this computer. No Marvin credential is loaded.</p>
+          </details>
         </div>
 
-        <div class="review-toolbar">
-          <div class="toolbar-group">
-            <span class="control-label">Comparison view</span>
-            <div class="segmented-control" role="radiogroup" aria-label="Comparison view">
-              <button type="button" role="radio" data-view-choice="split">Split</button>
-              <button type="button" role="radio" data-view-choice="before">Before</button>
-              <button type="button" role="radio" data-view-choice="after">After</button>
+        <details class="review-options">
+          <summary>Review options</summary>
+          <div class="review-toolbar">
+            <div class="toolbar-group action-filters" aria-label="Filter operations">
+              <span class="control-label">Show</span>
+              <button type="button" data-action-filter="create" aria-pressed="true">Create</button>
+              <button type="button" data-action-filter="update" aria-pressed="true">Update</button>
+              <button type="button" data-action-filter="trash" aria-pressed="true">Trash</button>
+            </div>
+            <div class="toolbar-actions">
+              <button type="button" id="expand-details" class="text-button">Expand details</button>
+              <button type="button" id="collapse-details" class="text-button">Collapse details</button>
             </div>
           </div>
-          <div class="toolbar-group action-filters" aria-label="Filter operations">
-            <span class="control-label">Show</span>
-            <button type="button" data-action-filter="create" aria-pressed="true">Create</button>
-            <button type="button" data-action-filter="update" aria-pressed="true">Update</button>
-            <button type="button" data-action-filter="trash" aria-pressed="true">Trash</button>
-          </div>
-          <div class="toolbar-actions">
-            <button type="button" id="expand-details" class="text-button">Expand details</button>
-            <button type="button" id="collapse-details" class="text-button">Collapse details</button>
-          </div>
-        </div>
+        </details>
 
-        <div class="comparison-heading" aria-hidden="true">
-          <span id="before-heading">Before</span>
-          <span id="after-heading">After</span>
-        </div>
-        <p id="view-notice" class="view-notice"></p>
         <div id="sections" class="sections"></div>
         <p id="empty-filter" class="empty-filter" hidden>
           No operations match the current filters.
