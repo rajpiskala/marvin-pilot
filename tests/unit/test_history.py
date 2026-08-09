@@ -174,3 +174,39 @@ def test_empty_history_has_no_latest_or_duplicates(tmp_path: Path) -> None:
     assert store.list_paths() == []
     assert store.latest() is None
     assert store.find_duplicate(plan_id="id", digest="digest") is None
+
+
+def test_finalize_interrupted_journal_with_no_ambiguous_send(tmp_path: Path) -> None:
+    _, preflight = make_preflight()
+    store = HistoryStore(tmp_path, now=Clock())
+    handle = store.begin_apply(
+        preflight, json.dumps(EXAMPLE_PLAN).encode(), api_base_host="https://x"
+    )
+    handle.receipt.status = "applying"
+    handle.receipt.operations[0].status = "applied"
+    handle.receipt.operations[1].status = "checking"
+    store.persist(handle)
+
+    destination = store.finalize_interrupted(handle.path)
+    finalized = store.load(destination)
+
+    assert destination.name.startswith("partial-")
+    assert finalized.status == "partial"
+    assert finalized.operations[0].status == "applied"
+    assert finalized.operations[1].status == "failed"
+    assert finalized.operations[1].outcome == "interrupted-before-send"
+
+
+def test_finalize_interrupted_refuses_ambiguous_send_state(tmp_path: Path) -> None:
+    _, preflight = make_preflight()
+    store = HistoryStore(tmp_path, now=Clock())
+    handle = store.begin_apply(
+        preflight, json.dumps(EXAMPLE_PLAN).encode(), api_base_host="https://x"
+    )
+    handle.receipt.status = "applying"
+    handle.receipt.operations[0].status = "sending"
+    store.persist(handle)
+
+    with pytest.raises(HistoryError, match="ambiguous send state"):
+        store.finalize_interrupted(handle.path)
+    assert handle.path.exists()

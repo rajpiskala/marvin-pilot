@@ -31,7 +31,12 @@ from marvin_pilot.describe import (
     render_plan_description,
     render_revert_preflight,
 )
-from marvin_pilot.errors import MarvinPilotError, PlanSemanticError, PlanSyntaxError
+from marvin_pilot.errors import (
+    MarvinPilotError,
+    PlanSemanticError,
+    PlanSyntaxError,
+    UserDeclinedError,
+)
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.executor import execute_apply, unix_milliseconds
 from marvin_pilot.history import HistoryStore
@@ -672,6 +677,40 @@ def history_verify(
         f"Plan ID: {receipt.planId}\n"
         f"Receipt hash: {receipt.receiptHash}"
     )
+
+
+@history_app.command("finalize-interrupted")
+def history_finalize_interrupted(
+    receipt_path: Annotated[Path, typer.Argument(help="Interrupted pending receipt path.")],
+) -> None:
+    """Finalize a stopped journal whose persisted states prove no send is ambiguous."""
+
+    store = _history_store(_load_config_or_fail())
+    try:
+        receipt = store.load(receipt_path)
+        ambiguous = sum(
+            operation.status in {"sending", "verifying", "unknown", "reverting"}
+            for operation in receipt.operations
+        )
+        completed_status = "applied" if receipt.kind == "apply" else "reverted"
+        completed = sum(
+            operation.status in {completed_status, "already-reverted"}
+            for operation in receipt.operations
+        )
+        typer.echo(f"Interrupted receipt: {receipt_path}")
+        typer.echo(f"Kind/status: {receipt.kind}/{receipt.status}")
+        typer.echo(f"Confirmed completed operations: {completed}")
+        typer.echo(f"Ambiguous send states: {ambiguous}")
+        typer.echo("This command makes no Marvin API call and does not retry an operation.")
+        if not typer.confirm(
+            "Finalize this journal after confirming its original process has stopped?",
+            default=False,
+        ):
+            raise UserDeclinedError("interrupted receipt finalization declined")
+        destination = store.finalize_interrupted(receipt_path)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(f"Finalized receipt: {destination}")
 
 
 def main() -> None:

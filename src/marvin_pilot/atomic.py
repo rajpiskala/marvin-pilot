@@ -20,7 +20,7 @@ def _is_retryable_replace_error(error: OSError) -> bool:
     )
 
 
-def _replace_with_retry(source: Path, target: Path) -> None:
+def replace_with_retry(source: Path, target: Path) -> None:
     """Tolerate brief Windows scanner/indexer locks without weakening atomic replace."""
 
     for attempt in range(WINDOWS_REPLACE_ATTEMPTS):
@@ -67,7 +67,7 @@ def atomic_write_bytes(path: Path, content: bytes) -> None:
             file.write(content)
             file.flush()
             os.fsync(file.fileno())
-        _replace_with_retry(temporary_path, path)
+        replace_with_retry(temporary_path, path)
         temporary_path = None
         if os.name != "nt":
             path.chmod(0o600)

@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -16,7 +15,12 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from marvin_pilot import __version__
-from marvin_pilot.atomic import atomic_write_bytes, ensure_private_directory, exclusive_write_bytes
+from marvin_pilot.atomic import (
+    atomic_write_bytes,
+    ensure_private_directory,
+    exclusive_write_bytes,
+    replace_with_retry,
+)
 from marvin_pilot.errors import HistoryError
 from marvin_pilot.models.plan_v1 import CreateOperation, UpdateOperation
 from marvin_pilot.models.receipt_v1 import (
@@ -223,11 +227,51 @@ class HistoryStore:
         if destination.exists():
             raise HistoryError(f"refusing to overwrite receipt: {destination}")
         try:
-            os.replace(handle.path, destination)
+            replace_with_retry(handle.path, destination)
         except OSError as exc:
             raise HistoryError(f"could not finalize receipt {handle.path}: {exc}") from exc
         handle.path = destination
         return destination
+
+    def finalize_interrupted(self, path: Path) -> Path:
+        """Finalize a stopped journal only when its persisted states prove no send is ambiguous."""
+
+        receipt = self.load(path)
+        expected_active = (
+            {"pending", "applying"}
+            if receipt.kind == "apply"
+            else {"pending-revert", "reverting"}
+        )
+        if receipt.status not in expected_active:
+            raise HistoryError(f"receipt is not an interrupted active journal: {path}")
+        ambiguous = [
+            operation.operationId
+            for operation in receipt.operations
+            if operation.status in {"sending", "verifying", "unknown", "reverting"}
+        ]
+        if ambiguous:
+            raise HistoryError(
+                "interrupted receipt has operation(s) with ambiguous send state: "
+                + ", ".join(ambiguous)
+            )
+        for operation in receipt.operations:
+            if operation.status == "checking":
+                operation.status = "failed"
+                operation.outcome = "interrupted-before-send"
+                operation.endedAt = rfc3339_utc(self._now())
+        if receipt.kind == "apply":
+            completed = any(operation.status == "applied" for operation in receipt.operations)
+            terminal_status: ReceiptStatus = "partial" if completed else "failed"
+        else:
+            completed = any(
+                operation.status in {"reverted", "already-reverted"}
+                for operation in receipt.operations
+            )
+            terminal_status = "partial-revert" if completed else "failed-revert"
+        return self.finalize(
+            ReceiptHandle(receipt=receipt, path=path),
+            terminal_status,
+        )
 
     def load(self, path: Path) -> ReceiptV1:
         try:
