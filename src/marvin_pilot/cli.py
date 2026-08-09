@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import sys
 import time
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated
+from uuid import UUID, uuid4
 
 import typer
 from rich.console import Console
@@ -20,6 +22,13 @@ from marvin_pilot.config import (
     effective_history_dir,
     load_config,
     save_config,
+)
+from marvin_pilot.contract_tests import (
+    account_config_schema_json,
+    generate_contract_suite,
+    load_account_config,
+    verify_contract_suite,
+    write_contract_suite,
 )
 from marvin_pilot.credentials import (
     delete_keyring_token,
@@ -66,9 +75,13 @@ config_app = typer.Typer(
     invoke_without_command=True,
 )
 history_app = typer.Typer(help="Inspect and verify durable apply/revert receipts.")
+contract_tests_app = typer.Typer(
+    help="Generate and verify reusable, isolated contract-test plan suites."
+)
 app.add_typer(help_app, name="help")
 app.add_typer(config_app, name="config")
 app.add_typer(history_app, name="history")
+app.add_typer(contract_tests_app, name="contract-tests")
 console = Console(stderr=False)
 error_console = Console(stderr=True)
 
@@ -400,6 +413,113 @@ def example_command(
 
     content = json.dumps(EXAMPLE_PLAN, ensure_ascii=False, indent=2) + "\n"
     _write_or_print(content, output)
+
+
+@contract_tests_app.command("generate")
+def contract_tests_generate_command(
+    output: Annotated[
+        Path,
+        typer.Argument(help="New or empty directory for generated plans and manifest."),
+    ],
+    base_date: Annotated[
+        str,
+        typer.Option(
+            "--base-date",
+            help="Date used to derive future schedule/date fixtures (YYYY-MM-DD).",
+        ),
+    ],
+    account_config: Annotated[
+        Path | None,
+        typer.Option(
+            "--account-config",
+            help="Optional account-reference JSON for parent/label/section/non-task coverage.",
+        ),
+    ] = None,
+    run_id: Annotated[
+        UUID | None,
+        typer.Option(
+            "--run-id",
+            help="Reproduce deterministic IDs; default creates a fresh isolated run UUID.",
+        ),
+    ] = None,
+    created_at: Annotated[
+        str | None,
+        typer.Option(
+            "--created-at",
+            help="Reproducible RFC 3339 plan timestamp; default is current UTC.",
+        ),
+    ] = None,
+    scale_count: Annotated[
+        int,
+        typer.Option("--scale-count", min=1, max=500, help="Scale create operation count."),
+    ] = 200,
+    include_limit_cases: Annotated[
+        bool,
+        typer.Option(
+            "--include-limit-cases",
+            help="Also generate offline-only 500-valid and 501-invalid boundary plans.",
+        ),
+    ] = False,
+) -> None:
+    """Generate an offline-validated, isolated live contract-test suite."""
+
+    try:
+        try:
+            effective_base_date = date.fromisoformat(base_date)
+        except ValueError as exc:
+            raise PlanSyntaxError("--base-date must use YYYY-MM-DD") from exc
+        config = load_account_config(account_config)
+        effective_run_id = run_id or uuid4()
+        effective_created_at = created_at or datetime.now(UTC).isoformat()
+        suite = generate_contract_suite(
+            config,
+            run_id=effective_run_id,
+            created_at=effective_created_at,
+            base_date=effective_base_date,
+            scale_count=scale_count,
+            include_limit_cases=include_limit_cases,
+        )
+        write_contract_suite(output, suite)
+        valid, invalid = verify_contract_suite(output)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(f"Contract suite: {output}")
+    typer.echo(f"Run ID: {effective_run_id}")
+    typer.echo(f"Verified: {valid} valid case(s), {invalid} expected-invalid case(s)")
+    if config.sampleOnly:
+        typer.echo("WARNING: account config marks this suite sample-only; do not apply it.")
+    missing = [name for name, enabled in suite.manifest["coverage"].items() if not enabled]
+    if missing:
+        typer.echo("Optional live coverage not configured: " + ", ".join(missing))
+    typer.echo("Read manifest.json and the contract-test runbook before any live apply.")
+
+
+@contract_tests_app.command("verify")
+def contract_tests_verify_command(
+    suite_path: Annotated[
+        Path,
+        typer.Argument(help="Generated contract-suite directory containing manifest.json."),
+    ],
+) -> None:
+    """Verify suite hashes and every expected offline-valid/invalid case."""
+
+    try:
+        valid, invalid = verify_contract_suite(suite_path)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(f"Valid contract suite: {valid} valid case(s), {invalid} expected-invalid case(s)")
+
+
+@contract_tests_app.command("account-schema")
+def contract_tests_account_schema_command(
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Create this file instead of writing to stdout."),
+    ] = None,
+) -> None:
+    """Print the JSON Schema for optional account-reference configuration."""
+
+    _write_or_print(account_config_schema_json(), output)
 
 
 @help_app.command("plan-format")

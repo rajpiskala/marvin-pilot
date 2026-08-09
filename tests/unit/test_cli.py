@@ -171,6 +171,45 @@ def test_output_commands_create_new_files(tmp_path: Path) -> None:
     assert json.loads(schema_path.read_text(encoding="utf-8"))["title"].startswith("Marvin Pilot")
 
 
+def test_contract_test_commands_generate_verify_and_refuse_overwrite(tmp_path: Path) -> None:
+    output = tmp_path / "suite"
+    arguments = [
+        "contract-tests",
+        "generate",
+        str(output),
+        "--base-date",
+        "2026-08-10",
+        "--run-id",
+        "11111111-1111-4111-8111-111111111111",
+        "--created-at",
+        "2026-08-08T20:00:00-07:00",
+        "--scale-count",
+        "10",
+    ]
+    generated = runner.invoke(app, arguments)
+    verified = runner.invoke(app, ["contract-tests", "verify", str(output)])
+    repeated = runner.invoke(app, arguments)
+    assert generated.exit_code == 0
+    assert "Verified: 24 valid case(s)" in generated.stdout
+    assert "Optional live coverage not configured" in generated.stdout
+    assert verified.exit_code == 0
+    assert "24 valid case(s)" in verified.stdout
+    assert repeated.exit_code == 2
+    assert "refusing to overwrite" in repeated.stderr
+
+
+def test_contract_test_account_schema_and_invalid_date(tmp_path: Path) -> None:
+    schema = runner.invoke(app, ["contract-tests", "account-schema"])
+    invalid = runner.invoke(
+        app,
+        ["contract-tests", "generate", str(tmp_path / "suite"), "--base-date", "08/10/2026"],
+    )
+    assert schema.exit_code == 0
+    assert json.loads(schema.stdout)["additionalProperties"] is False
+    assert invalid.exit_code == 2
+    assert "--base-date must use YYYY-MM-DD" in invalid.stderr
+
+
 def test_missing_plan_path_is_an_actionable_error(tmp_path: Path) -> None:
     result = runner.invoke(app, ["validate", str(tmp_path / "missing.json")])
     assert result.exit_code == 2
