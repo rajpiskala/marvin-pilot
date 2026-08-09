@@ -193,14 +193,21 @@ class MarvinClient:
         return value
 
     def get_doc(self, item_id: str) -> dict[str, Any] | None:
-        """Fetch one document by encoded ID; return ``None`` for HTTP 404."""
+        """Fetch one document; normalize Marvin/CouchDB missing responses to ``None``."""
 
         response = self._request(
             "GET", "doc", params={"id": item_id}, allowed_statuses=frozenset({404})
         )
         if response.status_code == 404:
             return None
-        return self._json_value(response, required_object=True)
+        document = self._json_value(response, required_object=True)
+        if document.get("error") == "not_found" and document.get("reason") == "missing":
+            return None
+        if "error" in document:
+            error = str(document.get("error", "unknown"))[:100]
+            reason = str(document.get("reason", "unknown"))[:200]
+            raise RemoteError(f"GET doc returned an error document: {error}: {reason}")
+        return document
 
     def update_doc(self, item_id: str, setters: list[dict[str, Any]]) -> Any:
         """Update multiple fields on exactly one document."""

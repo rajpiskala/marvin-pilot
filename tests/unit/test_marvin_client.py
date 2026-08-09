@@ -70,6 +70,21 @@ def test_get_doc_returns_none_for_404() -> None:
         assert client.get_doc("missing") is None
 
 
+def test_get_doc_returns_none_for_marvin_200_missing_document() -> None:
+    response = json_response(200, {"error": "not_found", "reason": "missing"})
+    with client_for(lambda _request: response) as client:
+        assert client.get_doc("missing") is None
+
+
+def test_get_doc_rejects_other_200_error_documents() -> None:
+    response = json_response(200, {"error": "unexpected", "reason": "bad state"})
+    with (
+        client_for(lambda _request: response) as client,
+        pytest.raises(RemoteError, match="unexpected: bad state"),
+    ):
+        client.get_doc("task")
+
+
 def test_update_sends_one_item_with_all_setters() -> None:
     seen: list[dict] = []
 
