@@ -4,10 +4,38 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from contextlib import suppress
 from pathlib import Path
 
 from marvin_pilot.errors import HistoryError
+
+WINDOWS_REPLACE_ATTEMPTS = 6
+WINDOWS_REPLACE_INITIAL_DELAY_SECONDS = 0.05
+
+
+def _is_retryable_replace_error(error: OSError) -> bool:
+    return os.name == "nt" and (
+        isinstance(error, PermissionError) or getattr(error, "winerror", None) in {5, 32}
+    )
+
+
+def _replace_with_retry(source: Path, target: Path) -> None:
+    """Tolerate brief Windows scanner/indexer locks without weakening atomic replace."""
+
+    for attempt in range(WINDOWS_REPLACE_ATTEMPTS):
+        try:
+            os.replace(source, target)
+            return
+        except OSError as exc:
+            if (
+                not _is_retryable_replace_error(exc)
+                or attempt + 1 == WINDOWS_REPLACE_ATTEMPTS
+            ):
+                raise
+            time.sleep(
+                min(0.8, WINDOWS_REPLACE_INITIAL_DELAY_SECONDS * (2**attempt))
+            )
 
 
 def ensure_private_directory(path: Path) -> None:
@@ -39,7 +67,7 @@ def atomic_write_bytes(path: Path, content: bytes) -> None:
             file.write(content)
             file.flush()
             os.fsync(file.fileno())
-        os.replace(temporary_path, path)
+        _replace_with_retry(temporary_path, path)
         temporary_path = None
         if os.name != "nt":
             path.chmod(0o600)
