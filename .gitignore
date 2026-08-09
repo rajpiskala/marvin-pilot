@@ -4,8 +4,8 @@
 !.env.example
 *.key
 *.token
-creds*.json
-credentials*.json
+*creds*.json
+*credentials*.json
 Project-Task.md
 
 # Local plans and audit/history data (may contain private task content)
