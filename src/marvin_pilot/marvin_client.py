@@ -22,6 +22,8 @@ from marvin_pilot.errors import (
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_SAFE_ERROR_CHARS = 500
+MAX_TRANSIENT_ATTEMPTS = 4
+MAX_RATE_LIMIT_ATTEMPTS = 6
 
 
 class RequestPacer:
@@ -126,6 +128,18 @@ class MarvinClient:
                     pass
         return min(30.0, (2**attempt) + self._jitter())
 
+    @staticmethod
+    def _is_logical_rate_limit(response: httpx.Response) -> bool:
+        """Recognize Marvin's HTTP-200 representation of an unexecuted rate limit."""
+
+        if not response.is_success or not response.content:
+            return False
+        try:
+            value = response.json()
+        except json.JSONDecodeError:
+            return False
+        return isinstance(value, dict) and value.get("error") == "too_many_requests"
+
     def _request(
         self,
         method: str,
@@ -136,8 +150,9 @@ class MarvinClient:
         mutation: bool = False,
         allowed_statuses: frozenset[int] = frozenset(),
     ) -> httpx.Response:
-        max_attempts = 4
-        for attempt in range(max_attempts):
+        transient_attempts = 0
+        rate_limit_attempts = 0
+        while True:
             self._pacer.wait()
             try:
                 response = self._client.request(method, endpoint, params=params, json=payload)
@@ -146,8 +161,11 @@ class MarvinClient:
                     raise AmbiguousMutationError(
                         f"{method} {endpoint} timed out; remote outcome must be reconciled"
                     ) from exc
-                if attempt + 1 < max_attempts:
-                    self._pacer.delay(min(30.0, (2**attempt) + self._jitter()))
+                transient_attempts += 1
+                if transient_attempts < MAX_TRANSIENT_ATTEMPTS:
+                    self._pacer.delay(
+                        min(30.0, (2 ** (transient_attempts - 1)) + self._jitter())
+                    )
                     continue
                 raise RemoteError(f"{method} {endpoint} timed out") from exc
             except httpx.HTTPError as exc:
@@ -164,12 +182,24 @@ class MarvinClient:
                 )
             if response.status_code in allowed_statuses:
                 return response
-            retryable = response.status_code == 429 or (
-                not mutation and response.status_code == 503
-            )
-            if retryable and attempt + 1 < max_attempts:
-                self._pacer.delay(self._retry_after_seconds(response, attempt))
-                continue
+            if response.status_code == 429 or self._is_logical_rate_limit(response):
+                rate_limit_attempts += 1
+                if rate_limit_attempts < MAX_RATE_LIMIT_ATTEMPTS:
+                    self._pacer.delay(
+                        self._retry_after_seconds(response, rate_limit_attempts - 1)
+                    )
+                    continue
+                raise RemoteError(
+                    f"{method} {endpoint} remained rate limited after "
+                    f"{MAX_RATE_LIMIT_ATTEMPTS} attempts"
+                )
+            if not mutation and response.status_code == 503:
+                transient_attempts += 1
+                if transient_attempts < MAX_TRANSIENT_ATTEMPTS:
+                    self._pacer.delay(
+                        self._retry_after_seconds(response, transient_attempts - 1)
+                    )
+                    continue
             if response.status_code >= 400:
                 detail = self._safe_response_text(response)
                 suffix = f": {detail}" if detail else ""
@@ -177,7 +207,6 @@ class MarvinClient:
                     f"{method} {endpoint} returned HTTP {response.status_code}{suffix}"
                 )
             return response
-        raise AssertionError("request retry loop exhausted without returning or raising")
 
     def _json_value(self, response: httpx.Response, *, required_object: bool) -> Any:
         if response.status_code == 204 or not response.content:

@@ -168,6 +168,61 @@ def test_get_retries_429_and_honors_retry_after() -> None:
     assert fake.sleeps == [2.5]
 
 
+def test_get_retries_http_200_logical_rate_limit_with_exponential_backoff() -> None:
+    fake = FakeTime()
+    pacer = RequestPacer(0, clock=fake.clock, sleep=fake.sleep)
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            return json_response(
+                200,
+                {"error": "too_many_requests", "reason": "try again later"},
+            )
+        return json_response(200, {"_id": "task-a"})
+
+    with client_for(handler, pacer=pacer) as client:
+        assert client.get_doc("task-a") == {"_id": "task-a"}
+    assert calls == 3
+    assert fake.sleeps == [1.0, 2.0]
+
+
+def test_mutation_retries_http_200_logical_rate_limit() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return json_response(200, {"error": "too_many_requests"})
+        return json_response(200, {"ok": True})
+
+    with client_for(handler) as client:
+        assert client.update_doc("task", []) == {"ok": True}
+    assert calls == 2
+
+
+def test_logical_rate_limit_stops_after_bounded_attempts() -> None:
+    fake = FakeTime()
+    pacer = RequestPacer(0, clock=fake.clock, sleep=fake.sleep)
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return json_response(200, {"error": "too_many_requests"})
+
+    with (
+        client_for(handler, pacer=pacer) as client,
+        pytest.raises(RemoteError, match="rate limited after 6 attempts"),
+    ):
+        client.get_doc("task-a")
+    assert calls == 6
+    assert fake.sleeps == [1.0, 2.0, 4.0, 8.0, 16.0]
+
+
 def test_get_retries_503_with_capped_backoff() -> None:
     fake = FakeTime()
     pacer = RequestPacer(0, clock=fake.clock, sleep=fake.sleep)
