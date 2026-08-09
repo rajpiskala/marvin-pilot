@@ -13,9 +13,10 @@ verifies each result, and saves an integrity-checked receipt that supports compl
 compensating revert.
 
 > [!WARNING]
-> Marvin Pilot is pre-alpha. Its HTTP behavior is thoroughly tested with mocks, but create,
-> Trash/restore, and field-clearing contracts have not yet been verified against a disposable
-> Amazing Marvin development account. Do not point mutating commands at a production account yet.
+> Marvin Pilot is pre-alpha. The complete v1 lifecycle and a 200-operation scale run were verified
+> against a dedicated Amazing Marvin development account on 2026-08-08, but the client has not yet
+> seen enough account shapes and upstream conditions for production use. Back up Marvin and use a
+> non-production account while evaluating it.
 
 ## The workflow
 
@@ -126,6 +127,8 @@ marvin-pilot history path
 marvin-pilot history list
 marvin-pilot history show latest
 marvin-pilot history verify path/to/receipt.json
+# Terminalize a safely stopped pending journal before resuming from its partial receipt
+marvin-pilot history finalize-interrupted path/to/pending-receipt.json
 marvin-pilot config set-history-dir /private/location
 ```
 
@@ -149,10 +152,12 @@ stored key. Use prompt or key-file mode when that threat matters.
 .venv/bin/python -m ruff check src tests
 ```
 
-The suite currently covers strict schema validation, every field mapping, credential modes, HTTP
-redaction and pacing, full live preflight, journal-first apply, partial failure, ambiguous timeout
-reconciliation, full/selective revert, conflict detection, CLI workflows, and history integrity.
-The next gate is contract and browser testing only against a dedicated development Marvin account.
+The suite covers strict schema validation, every field mapping, credential modes, HTTP redaction,
+capped exponential backoff with jitter, full live preflight, journal-first apply, partial failure,
+ambiguous-response reconciliation, full/selective revert, conflict detection, CLI workflows, and
+history integrity. Dedicated-account API and browser contract testing has also covered every v1
+field plus create, schedule, unschedule, Trash, restore, revert, and a 200-operation scale run. See
+[`docs/live-contract-test-report.md`](docs/live-contract-test-report.md) for sanitized results.
 
 The full research, API mapping, threat model, design decisions, and rollout gates are in
 [`Implementation-Plan.md`](Implementation-Plan.md).
