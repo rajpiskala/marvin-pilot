@@ -5,6 +5,14 @@ const VIEW_KEY = "marvinPilot.visualizer.comparisonView.v1";
 const THEMES = ["light", "dusk", "night"];
 const VIEWS = ["split", "before", "after"];
 const MAX_PLAN_BYTES = 4 * 1024 * 1024;
+const COMPACT_FIELD_PREFIXES = {
+  scheduledDate: "On",
+  dueDate: "Due",
+  startDate: "Starts",
+  endDate: "Ends",
+  plannedWeek: "Week",
+  plannedMonth: "Month",
+};
 
 function readPreference(key, allowed, fallback) {
   try {
@@ -139,10 +147,21 @@ function appendTaskTitle(container, title) {
   container.append(document.createTextNode(match[2] + match[3]));
 }
 
-function renderCard(card) {
+function paletteClass(value) {
+  let hash = 0;
+  for (const character of value) {
+    hash = (hash * 31 + character.codePointAt(0)) >>> 0;
+  }
+  return `palette-${hash % 6}`;
+}
+
+function renderCard(card, sideName) {
   const article = node("article", "task-card");
+  article.setAttribute("aria-description", card.sparse_label);
   const taskLine = node("div", "task-line");
-  taskLine.append(node("span", "checkbox-motif"));
+  const checkbox = node("span", "checkbox-motif");
+  checkbox.setAttribute("aria-hidden", "true");
+  taskLine.append(checkbox);
   const title = node("div", "task-title");
   appendTaskTitle(title, card.title);
   taskLine.append(title);
@@ -151,15 +170,27 @@ function renderCard(card) {
   if (card.items.length > 0 || card.note_state === "clear") {
     const items = node("div", "task-items");
     card.items.forEach((item) => {
+      const isTag = ["parent", "labels"].includes(item.kind);
       const itemNode = node(
         "span",
-        `task-item ${item.kind}${item.cleared ? " cleared" : ""}`,
+        `task-item ${item.kind}${isTag ? ` ${paletteClass(item.exact)}` : ""}${item.cleared ? " cleared" : ""}`,
       );
       itemNode.title = `${item.label}: ${item.exact}`;
-      if (!["parent", "labels", "estimate"].includes(item.kind)) {
+      if (isTag && !item.cleared) {
+        itemNode.append(node("span", "tag-prefix", "#"));
+      } else if (COMPACT_FIELD_PREFIXES[item.field] && !item.cleared) {
+        itemNode.append(
+          node("span", "item-label", COMPACT_FIELD_PREFIXES[item.field]),
+        );
+      } else if (!["estimate"].includes(item.kind)) {
         itemNode.append(node("span", "item-label", `${item.label}:`));
       }
-      itemNode.append(document.createTextNode(item.text));
+      const itemText = item.cleared
+        ? sideName === "before"
+          ? "None"
+          : "Clear"
+        : item.text;
+      itemNode.append(document.createTextNode(itemText));
       items.append(itemNode);
     });
     if (card.note_state === "clear") {
@@ -174,7 +205,6 @@ function renderCard(card) {
     noteDetails.append(node("p", "", card.note));
     article.append(noteDetails);
   }
-  article.append(node("p", "sparse-label", card.sparse_label));
   return article;
 }
 
@@ -186,7 +216,9 @@ function renderSide(operation, sideName) {
   const side = node("div", `side side-${sideName}`);
   side.append(node("p", "side-label", sideName === "before" ? "Before" : "After"));
   const card = operation[sideName];
-  side.append(card ? renderCard(card) : renderEmpty(operation[`${sideName}_empty_label`]));
+  side.append(
+    card ? renderCard(card, sideName) : renderEmpty(operation[`${sideName}_empty_label`]),
+  );
   return side;
 }
 

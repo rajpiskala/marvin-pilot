@@ -16,7 +16,7 @@
         <span class="brand-mark" aria-hidden="true">M</span>
         <span>
           <strong>Marvin Pilot</strong>
-          <small>Change-plan visualizer</small>
+          <small>Plan review</small>
         </span>
       </a>
       <div class="theme-control" role="radiogroup" aria-label="Color theme">
@@ -63,7 +63,7 @@
       <section id="plan-view" class="plan-view" hidden aria-labelledby="plan-summary">
         <div class="plan-heading">
           <div>
-            <span class="eyebrow">Marvin-inspired plan preview</span>
+            <span class="eyebrow">Change plan preview</span>
             <h1 id="plan-summary"></h1>
             <div class="status-badges">
               <span class="status-badge preview">Preview only — nothing has been applied</span>
@@ -73,17 +73,19 @@
           <button type="button" id="open-another" class="secondary-button">Open another plan</button>
         </div>
 
-        <dl class="plan-metadata">
-          <div><dt>File</dt><dd id="plan-file-name">Browser upload</dd></div>
-          <div><dt>Operations</dt><dd id="plan-total"></dd></div>
-          <div><dt>Plan ID</dt><dd id="plan-id"></dd></div>
-          <div class="digest"><dt>Canonical digest</dt><dd id="plan-digest"></dd></div>
-        </dl>
+        <div class="plan-review-meta">
+          <dl class="plan-metadata">
+            <div><dt>File</dt><dd id="plan-file-name">Browser upload</dd></div>
+            <div><dt>Operations</dt><dd id="plan-total"></dd></div>
+            <div><dt>Plan ID</dt><dd id="plan-id"></dd></div>
+            <div class="digest"><dt>Canonical digest</dt><dd id="plan-digest"></dd></div>
+          </dl>
 
-        <div class="action-summary" aria-label="Operation totals">
-          <span class="count-chip create"><b id="create-count">0</b> Create</span>
-          <span class="count-chip update"><b id="update-count">0</b> Update</span>
-          <span class="count-chip trash"><b id="trash-count">0</b> Trash</span>
+          <div class="action-summary" aria-label="Operation totals">
+            <span class="count-chip create"><b id="create-count">0</b> Create</span>
+            <span class="count-chip update"><b id="update-count">0</b> Update</span>
+            <span class="count-chip trash"><b id="trash-count">0</b> Trash</span>
+          </div>
         </div>
 
         <div class="review-toolbar">

@@ -60,6 +60,8 @@ def test_javascript_uses_safe_dom_and_local_routes_only() -> None:
     assert "marvinPilot.visualizer.comparisonView.v1" in script
     assert script.count("window.localStorage.setItem") == 1
     assert "JSON.stringify(currentPlan)" not in script
+    assert "paletteClass" in script
+    assert 'article.setAttribute("aria-description", card.sparse_label)' in script
 
 
 def test_sampled_theme_surfaces_and_shared_geometry_are_regression_locked() -> None:
@@ -87,6 +89,9 @@ def test_sampled_theme_surfaces_and_shared_geometry_are_regression_locked() -> N
     assert "font-size: 14px" in css
     assert "font-weight: 500" in css
     assert "line-height: 21px" in css
+    assert "min-height: 55px" in css
+    assert "box-shadow: inset 6px 0 var(--update), var(--card-shadow)" in css
+    assert ".task-item.palette-5" in css
 
 
 def test_primary_and_small_status_text_meet_wcag_aa_contrast() -> None:

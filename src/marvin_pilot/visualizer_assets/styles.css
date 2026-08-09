@@ -940,6 +940,431 @@ footer {
   text-transform: uppercase;
 }
 
+/*
+ * Native task-list refinement. These values intentionally match Marvin's computed Light task
+ * geometry while keeping Marvin Pilot's review-only action and comparison semantics.
+ */
+.topbar {
+  min-height: 54px;
+  padding: 7px clamp(18px, 3vw, 48px);
+  box-shadow: 0 1px 7px rgb(32 49 91 / 5%);
+}
+
+.brand {
+  gap: 9px;
+}
+
+.brand-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #477fe8;
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.brand strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.brand small {
+  margin-top: 0;
+  font-size: 10px;
+}
+
+.theme-control,
+.segmented-control {
+  padding: 3px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--chip-background);
+}
+
+.theme-control button,
+.segmented-control button,
+.action-filters button {
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.theme-control button[aria-checked="true"],
+.segmented-control button[aria-checked="true"] {
+  background: var(--card-background);
+  box-shadow: 0 1px 4px rgb(32 49 91 / 10%);
+}
+
+.app-shell {
+  width: min(1540px, calc(100% - 48px));
+  min-height: calc(100vh - 106px);
+  padding: 28px 0 46px;
+}
+
+.landing {
+  min-height: 540px;
+}
+
+.landing h1,
+.plan-heading h1 {
+  letter-spacing: -0.025em;
+}
+
+.landing-copy > p {
+  line-height: 1.65;
+}
+
+.drop-zone {
+  min-height: 350px;
+  border-width: 1px;
+  border-radius: 9px;
+  background: var(--card-background);
+  box-shadow: var(--card-shadow);
+}
+
+.file-glyph {
+  width: 54px;
+  height: 54px;
+  border-radius: 9px;
+  font-size: 17px;
+}
+
+.primary-button {
+  min-height: 39px;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.secondary-button {
+  min-height: 34px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.plan-heading {
+  align-items: center;
+}
+
+.plan-heading h1 {
+  max-width: 1040px;
+  font-size: clamp(22px, 2.4vw, 30px);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.eyebrow {
+  margin-bottom: 7px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.status-badges {
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.status-badge {
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.plan-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  margin: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.plan-metadata > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+}
+
+.plan-metadata .digest {
+  flex: 1 1 400px;
+}
+
+.plan-metadata dt {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.plan-metadata dd {
+  margin: 0;
+  font-size: 10px;
+}
+
+.action-summary {
+  gap: 6px;
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.plan-review-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  margin: 18px 0 15px;
+}
+
+.plan-review-meta .plan-metadata {
+  flex: 1 1 auto;
+}
+
+.count-chip,
+.action-badge {
+  font-weight: 600;
+}
+
+.count-chip {
+  padding: 3px 8px;
+}
+
+.review-toolbar {
+  gap: 14px;
+  margin: 0 -6px 6px;
+  padding: 7px 6px;
+  border-top: 1px solid var(--line);
+  background: var(--toolbar-background);
+}
+
+.action-filters button {
+  border-color: transparent;
+}
+
+.comparison-heading {
+  gap: 14px;
+  padding: 6px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.view-notice {
+  margin: 0 8px 18px;
+  font-size: 10px;
+}
+
+.section-group {
+  margin: 0 0 25px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.section-header {
+  top: 52px;
+  margin: 0 0 10px;
+  padding: 8px 7px 7px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--content-background);
+}
+
+.section-header h2 {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.operation-row {
+  margin: 0 0 10px;
+}
+
+.operation-heading {
+  gap: 6px;
+  padding: 0 7px 4px;
+  line-height: 1;
+}
+
+.operation-number,
+.operation-id {
+  font-size: 9px;
+}
+
+.action-badge {
+  padding: 2px 6px;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.comparison-row {
+  gap: 14px;
+}
+
+.task-card,
+.empty-state {
+  min-height: 55px;
+  border-radius: 9px;
+}
+
+.task-card {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) auto;
+  align-content: center;
+  align-items: center;
+  gap: 7px 12px;
+  padding: 17px 17px 17px 12px;
+  border: 0;
+  box-shadow: var(--card-shadow);
+}
+
+.action-create .side-after .task-card {
+  border-right: 0;
+  box-shadow: inset -6px 0 var(--create), var(--card-shadow);
+}
+
+.action-update .task-card {
+  border-left: 0;
+  box-shadow: inset 6px 0 var(--update), var(--card-shadow);
+}
+
+.action-trash .side-before .task-card {
+  border-left: 0;
+  box-shadow: inset 6px 0 var(--trash), var(--card-shadow);
+}
+
+.task-line {
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-motif {
+  margin-top: 0;
+}
+
+.task-items {
+  justify-content: flex-end;
+  gap: 5px;
+  margin: 0;
+}
+
+.task-item {
+  min-height: 22px;
+  gap: 3px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.task-item.date .item-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.task-item.cleared {
+  text-decoration: none;
+}
+
+.task-item.parent,
+.task-item.labels {
+  background: #295781;
+  color: #ffffff;
+}
+
+.task-item.palette-0 {
+  background: #7852aa;
+}
+
+.task-item.palette-1 {
+  background: #276788;
+}
+
+.task-item.palette-2 {
+  background: #6b4a3b;
+}
+
+.task-item.palette-3 {
+  background: #a13e35;
+}
+
+.task-item.palette-4 {
+  background: #21766f;
+}
+
+.task-item.palette-5 {
+  background: #8c4a78;
+}
+
+.tag-prefix {
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.task-item.estimate {
+  margin-left: 0;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.task-item.indicator {
+  font-weight: 600;
+}
+
+.task-note {
+  grid-column: 1 / -1;
+  margin: 3px 0 0 25px;
+}
+
+.empty-state {
+  min-height: 55px;
+  background: color-mix(in srgb, var(--card-background) 45%, transparent);
+  font-size: 10px;
+}
+
+.operation-details {
+  margin: 4px 7px 0;
+  border-top: 0;
+}
+
+.operation-details > summary {
+  padding: 5px 0 1px;
+  color: var(--muted-ink);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.detail-body {
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card-background);
+}
+
+.diff-table th,
+.diff-table td {
+  padding: 7px 8px;
+}
+
+footer {
+  min-height: 52px;
+  background: var(--content-background);
+  font-size: 9px;
+}
+
 @media (max-width: 1020px) {
   .plan-metadata {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1028,6 +1453,31 @@ footer {
 
   .plan-heading {
     flex-direction: column;
+  }
+
+  .plan-review-meta {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .plan-review-meta .plan-metadata {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 9px;
+  }
+
+  .plan-review-meta .plan-metadata > div {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+
+  .plan-review-meta .plan-metadata .digest {
+    min-width: 0;
+  }
+
+  .plan-review-meta .action-summary {
+    align-self: flex-start;
   }
 
   .plan-metadata {
