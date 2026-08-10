@@ -151,6 +151,12 @@ class VisualizerServer:
                         "text/css; charset=utf-8",
                         _asset_bytes("styles.css"),
                     )
+                elif route == "marvin-mascot.png":
+                    self._send_bytes(
+                        HTTPStatus.OK,
+                        "image/png",
+                        _asset_bytes("marvin-mascot.png"),
+                    )
                 elif route == "api/current":
                     if owner._current is None:
                         self._send_json(HTTPStatus.OK, {"plan": None})

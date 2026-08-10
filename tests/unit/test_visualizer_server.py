@@ -38,6 +38,7 @@ def test_root_assets_and_security_headers_are_served_without_plan_content() -> N
         response = client.get(server.url)
         script = client.get(server.url + "app.js")
         stylesheet = client.get(server.url + "styles.css")
+        mascot = client.get(server.url + "marvin-mascot.png")
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
@@ -45,6 +46,9 @@ def test_root_assets_and_security_headers_are_served_without_plan_content() -> N
     assert "Wash the dishes" not in response.text
     assert script.status_code == 200
     assert stylesheet.status_code == 200
+    assert mascot.status_code == 200
+    assert mascot.headers["content-type"] == "image/png"
+    assert mascot.content.startswith(b"\x89PNG\r\n\x1a\n")
     for name, value in SECURITY_HEADERS.items():
         assert response.headers[name] == value
 

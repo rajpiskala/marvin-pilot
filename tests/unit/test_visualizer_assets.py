@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from importlib.resources import files
 
@@ -38,6 +39,7 @@ def test_assets_are_offline_external_and_have_expected_controls() -> None:
     html = _text("index.html")
     assert '<script src="app.js" defer></script>' in html
     assert '<link rel="stylesheet" href="styles.css">' in html
+    assert 'src="marvin-mascot.png"' in html
     assert "<textarea" not in html
     assert "style=" not in html
     assert 'data-theme-choice="light"' in html
@@ -46,6 +48,17 @@ def test_assets_are_offline_external_and_have_expected_controls() -> None:
     assert 'data-view-choice="split"' in html
     assert 'data-view-choice="before"' in html
     assert 'data-view-choice="after"' in html
+    assert "Side by side" in html
+    assert "Now only" in html
+    assert "After only" in html
+    assert "Review options" not in html
+
+
+def test_vendored_mascot_matches_the_documented_public_asset() -> None:
+    mascot = ASSETS.joinpath("marvin-mascot.png").read_bytes()
+    assert hashlib.sha256(mascot).hexdigest() == (
+        "a7b85779b9226c6b9c4e0f16f1452b8191957b88733f9428f7db0911959af545"
+    )
 
 
 def test_javascript_uses_safe_dom_and_local_routes_only() -> None:
@@ -90,7 +103,10 @@ def test_sampled_theme_surfaces_and_shared_geometry_are_regression_locked() -> N
     assert "font-weight: 500" in css
     assert "line-height: 21px" in css
     assert "min-height: 55px" in css
-    assert "box-shadow: inset 6px 0 var(--update), var(--card-shadow)" in css
+    assert "border-left: 7px solid var(--update-edge)" in css
+    assert "border-radius: 0 9px 9px 0" in css
+    assert "border-left-color: var(--create-edge)" in css
+    assert "border-left-color: var(--trash-edge)" in css
     assert ".task-item.palette-5" in css
 
 

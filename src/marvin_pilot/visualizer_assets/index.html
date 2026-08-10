@@ -6,24 +6,20 @@
     <meta name="color-scheme" content="light dark">
     <meta name="description" content="Offline, read-only visualization of a Marvin Pilot change plan.">
     <title>Marvin Pilot plan preview</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%235b8def'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-family='sans-serif' font-size='34' font-weight='700' fill='white'%3EM%3C/text%3E%3C/svg%3E">
+    <link rel="icon" href="marvin-mascot.png">
     <link rel="stylesheet" href="styles.css">
     <script src="app.js" defer></script>
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="./">
-        <span class="brand-mark" aria-hidden="true">M</span>
-        <span>
-          <strong>Marvin Pilot</strong>
-          <small>Plan review</small>
-        </span>
+      <a class="brand" href="./" aria-label="Marvin Pilot home">
+        <img src="marvin-mascot.png" alt="">
       </a>
+      <strong class="topbar-title">Marvin Pilot</strong>
       <div class="theme-control" role="radiogroup" aria-label="Color theme">
-        <span class="control-label">Theme</span>
-        <button type="button" role="radio" data-theme-choice="light">Light</button>
-        <button type="button" role="radio" data-theme-choice="dusk">Dusk</button>
-        <button type="button" role="radio" data-theme-choice="night">Night</button>
+        <button type="button" role="radio" data-theme-choice="light" aria-label="Light theme" title="Light theme"><span aria-hidden="true">☀</span></button>
+        <button type="button" role="radio" data-theme-choice="dusk" aria-label="Dusk theme" title="Dusk theme"><span aria-hidden="true">◐</span></button>
+        <button type="button" role="radio" data-theme-choice="night" aria-label="Night theme" title="Night theme"><span aria-hidden="true">☾</span></button>
       </div>
     </header>
 
@@ -70,9 +66,9 @@
           </div>
           <div class="plan-actions">
             <div class="segmented-control" role="radiogroup" aria-label="Comparison view">
-              <button type="button" role="radio" data-view-choice="split">Split</button>
-              <button type="button" role="radio" data-view-choice="before">Now</button>
-              <button type="button" role="radio" data-view-choice="after">After</button>
+              <button type="button" role="radio" data-view-choice="split">Side by side</button>
+              <button type="button" role="radio" data-view-choice="before">Now only</button>
+              <button type="button" role="radio" data-view-choice="after">After only</button>
             </div>
             <button type="button" id="open-another" class="secondary-button">Open plan</button>
           </div>
@@ -80,9 +76,9 @@
 
         <div class="plan-review-meta">
           <div class="action-summary" aria-label="Operation totals">
-            <span class="count-chip create"><b id="create-count">0</b> Create</span>
-            <span class="count-chip update"><b id="update-count">0</b> Update</span>
-            <span class="count-chip trash"><b id="trash-count">0</b> Trash</span>
+            <button type="button" class="count-chip create" data-action-filter="create" aria-pressed="true" title="Show only Creates"><b id="create-count">0</b> Create</button>
+            <button type="button" class="count-chip update" data-action-filter="update" aria-pressed="true" title="Show only Updates"><b id="update-count">0</b> Update</button>
+            <button type="button" class="count-chip trash" data-action-filter="trash" aria-pressed="true" title="Show only Trash operations"><b id="trash-count">0</b> Trash</button>
           </div>
           <details class="plan-information">
             <summary>Plan information</summary>
@@ -95,22 +91,6 @@
             <p class="local-guarantee">Your plan stays on this computer. No Marvin credential is loaded.</p>
           </details>
         </div>
-
-        <details class="review-options">
-          <summary>Review options</summary>
-          <div class="review-toolbar">
-            <div class="toolbar-group action-filters" aria-label="Filter operations">
-              <span class="control-label">Show</span>
-              <button type="button" data-action-filter="create" aria-pressed="true">Create</button>
-              <button type="button" data-action-filter="update" aria-pressed="true">Update</button>
-              <button type="button" data-action-filter="trash" aria-pressed="true">Trash</button>
-            </div>
-            <div class="toolbar-actions">
-              <button type="button" id="expand-details" class="text-button">Expand details</button>
-              <button type="button" id="collapse-details" class="text-button">Collapse details</button>
-            </div>
-          </div>
-        </details>
 
         <div id="sections" class="sections"></div>
         <p id="empty-filter" class="empty-filter" hidden>

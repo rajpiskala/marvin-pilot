@@ -18,10 +18,13 @@
   --accent-soft: #e8f0fc;
   --create: #127543;
   --create-soft: #e1f6eb;
+  --create-edge: #7bdca5;
   --update: #245fbf;
   --update-soft: #e8f0ff;
+  --update-edge: #8eb8ff;
   --trash: #a92f3a;
   --trash-soft: #fbe8ea;
+  --trash-edge: #ff9199;
   --warning: #916000;
   --warning-soft: #fff2d2;
   --error: #a92f3a;
@@ -50,10 +53,13 @@
   --accent-soft: rgb(126 167 255 / 15%);
   --create: #7bd9a5;
   --create-soft: rgb(84 190 132 / 16%);
+  --create-edge: #7bdca5;
   --update: #9bbaff;
   --update-soft: rgb(126 167 255 / 16%);
+  --update-edge: #91b7ff;
   --trash: #ff9a9f;
   --trash-soft: rgb(226 80 91 / 17%);
+  --trash-edge: #ff9199;
   --warning: #ffd27a;
   --warning-soft: rgb(255 190 70 / 14%);
   --error: #ffacb0;
@@ -82,10 +88,13 @@
   --accent-soft: rgb(128 96 210 / 18%);
   --create: #7bd9a5;
   --create-soft: rgb(84 190 132 / 15%);
+  --create-edge: #7bdca5;
   --update: #8eb3ff;
   --update-soft: rgb(91 157 255 / 16%);
+  --update-edge: #91b7ff;
   --trash: #ff9a9f;
   --trash-soft: rgb(235 71 91 / 16%);
+  --trash-edge: #ff9199;
   --warning: #ffd27a;
   --warning-soft: rgb(255 190 70 / 13%);
   --error: #ffacb0;
@@ -1826,6 +1835,149 @@ footer {
     top: calc(100% + 8px);
     right: 0;
     width: min(390px, calc(100vw - 28px));
+  }
+}
+
+/* Compact native header and direct review controls. */
+.topbar {
+  min-height: 58px;
+  padding: 7px clamp(14px, 3vw, 48px);
+}
+
+.brand {
+  z-index: 1;
+}
+
+.brand img {
+  display: block;
+  width: 38px;
+  height: 38px;
+}
+
+.topbar-title {
+  position: absolute;
+  left: 50%;
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  transform: translateX(-50%);
+}
+
+.theme-control {
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+}
+
+.theme-control button {
+  display: grid;
+  width: 31px;
+  min-height: 30px;
+  place-items: center;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.plan-heading h1 {
+  max-width: 900px;
+  font-size: clamp(18px, 1.7vw, 23px);
+  font-weight: 600;
+}
+
+.plan-actions .segmented-control button {
+  padding-right: 12px;
+  padding-left: 12px;
+}
+
+.count-chip {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.count-chip:hover {
+  transform: translateY(-1px);
+}
+
+.count-chip[aria-pressed="false"] {
+  opacity: 0.38;
+}
+
+.count-chip[aria-pressed="false"]:hover,
+.count-chip[aria-pressed="false"]:focus-visible {
+  opacity: 0.75;
+}
+
+.sections {
+  margin-top: 12px;
+}
+
+.preview-pane .task-card {
+  border-left: 7px solid var(--update-edge);
+  border-radius: 0 9px 9px 0;
+  box-shadow: var(--card-shadow);
+}
+
+.preview-pane .action-create .task-card {
+  border-left-color: var(--create-edge);
+  box-shadow: var(--card-shadow);
+}
+
+.preview-pane .action-trash .task-card {
+  border-left-color: var(--trash-edge);
+  box-shadow: var(--card-shadow);
+}
+
+@media (max-width: 650px) {
+  .topbar {
+    min-height: 54px;
+    align-items: center;
+    flex-direction: row;
+    gap: 12px;
+    padding: 6px 12px;
+  }
+
+  .brand img {
+    width: 34px;
+    height: 34px;
+  }
+
+  .topbar-title {
+    font-size: 14px;
+  }
+
+  .theme-control {
+    width: auto;
+    margin-left: auto;
+  }
+
+  .theme-control button {
+    width: 28px;
+    min-height: 28px;
+  }
+
+  .plan-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .plan-actions .segmented-control button {
+    padding-right: 6px;
+    padding-left: 6px;
+    font-size: 10px;
+  }
+
+  .preview-pane .task-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .preview-pane .task-items {
+    grid-column: 1;
+    justify-content: flex-start;
+    margin-left: 25px;
   }
 }
 

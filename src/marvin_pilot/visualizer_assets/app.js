@@ -4,6 +4,7 @@ const THEME_KEY = "marvinPilot.visualizer.theme.v1";
 const VIEW_KEY = "marvinPilot.visualizer.comparisonView.v1";
 const THEMES = ["light", "dusk", "night"];
 const VIEWS = ["split", "before", "after"];
+const ACTIONS = ["create", "update", "trash"];
 const MAX_PLAN_BYTES = 4 * 1024 * 1024;
 const COMPACT_FIELD_PREFIXES = {
   scheduledDate: "On",
@@ -34,7 +35,7 @@ function savePreference(key, value) {
 let selectedTheme = readPreference(THEME_KEY, THEMES, "light");
 let selectedView = readPreference(VIEW_KEY, VIEWS, "split");
 let currentPlan = null;
-const visibleActions = new Set(["create", "update", "trash"]);
+const visibleActions = new Set(ACTIONS);
 
 document.documentElement.dataset.theme = selectedTheme;
 
@@ -58,8 +59,6 @@ const elements = {
   trashCount: document.querySelector("#trash-count"),
   sections: document.querySelector("#sections"),
   emptyFilter: document.querySelector("#empty-filter"),
-  expandDetails: document.querySelector("#expand-details"),
-  collapseDetails: document.querySelector("#collapse-details"),
 };
 
 function setTheme(theme, persist = true) {
@@ -447,30 +446,28 @@ elements.dropZone.addEventListener("drop", (event) => {
   loadFile(files[0]);
 });
 
-document.querySelectorAll("[data-action-filter]").forEach((button) => {
+const actionFilterButtons = [...document.querySelectorAll("[data-action-filter]")];
+
+function syncActionFilterButtons() {
+  actionFilterButtons.forEach((button) => {
+    button.setAttribute("aria-pressed", String(visibleActions.has(button.dataset.actionFilter)));
+  });
+}
+
+actionFilterButtons.forEach((button) => {
   button.addEventListener("click", () => {
     const action = button.dataset.actionFilter;
-    if (visibleActions.has(action)) {
-      visibleActions.delete(action);
+    const resetToAll = visibleActions.size === 1 && visibleActions.has(action);
+    visibleActions.clear();
+    if (resetToAll) {
+      ACTIONS.forEach((value) => visibleActions.add(value));
     } else {
       visibleActions.add(action);
     }
-    button.setAttribute("aria-pressed", String(visibleActions.has(action)));
+    syncActionFilterButtons();
     if (currentPlan) {
       renderSections();
     }
-  });
-});
-
-elements.expandDetails.addEventListener("click", () => {
-  elements.sections.querySelectorAll(".operation-details, .task-note").forEach((details) => {
-    details.open = true;
-  });
-});
-
-elements.collapseDetails.addEventListener("click", () => {
-  elements.sections.querySelectorAll(".operation-details, .task-note").forEach((details) => {
-    details.open = false;
   });
 });
 

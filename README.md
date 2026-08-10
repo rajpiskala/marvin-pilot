@@ -65,10 +65,15 @@ marvin-pilot visualize
 
 The page previews two Marvin states: **Marvin now** and **Marvin after**. Each side is grouped by
 its own real Marvin sections, so a task moved from Inbox to People appears in Inbox now and People
-after. Review both panes in the default Split layout or switch to the full-width Now or After
-layout; choose Light, Dusk, or Night; and open **Review options** to filter actions or inspect exact
-JSON field diffs. Creates exist only after the plan and Trash operations exist only before it, just
-as they would in Marvin. Display order is deterministic; apply still uses original plan order.
+after. Review both panes in **Side by side** or switch to **Now only** or **After only**; the three
+compact header icons select Light, Dusk, or Night. Click the Create, Update, or Trash total to show
+only that action, then click it again to restore the full plan. Each task's quiet details affordance
+opens its reason, identifiers, and exact JSON field diff. Creates exist only after the plan and
+Trash operations exist only before it, just as they would in Marvin. Display order is
+deterministic; apply still uses original plan order.
+
+The headline comes from the plan's required top-level `summary` field; it is plan context generated
+alongside the operations, not visualizer-authored copy.
 
 The visualizer runs on an ephemeral `127.0.0.1` URL, accepts at most one 4 MiB JSON plan, and sends
 the bytes to the same strict Python validator used by `apply`. It loads no Marvin credential,
@@ -224,4 +229,5 @@ The full research, API mapping, threat model, design decisions, and rollout gate
 [`Implementation-Plan.md`](Implementation-Plan.md).
 
 Marvin Pilot is an independent community project and is not affiliated with or endorsed by Amazing
-Marvin.
+Marvin. The Amazing Marvin mascot remains the property of Amazing Marvin and is included only to
+identify the product this tool works with.
