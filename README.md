@@ -18,6 +18,204 @@ compensating revert.
 > seen enough account shapes and upstream conditions for production use. Back up Marvin and use a
 > non-production account while evaluating it.
 
+## Getting started
+
+The finished setup has two deliberately separate credentials:
+
+| Credential | Used by | What it can do | Where this setup stores it |
+| --- | --- | --- | --- |
+| Marvin `API_TOKEN` | Amazing Marvin MCP | Read data and use Marvin's limited API | Native OS keyring through this repository's MCP launcher |
+| Marvin `FULL_ACCESS_TOKEN` | Marvin Pilot | Apply and revert reviewed change plans | Native OS keyring, or a stricter prompt/key-file mode |
+
+Never give the full-access token to the MCP or the AI. Both credentials should come from the same
+Marvin account.
+
+### 1. Install Marvin Pilot and make the command available
+
+Marvin Pilot currently installs from source and requires Python 3.11 or newer:
+
+```console
+git clone https://github.com/rajpiskala/marvin-pilot.git
+cd marvin-pilot
+python -m venv .venv
+```
+
+On Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\marvin-pilot.exe --version
+```
+
+To call that executable as `marvin-pilot` without activating the virtual environment, add its
+`Scripts` directory to your user PATH. Run this once from the repository root:
+
+```powershell
+$pilotScripts = (Resolve-Path .\.venv\Scripts).Path
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$pathEntries = @($userPath -split ";" | Where-Object { $_ })
+if ($pathEntries -notcontains $pilotScripts) {
+    $newUserPath = ($pathEntries + $pilotScripts) -join ";"
+    [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+}
+$env:Path = "$pilotScripts;$env:Path"
+marvin-pilot --help
+```
+
+Windows recognizes `marvin-pilot.exe` as `marvin-pilot`; no wrapper or renamed copy is needed. Open
+a new terminal before testing the persistent PATH. If the repository moves later, update the PATH
+entry.
+
+On macOS or Linux:
+
+```console
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -e .
+export PATH="$PWD/.venv/bin:$PATH"
+marvin-pilot --help
+```
+
+Add the same **absolute** `.venv/bin` path to `~/.zshrc`, `~/.bashrc`, or the appropriate shell
+profile to make it persistent.
+
+### 2. Get both credentials from Marvin
+
+In Amazing Marvin, open **Settings → API** (or use Marvin's
+[direct API settings link](https://app.amazingmarvin.com/pre?api=)) and enable API access. Copy
+both values shown there:
+
+- `API_TOKEN`, sometimes described as the API key or limited-access token
+- `FULL_ACCESS_TOKEN`, the dangerous credential used for arbitrary document changes
+
+The [Amazing Marvin API wiki](https://github.com/amazingmarvin/MarvinAPI/wiki/Marvin-API#credentials)
+defines the two credential levels, and the
+[MCP setup guide](https://github.com/bgheneti/Amazing-Marvin-MCP#quick-start-2-minutes)
+shows the Settings → API location. Rotate either token from Marvin's API settings if it is ever
+exposed. Do not save credentials in this repository, a plan, a receipt, a screenshot, or an AI
+chat.
+
+### 3. Configure the MCP with only the limited token
+
+Use a separate virtual environment so the MCP can be upgraded independently:
+
+```powershell
+# Windows PowerShell
+python -m venv .tools\amazing-marvin-mcp
+.\.tools\amazing-marvin-mcp\Scripts\python.exe -m pip install --upgrade pip
+.\.tools\amazing-marvin-mcp\Scripts\python.exe -m pip install amazing-marvin-mcp keyring
+.\.tools\amazing-marvin-mcp\Scripts\python.exe tools\amazing_marvin_mcp_launcher.py --store-key
+```
+
+```console
+# macOS or Linux
+python -m venv .tools/amazing-marvin-mcp
+.tools/amazing-marvin-mcp/bin/python -m pip install --upgrade pip
+.tools/amazing-marvin-mcp/bin/python -m pip install amazing-marvin-mcp keyring
+.tools/amazing-marvin-mcp/bin/python tools/amazing_marvin_mcp_launcher.py --store-key
+```
+
+At the hidden prompt, enter the limited `API_TOKEN`—not the full-access token. The launcher stores
+it under `amazing-marvin-mcp / limited-api-key` in macOS Keychain, Windows Credential Locker, or a
+supported Linux Secret Service/KWallet backend. It only supplies the token to the MCP child process
+when that process starts.
+
+For Codex, register the launcher as a local STDIO MCP server. Use absolute paths so it works no
+matter which folder Codex opens in:
+
+```powershell
+# Windows PowerShell, from this repository
+$mcpPython = (Resolve-Path .\.tools\amazing-marvin-mcp\Scripts\python.exe).Path
+$mcpLauncher = (Resolve-Path .\tools\amazing_marvin_mcp_launcher.py).Path
+codex mcp add amazing-marvin -- $mcpPython $mcpLauncher
+```
+
+```console
+# macOS or Linux, from this repository
+codex mcp add amazing-marvin -- \
+  "$PWD/.tools/amazing-marvin-mcp/bin/python" \
+  "$PWD/tools/amazing_marvin_mcp_launcher.py"
+```
+
+For another MCP client, use the same absolute Python path as its STDIO `command` and the launcher's
+absolute path as its only argument. Do not add an `AMAZING_MARVIN_API_KEY` value to that client's
+configuration—the launcher is intentionally responsible for retrieving it from the keyring.
+
+Restart the AI client after registering the server. In Codex, open `/mcp`, confirm that
+`amazing-marvin` is enabled, and ask:
+
+> Use the Amazing Marvin MCP's `test_api_connection` and `get_account_info` tools. Tell me which
+> account is connected. Do not create, update, complete, or delete anything.
+
+Confirm that it is the intended account before continuing. To replace the limited token later,
+rerun the launcher with `--store-key`, then restart the AI client.
+
+### 4. Configure Marvin Pilot with the full-access token
+
+The recommended setup uses the OS keyring and hidden terminal input:
+
+```console
+marvin-pilot config set-credential-mode keyring
+marvin-pilot config set-full-access-token
+marvin-pilot config show
+marvin-pilot config paths
+```
+
+Enter the `FULL_ACCESS_TOKEN` at the hidden prompt. `config show` deliberately never prints it. Do
+not pass it as a command-line argument or environment variable; Marvin Pilot intentionally offers
+neither interface.
+
+Check `marvin-pilot history path` as well. The audit directory contains task titles and before/after
+state, so choose a durable, private location if the platform default is unsuitable:
+
+```console
+marvin-pilot config set-history-dir /private/durable/location
+```
+
+On Windows, that path might instead be something like
+`C:\Users\you\Documents\Marvin Pilot History`.
+
+### 5. Run a small, reversible first plan
+
+Back up or export Marvin first. Then ask the AI for a small plan before tackling a large cleanup:
+
+> Read my Marvin tasks through the Amazing Marvin MCP. Draft a Marvin Pilot change plan with at
+> most 10 low-risk operations and save it under `plans/`. Do not use MCP mutation tools and do not
+> run `marvin-pilot apply` or `marvin-pilot revert`; I will review and run those myself.
+
+The repository ignores `plans/` because plans contain private task data; keep that directory out of
+source control when using a different checkout or workflow.
+
+Review the resulting file through more than one representation:
+
+```console
+marvin-pilot validate plans/first-plan.json
+marvin-pilot describe plans/first-plan.json
+marvin-pilot visualize plans/first-plan.json
+```
+
+The visualizer keeps running until Ctrl+C, so use a second terminal or stop it before applying.
+When every row looks correct, apply it yourself:
+
+```console
+marvin-pilot apply plans/first-plan.json
+marvin-pilot history list
+```
+
+Save the applied receipt path printed by the command. If the result is wrong, revert that receipt
+(or select several operation IDs with repeated `--only` options):
+
+```console
+marvin-pilot revert path/to/applied-receipt.json
+marvin-pilot revert path/to/applied-receipt.json \
+  --only operation-one \
+  --only operation-two
+```
+
+For a 100-task reorganization, use reviewed batches of roughly 15–25 operations. Smaller receipts
+are easier to audit and selectively revert, and a first small batch catches account, category-ID,
+and workflow mistakes before they affect the whole backlog.
+
 ## The workflow
 
 ```text
@@ -97,23 +295,24 @@ See [`docs/visualizer-test-matrix.md`](docs/visualizer-test-matrix.md) for reusa
 browser/manual verification matrix. Editing is deliberately deferred: revise the JSON through the
 AI workflow, then reload and review the resulting digest.
 
-## Installation for development
+## Development setup
 
 Marvin Pilot requires Python 3.11 or newer.
 
+After completing the source installation above, add the development dependencies:
+
 ```console
-python -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/marvin-pilot --help
 ```
 
-On Windows, use `.venv\Scripts\python.exe` and `.venv\Scripts\marvin-pilot.exe`.
+On Windows, use `.venv\Scripts\python.exe -m pip install -e ".[dev]"`.
 
 The planned public distribution name is `amazing-marvin-pilot`; PyPI publishing has not begun.
 
-## Full-access credential setup
+## Credential modes
 
-Run the guided setup:
+The onboarding above uses the recommended keyring mode. `marvin-pilot config` also provides a
+guided setup, while the subcommands make each choice explicit:
 
 ```console
 marvin-pilot config
@@ -122,13 +321,6 @@ marvin-pilot config
 The recommended mode uses the native OS credential service: macOS Keychain, Windows Credential
 Locker, or a supported Linux Secret Service/KWallet backend. The ordinary TOML config stores no
 token.
-
-```console
-marvin-pilot config set-credential-mode keyring
-marvin-pilot config set-full-access-token       # hidden input
-marvin-pilot config show                         # never prints the token
-marvin-pilot config paths
-```
 
 Two stricter alternatives are available:
 
