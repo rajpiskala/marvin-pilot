@@ -63,14 +63,16 @@ marvin-pilot visualize plan.json
 marvin-pilot visualize
 ```
 
-The page previews two Marvin states: **Marvin now** and **Marvin after**. Each side is grouped by
-its own real Marvin sections, so a task moved from Inbox to People appears in Inbox now and People
-after. Review both panes in **Side by side** or switch to **Now only** or **After only**; the three
+The page previews **Now** and **After (preview)** as one row-aligned, GitHub-style task diff. A
+shared section contains both sides of each Update; a task moved from Inbox to People appears under
+an `Inbox → People` transition heading. Creates leave a blank Now cell and Trash operations leave
+a blank After cell, so every operation remains horizontally paired and every following section
+starts at the same height. Review the diff in **Side by side** or switch to **Now only** or **After only**; the three
 compact header icons select Light, Dusk, or Night. Click the Create, Update, or Trash total to show
 only that action, then click it again to restore the full plan. Each task's quiet details affordance
-opens its reason, identifiers, and exact JSON field diff. Creates exist only after the plan and
-Trash operations exist only before it, just as they would in Marvin. Display order is
-deterministic; apply still uses original plan order.
+opens its reason, identifiers, and exact JSON field diff. Timed rows are ordered chronologically
+within a section using the proposed title time first; untimed rows retain Create → Update → Trash
+order. Display order is deterministic; apply still uses original plan order.
 
 The headline comes from the plan's required top-level `summary` field; it is plan context generated
 alongside the operations, not visualizer-authored copy.

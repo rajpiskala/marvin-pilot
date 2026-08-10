@@ -15,7 +15,7 @@ REQUIRED_SUFFIXES = (
     "marvin_pilot/visualizer_assets/index.html",
     "marvin_pilot/visualizer_assets/styles.css",
     "marvin_pilot/visualizer_assets/app.js",
-    "marvin_pilot/visualizer_assets/marvin-mascot.png",
+    "marvin_pilot/visualizer_assets/marvin-pilot.png",
 )
 FORBIDDEN_NAMES = {"dev-creds.json", "Project-Task.md"}
 

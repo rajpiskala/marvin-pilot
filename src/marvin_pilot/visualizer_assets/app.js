@@ -7,7 +7,6 @@ const VIEWS = ["split", "before", "after"];
 const ACTIONS = ["create", "update", "trash"];
 const MAX_PLAN_BYTES = 4 * 1024 * 1024;
 const COMPACT_FIELD_PREFIXES = {
-  scheduledDate: "On",
   dueDate: "Due",
   startDate: "Starts",
   endDate: "Ends",
@@ -177,7 +176,7 @@ function renderCard(card, sideName) {
         itemNode.append(
           node("span", "item-label", COMPACT_FIELD_PREFIXES[item.field]),
         );
-      } else if (!["estimate"].includes(item.kind)) {
+      } else if (item.kind !== "estimate" && item.field !== "scheduledDate") {
         itemNode.append(node("span", "item-label", `${item.label}:`));
       }
       const itemText = item.cleared
@@ -185,7 +184,12 @@ function renderCard(card, sideName) {
           ? "None"
           : "Clear"
         : item.text;
-      itemNode.append(document.createTextNode(itemText));
+      const shorthand = item.field === "scheduledDate"
+        ? "+"
+        : item.kind === "estimate"
+          ? "~"
+          : "";
+      itemNode.append(document.createTextNode(`${shorthand}${itemText}`));
       items.append(itemNode);
     });
     if (card.note_state === "clear") {
@@ -284,11 +288,71 @@ function renderStateOperation(operation, sideName) {
   return wrapper;
 }
 
+function renderDiffCell(operation, sideName) {
+  const cell = node("div", `diff-cell diff-cell-${sideName}`);
+  const card = operation[sideName];
+  if (card) {
+    cell.append(renderCard(card, sideName));
+  } else {
+    cell.classList.add("diff-cell-empty");
+    cell.append(
+      node(
+        "span",
+        "visually-hidden",
+        sideName === "before"
+          ? operation.before_empty_label
+          : operation.after_empty_label,
+      ),
+    );
+  }
+  return cell;
+}
+
+function renderSplitPreview(operations) {
+  const preview = node("section", "split-diff");
+  const headings = node("header", "diff-pane-headings");
+  headings.append(node("h2", "", "Now"), node("h2", "", "After (preview)"));
+  preview.append(headings);
+
+  let renderedCount = 0;
+  currentPlan.layouts.split.forEach((section) => {
+    const members = section.operation_ids
+      .map((operationId) => operations.get(operationId))
+      .filter((operation) => operation && visibleActions.has(operation.action));
+    if (members.length === 0) {
+      return;
+    }
+    renderedCount += members.length;
+    const group = node("section", "section-group diff-section");
+    group.dataset.sectionKey = section.key;
+    const header = node("header", "section-header diff-section-header");
+    header.append(node("h3", "", section.title));
+    group.append(header);
+    members.forEach((operation) => {
+      const row = node("div", `operation-row diff-row action-${operation.action}`);
+      row.dataset.operationId = operation.operation_id;
+      row.setAttribute(
+        "aria-label",
+        `${operation.action} operation ${operation.operation_id}`,
+      );
+      row.append(
+        renderDiffCell(operation, "before"),
+        renderDiffCell(operation, "after"),
+        renderOperationDetails(operation),
+      );
+      group.append(row);
+    });
+    preview.append(group);
+  });
+
+  return { preview, renderedCount };
+}
+
 function renderStatePane(operations, sideName) {
   const pane = node("section", `preview-pane preview-pane-${sideName}`);
   const paneHeader = node("header", "preview-pane-header");
   paneHeader.append(
-    node("h2", "", sideName === "before" ? "Marvin now" : "Marvin after"),
+    node("h2", "", sideName === "before" ? "Now" : "After (preview)"),
   );
   pane.append(paneHeader);
 
@@ -324,12 +388,15 @@ function renderSections() {
   const fragment = document.createDocumentFragment();
   let renderedCount = 0;
 
-  const sides = selectedView === "split" ? ["before", "after"] : [selectedView];
-  sides.forEach((sideName) => {
-    const result = renderStatePane(operations, sideName);
-    renderedCount += result.renderedCount;
+  if (selectedView === "split") {
+    const result = renderSplitPreview(operations);
+    renderedCount = result.renderedCount;
+    fragment.append(result.preview);
+  } else {
+    const result = renderStatePane(operations, selectedView);
+    renderedCount = result.renderedCount;
     fragment.append(result.pane);
-  });
+  }
 
   elements.sections.classList.toggle("split-preview", selectedView === "split");
   elements.sections.classList.toggle("single-preview", selectedView !== "split");
@@ -349,7 +416,7 @@ function renderPlan(plan) {
   elements.trashCount.textContent = plan.counts.trash;
   elements.landing.hidden = true;
   elements.planView.hidden = false;
-  document.title = `${plan.summary} — Marvin Pilot preview`;
+  document.title = `Marvin Pilot - ${plan.summary}`;
   renderSections();
   window.scrollTo({ top: 0, behavior: "auto" });
 }

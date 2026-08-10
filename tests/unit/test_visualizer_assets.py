@@ -39,7 +39,8 @@ def test_assets_are_offline_external_and_have_expected_controls() -> None:
     html = _text("index.html")
     assert '<script src="app.js" defer></script>' in html
     assert '<link rel="stylesheet" href="styles.css">' in html
-    assert 'src="marvin-mascot.png"' in html
+    assert 'src="marvin-pilot.png"' in html
+    assert 'href="marvin-pilot.png"' in html
     assert "<textarea" not in html
     assert "style=" not in html
     assert 'data-theme-choice="light"' in html
@@ -54,10 +55,10 @@ def test_assets_are_offline_external_and_have_expected_controls() -> None:
     assert "Review options" not in html
 
 
-def test_vendored_mascot_matches_the_documented_public_asset() -> None:
-    mascot = ASSETS.joinpath("marvin-mascot.png").read_bytes()
-    assert hashlib.sha256(mascot).hexdigest() == (
-        "a7b85779b9226c6b9c4e0f16f1452b8191957b88733f9428f7db0911959af545"
+def test_vendored_pilot_art_matches_the_supplied_project_asset() -> None:
+    artwork = ASSETS.joinpath("marvin-pilot.png").read_bytes()
+    assert hashlib.sha256(artwork).hexdigest() == (
+        "3fc59e9badcdcf5df23020205919c0d69fbf12bc5098baa2ef680dc70abd41a3"
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
@@ -22,6 +23,10 @@ ACTION_ORDER: dict[Action, int] = {"create": 0, "update": 1, "trash": 2}
 UNSECTIONED = "Unsectioned changes"
 CREATED_PLACEHOLDERS = "Created by this plan"
 TRASHED_PLACEHOLDERS = "Moved to Trash by this plan"
+LEADING_TIME = re.compile(
+    r"^\s*(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>am|pm)?(?=\s)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,6 +323,45 @@ def _section_entries(
     return entries
 
 
+def _leading_time_minutes(title: str) -> int | None:
+    """Return a leading Marvin-style title time as minutes after midnight."""
+
+    match = LEADING_TIME.match(title)
+    if match is None:
+        return None
+    hour = int(match.group("hour"))
+    minute = int(match.group("minute") or 0)
+    meridiem = match.group("meridiem")
+    if minute > 59:
+        return None
+    if meridiem:
+        if not 1 <= hour <= 12:
+            return None
+        hour = hour % 12 + (12 if meridiem.lower() == "pm" else 0)
+    elif hour > 23:
+        return None
+    return hour * 60 + minute
+
+
+def _operation_time(operation: OperationView, layout: str) -> int | None:
+    if layout == "before":
+        cards = (operation.before, operation.after)
+    else:
+        # Split follows the proposed schedule so paired before/after rows never drift.
+        cards = (operation.after, operation.before)
+    for card in cards:
+        if card is not None and (minutes := _leading_time_minutes(card.title)) is not None:
+            return minutes
+    return None
+
+
+def _operation_sort_key(operation: OperationView, layout: str) -> tuple[int, int, int]:
+    minutes = _operation_time(operation, layout)
+    if minutes is not None:
+        return (0, minutes, operation.original_index)
+    return (1, ACTION_ORDER[operation.action], operation.original_index)
+
+
 def _sections(entries: list[tuple[str, OperationView]], layout: str) -> tuple[SectionView, ...]:
     grouped: OrderedDict[str, list[OperationView]] = OrderedDict()
     for title, operation in entries:
@@ -326,7 +370,7 @@ def _sections(entries: list[tuple[str, OperationView]], layout: str) -> tuple[Se
     for position, (title, members) in enumerate(grouped.items()):
         ordered = sorted(
             members,
-            key=lambda item: (ACTION_ORDER[item.action], item.original_index),
+            key=lambda item: _operation_sort_key(item, layout),
         )
         counts = {
             action: sum(member.action == action for member in ordered)
