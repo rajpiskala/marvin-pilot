@@ -1,0 +1,2 @@
+# Contract manifests hash exact bytes, so every platform must check these fixtures out as LF.
+contract-tests/samples/*.json text eol=lf
