@@ -53,6 +53,98 @@ def test_display_metadata_is_closed_and_validated(example_plan_dict: dict) -> No
         parse_plan_bytes(encode(example_plan_dict))
 
 
+def test_typed_hierarchy_and_day_section_metadata_are_strict(example_plan_dict: dict) -> None:
+    operation = example_plan_dict["operations"][1]
+    operation["display"] = {
+        "beforePath": [
+            {
+                "id": "category-work",
+                "type": "category",
+                "title": "Work",
+                "color": "#C69C7B",
+                "order": 10,
+            },
+            {"id": "unassigned", "type": "inbox", "title": "Inbox"},
+        ],
+        "afterPath": [
+            {"id": "category-work", "type": "category", "title": "Work", "emoji": "💼"},
+            {"id": "people-category-id", "type": "category", "title": "People"},
+        ],
+        "beforeDaySection": {"key": "waiting", "title": "Waiting", "order": 10},
+        "afterDaySection": {"key": "main", "title": "Main", "order": 30},
+        "beforeOrder": 20,
+        "afterOrder": 30,
+    }
+    example_plan_dict["reviewDisplay"] = {"showDaySectionsByDefault": True}
+    plan = parse_plan_bytes(encode(example_plan_dict))
+    assert plan.reviewDisplay is not None
+    assert plan.reviewDisplay.showDaySectionsByDefault is True
+    assert plan.operations[1].display.beforePath[0].color == "#c69c7b"
+    assert plan.operations[1].display.beforePath[0].order == 10
+    assert plan.operations[1].display.beforeOrder == 20
+    assert plan.operations[1].display.afterDaySection.title == "Main"
+
+
+def test_display_path_rejects_duplicate_or_target_ids(example_plan_dict: dict) -> None:
+    operation = example_plan_dict["operations"][0]
+    repeated = {"id": "category-work", "type": "category", "title": "Work"}
+    operation["display"] = {"beforePath": [repeated, repeated]}
+    with pytest.raises(PlanSyntaxError, match="must contain unique IDs"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+    operation["display"] = {
+        "beforePath": [{"id": operation["target"]["id"], "type": "task", "title": "Target"}]
+    }
+    with pytest.raises(PlanSyntaxError, match="must contain ancestors only"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
+def test_display_path_rejects_unsafe_color_and_conflicting_types(
+    example_plan_dict: dict,
+) -> None:
+    example_plan_dict["operations"][0]["display"] = {
+        "beforePath": [{"id": "shared", "type": "category", "title": "Shared", "color": "red"}]
+    }
+    with pytest.raises(PlanSyntaxError, match="#RRGGBB"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+    example_plan_dict["operations"][0]["display"] = {
+        "beforePath": [{"id": "shared", "type": "category", "title": "Shared"}]
+    }
+    example_plan_dict["operations"][1]["display"] = {
+        "beforePath": [
+            {"id": "shared", "type": "project", "title": "Shared"},
+            {"id": "unassigned", "type": "inbox", "title": "Inbox"},
+        ]
+    }
+    with pytest.raises(PlanSemanticError, match="both 'category' and 'project'"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
+def test_display_path_rejects_conflicting_context_order(example_plan_dict: dict) -> None:
+    example_plan_dict["operations"][0]["display"] = {
+        "beforePath": [{"id": "category-work", "type": "category", "title": "Work", "order": 10}]
+    }
+    example_plan_dict["operations"][1]["display"] = {
+        "beforePath": [
+            {"id": "category-work", "type": "category", "title": "Work", "order": 20},
+            {"id": "unassigned", "type": "inbox", "title": "Inbox"},
+        ]
+    }
+    with pytest.raises(PlanSemanticError, match="conflicting before order"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
+def test_display_metadata_cannot_describe_an_absent_lifecycle_side(
+    example_plan_dict: dict,
+) -> None:
+    create = example_plan_dict["operations"][2]
+    create["display"]["beforePath"] = None
+    create["display"]["beforeOrder"] = 10
+    with pytest.raises(PlanSemanticError, match="has no before state"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
 def test_canonical_digest_is_independent_of_json_key_order() -> None:
     forward = parse_plan_bytes(encode(EXAMPLE_PLAN))
     reversed_top_level = dict(reversed(list(EXAMPLE_PLAN.items())))

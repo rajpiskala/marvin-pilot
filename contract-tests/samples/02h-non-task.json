@@ -13,7 +13,7 @@
         "id": "sample-only-non-task-id",
         "title": "Sample non-task document"
       },
-      "reason": "Prove the v1 task-only boundary rejects category/project documents.",
+      "reason": "Prove a task-typed target still rejects category/project documents.",
       "before": {
         "note": null
       },

@@ -1,5 +1,70 @@
 {
   "$defs": {
+    "CompleteOperation": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "complete",
+          "title": "Action",
+          "type": "string"
+        },
+        "completedAt": {
+          "title": "Completedat",
+          "type": "string"
+        },
+        "dependsOnOperations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependsonoperations",
+          "type": "array"
+        },
+        "display": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperationDisplay"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "expectedUpdatedAt": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expectedupdatedat"
+        },
+        "operationId": {
+          "title": "Operationid",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/ExistingItemTarget"
+        }
+      },
+      "required": [
+        "operationId",
+        "reason",
+        "action",
+        "target",
+        "completedAt"
+      ],
+      "title": "CompleteOperation",
+      "type": "object"
+    },
     "CreateOperation": {
       "additionalProperties": false,
       "properties": {
@@ -38,7 +103,7 @@
           "type": "string"
         },
         "target": {
-          "$ref": "#/$defs/NewTaskTarget"
+          "$ref": "#/$defs/NewItemTarget"
         }
       },
       "required": [
@@ -371,7 +436,34 @@
       "title": "CreateTaskFields",
       "type": "object"
     },
-    "ExistingTaskTarget": {
+    "DaySectionRef": {
+      "additionalProperties": false,
+      "description": "Visible Today-list grouping supplied for offline review.",
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "order": {
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "title": "Order",
+          "type": "integer"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "title",
+        "order"
+      ],
+      "title": "DaySectionRef",
+      "type": "object"
+    },
+    "ExistingItemTarget": {
       "additionalProperties": false,
       "properties": {
         "id": {
@@ -383,7 +475,10 @@
           "type": "string"
         },
         "type": {
-          "const": "task",
+          "enum": [
+            "task",
+            "project"
+          ],
           "title": "Type",
           "type": "string"
         }
@@ -393,7 +488,76 @@
         "id",
         "title"
       ],
-      "title": "ExistingTaskTarget",
+      "title": "ExistingItemTarget",
+      "type": "object"
+    },
+    "HierarchyPathNode": {
+      "additionalProperties": false,
+      "description": "Review-only Marvin ancestry for one side of an operation.",
+      "properties": {
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Color"
+        },
+        "emoji": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Emoji"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "order": {
+          "anyOf": [
+            {
+              "maximum": 1000000,
+              "minimum": -1000000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Order"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "inbox",
+            "category",
+            "project",
+            "task"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "title"
+      ],
+      "title": "HierarchyPathNode",
       "type": "object"
     },
     "LabelRef": {
@@ -422,7 +586,7 @@
       "title": "LabelRef",
       "type": "object"
     },
-    "NewTaskTarget": {
+    "NewItemTarget": {
       "additionalProperties": false,
       "properties": {
         "id": {
@@ -430,7 +594,10 @@
           "type": "string"
         },
         "type": {
-          "const": "task",
+          "enum": [
+            "task",
+            "project"
+          ],
           "title": "Type",
           "type": "string"
         }
@@ -439,13 +606,53 @@
         "type",
         "id"
       ],
-      "title": "NewTaskTarget",
+      "title": "NewItemTarget",
       "type": "object"
     },
     "OperationDisplay": {
       "additionalProperties": false,
       "description": "Optional review-only metadata; it never authorizes a Marvin mutation.",
       "properties": {
+        "afterDaySection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DaySectionRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "afterOrder": {
+          "anyOf": [
+            {
+              "maximum": 1000000,
+              "minimum": -1000000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Afterorder"
+        },
+        "afterPath": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/HierarchyPathNode"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Afterpath"
+        },
         "afterSection": {
           "anyOf": [
             {
@@ -457,6 +664,46 @@
           ],
           "default": null,
           "title": "Aftersection"
+        },
+        "beforeDaySection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DaySectionRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "beforeOrder": {
+          "anyOf": [
+            {
+              "maximum": 1000000,
+              "minimum": -1000000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Beforeorder"
+        },
+        "beforePath": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/HierarchyPathNode"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Beforepath"
         },
         "beforeSection": {
           "anyOf": [
@@ -498,6 +745,19 @@
         "id"
       ],
       "title": "ParentRef",
+      "type": "object"
+    },
+    "ReviewDisplay": {
+      "additionalProperties": false,
+      "description": "Plan-level visualizer recommendation with no execution effect.",
+      "properties": {
+        "showDaySectionsByDefault": {
+          "default": false,
+          "title": "Showdaysectionsbydefault",
+          "type": "boolean"
+        }
+      },
+      "title": "ReviewDisplay",
       "type": "object"
     },
     "TaskFields": {
@@ -874,7 +1134,7 @@
           "type": "string"
         },
         "target": {
-          "$ref": "#/$defs/ExistingTaskTarget"
+          "$ref": "#/$defs/ExistingItemTarget"
         }
       },
       "required": [
@@ -940,7 +1200,7 @@
           "type": "string"
         },
         "target": {
-          "$ref": "#/$defs/ExistingTaskTarget"
+          "$ref": "#/$defs/ExistingItemTarget"
         }
       },
       "required": [
@@ -978,6 +1238,7 @@
       "items": {
         "discriminator": {
           "mapping": {
+            "complete": "#/$defs/CompleteOperation",
             "create": "#/$defs/CreateOperation",
             "trash": "#/$defs/TrashOperation",
             "update": "#/$defs/UpdateOperation"
@@ -993,6 +1254,9 @@
           },
           {
             "$ref": "#/$defs/TrashOperation"
+          },
+          {
+            "$ref": "#/$defs/CompleteOperation"
           }
         ]
       },
@@ -1004,6 +1268,17 @@
     "planId": {
       "title": "Planid",
       "type": "string"
+    },
+    "reviewDisplay": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ReviewDisplay"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "schemaVersion": {
       "const": 1,

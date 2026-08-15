@@ -17,6 +17,7 @@ from pydantic import (
     StrictInt,
     StrictStr,
     field_validator,
+    model_validator,
 )
 
 from marvin_pilot.duration import normalize_duration
@@ -25,6 +26,7 @@ _OPERATION_ID_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?\Z")
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _MONTH_RE = re.compile(r"\d{4}-\d{2}\Z")
 _TIME_RE = re.compile(r"(?:[01]\d|2[0-3]):[0-5]\d\Z")
+_DISPLAY_COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}\Z")
 
 
 class ClosedModel(BaseModel):
@@ -228,8 +230,8 @@ class CreateTaskFields(TaskFields):
         return _non_empty(value, "title", maximum=1_000)
 
 
-class ExistingTaskTarget(ClosedModel):
-    type: Literal["task"]
+class ExistingItemTarget(ClosedModel):
+    type: Literal["task", "project"]
     id: StrictStr
     title: StrictStr
 
@@ -244,8 +246,8 @@ class ExistingTaskTarget(ClosedModel):
         return _non_empty(value, "target.title", maximum=1_000)
 
 
-class NewTaskTarget(ClosedModel):
-    type: Literal["task"]
+class NewItemTarget(ClosedModel):
+    type: Literal["task", "project"]
     id: StrictStr
 
     @field_validator("id")
@@ -258,11 +260,81 @@ class NewTaskTarget(ClosedModel):
         return str(parsed)
 
 
+# Retain the original import names for callers that constructed task-only v1 models directly.
+ExistingTaskTarget = ExistingItemTarget
+NewTaskTarget = NewItemTarget
+
+
+class HierarchyPathNode(ClosedModel):
+    """Review-only Marvin ancestry for one side of an operation."""
+
+    id: StrictStr
+    type: Literal["inbox", "category", "project", "task"]
+    title: StrictStr
+    emoji: StrictStr | None = None
+    color: StrictStr | None = None
+    order: Annotated[StrictInt, Field(ge=-1_000_000, le=1_000_000)] | None = None
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        return _non_empty(value, "display path node id", maximum=500)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        return _non_empty(value, "display path node title", maximum=1_000)
+
+    @field_validator("emoji")
+    @classmethod
+    def validate_emoji(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _non_empty(value, "display path node emoji", maximum=32)
+
+    @field_validator("color")
+    @classmethod
+    def validate_color(cls, value: str | None) -> str | None:
+        if value is not None and not _DISPLAY_COLOR_RE.fullmatch(value):
+            raise ValueError("display path node color must use #RRGGBB")
+        return value.lower() if value is not None else None
+
+
+class DaySectionRef(ClosedModel):
+    """Visible Today-list grouping supplied for offline review."""
+
+    key: StrictStr
+    title: StrictStr
+    order: Annotated[StrictInt, Field(ge=-1_000_000, le=1_000_000)]
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, value: str) -> str:
+        return _non_empty(value, "day section key", maximum=500)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        return _non_empty(value, "day section title", maximum=200)
+
+
+class ReviewDisplay(ClosedModel):
+    """Plan-level visualizer recommendation with no execution effect."""
+
+    showDaySectionsByDefault: StrictBool = False
+
+
 class OperationDisplay(ClosedModel):
     """Optional review-only metadata; it never authorizes a Marvin mutation."""
 
     beforeSection: StrictStr | None = None
     afterSection: StrictStr | None = None
+    beforePath: list[HierarchyPathNode] | None = None
+    afterPath: list[HierarchyPathNode] | None = None
+    beforeOrder: Annotated[StrictInt, Field(ge=-1_000_000, le=1_000_000)] | None = None
+    afterOrder: Annotated[StrictInt, Field(ge=-1_000_000, le=1_000_000)] | None = None
+    beforeDaySection: DaySectionRef | None = None
+    afterDaySection: DaySectionRef | None = None
 
     @field_validator("beforeSection", "afterSection")
     @classmethod
@@ -271,6 +343,19 @@ class OperationDisplay(ClosedModel):
             return None
         field_name = f"display.{getattr(info, 'field_name', 'section')}"
         return _non_empty(value, field_name, maximum=200)
+
+    @field_validator("beforePath", "afterPath")
+    @classmethod
+    def validate_path(
+        cls, value: list[HierarchyPathNode] | None, info: object
+    ) -> list[HierarchyPathNode] | None:
+        if value is None:
+            return None
+        ids = [node.id for node in value]
+        if len(ids) != len(set(ids)):
+            field_name = getattr(info, "field_name", "path")
+            raise ValueError(f"display.{field_name} must contain unique IDs")
+        return value
 
 
 class BaseOperation(ClosedModel):
@@ -303,10 +388,21 @@ class BaseOperation(ClosedModel):
                 raise ValueError(f"invalid dependsOnOperations ID: {operation_id!r}")
         return value
 
+    @model_validator(mode="after")
+    def validate_target_not_in_display_path(self) -> BaseOperation:
+        target = getattr(self, "target", None)
+        if target is None or self.display is None:
+            return self
+        for field_name in ("beforePath", "afterPath"):
+            path = getattr(self.display, field_name)
+            if path is not None and any(node.id == target.id for node in path):
+                raise ValueError(f"display.{field_name} must contain ancestors only")
+        return self
+
 
 class UpdateOperation(BaseOperation):
     action: Literal["update"]
-    target: ExistingTaskTarget
+    target: ExistingItemTarget
     before: TaskFields
     after: TaskFields
     expectedUpdatedAt: Annotated[StrictInt, Field(ge=0)] | None = None
@@ -314,18 +410,30 @@ class UpdateOperation(BaseOperation):
 
 class CreateOperation(BaseOperation):
     action: Literal["create"]
-    target: NewTaskTarget
+    target: NewItemTarget
     after: CreateTaskFields
 
 
 class TrashOperation(BaseOperation):
     action: Literal["trash"]
-    target: ExistingTaskTarget
+    target: ExistingItemTarget
     expectedUpdatedAt: Annotated[StrictInt, Field(ge=0)] | None = None
 
 
+class CompleteOperation(BaseOperation):
+    action: Literal["complete"]
+    target: ExistingItemTarget
+    completedAt: StrictStr
+    expectedUpdatedAt: Annotated[StrictInt, Field(ge=0)] | None = None
+
+    @field_validator("completedAt")
+    @classmethod
+    def validate_completed_at(cls, value: str) -> str:
+        return _rfc3339_with_offset(value, "completedAt")
+
+
 Operation = Annotated[
-    UpdateOperation | CreateOperation | TrashOperation,
+    UpdateOperation | CreateOperation | TrashOperation | CompleteOperation,
     Field(discriminator="action"),
 ]
 
@@ -336,6 +444,7 @@ class ChangePlanV1(ClosedModel):
     planId: StrictStr
     createdAt: StrictStr
     summary: StrictStr
+    reviewDisplay: ReviewDisplay | None = None
     operations: Annotated[list[Operation], Field(min_length=1, max_length=500)]
 
     @field_validator("schemaVersion", mode="before")

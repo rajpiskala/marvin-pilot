@@ -266,7 +266,7 @@ class MarvinClient:
         return self._json_value(response, required_object=False)
 
     def create_doc(self, document: dict[str, Any]) -> Any:
-        """Create exactly one reviewed task document."""
+        """Create exactly one reviewed task or project document."""
 
         response = self._request("POST", "doc/create", payload=document, mutation=True)
         return self._json_value(response, required_object=False)

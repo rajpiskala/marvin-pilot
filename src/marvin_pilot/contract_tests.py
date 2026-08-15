@@ -404,7 +404,7 @@ def generate_contract_suite(
                     "reject-non-task",
                     config.nonTaskDocument.id,
                     config.nonTaskDocument.title or "Configured non-task document",
-                    "Prove the v1 task-only boundary rejects category/project documents.",
+                    "Prove a task-typed target still rejects category/project documents.",
                     {"note": None},
                     {"note": "must never be written"},
                 ),

@@ -2,7 +2,7 @@
 
 **Your AI plans. You approve. Marvin Pilot applies.**
 
-Marvin Pilot is a local approval CLI for [Amazing Marvin](https://amazingmarvin.com/) that lets an AI reorganize your tasks **without giving it your full-access API token**.
+Marvin Pilot is a local approval CLI for [Amazing Marvin](https://amazingmarvin.com/) that lets an AI reorganize your tasks and projects **without giving it your full-access API token**.
 
 The AI reads your workload through the limited-access [Amazing Marvin MCP](https://github.com/bgheneti/Amazing-Marvin-MCP) and writes a strict JSON change plan. You review the diff, then run the mutation yourself.
 
@@ -17,7 +17,7 @@ Amazing Marvin MCP       AI             You              Marvin Pilot
 Marvin Pilot validates the plan against live state, asks for confirmation, applies operations one at a time, verifies the result, and writes an integrity-checked receipt that can be fully or selectively reverted.
 
 > [!WARNING]
-> **Marvin Pilot is pre-alpha.** The v1 lifecycle and a 200-operation scale run have been tested against a dedicated development account, but the client has not yet seen enough real-world account shapes and upstream conditions for production use. Back up Marvin and evaluate it with non-critical data first.
+> **Marvin Pilot is pre-alpha.** The task lifecycle and a 200-operation scale run were verified on 2026-08-08, and project CRUD plus historical completion were verified on 2026-08-11, against a dedicated development account. The client has not yet seen enough real-world account shapes and upstream conditions for production use. Back up Marvin and evaluate it with non-critical data first.
 
 ## Why Marvin Pilot?
 
@@ -225,17 +225,21 @@ For large reorganizations, prefer reviewed batches over one enormous plan.
 marvin-pilot visualize plan.json
 ```
 
-The visualizer shows **Now** and **After** side by side, including creates, updates, moves, and Trash operations.
+The default **Preview** renders Marvin-like **Now** and **After (preview)** hierarchies. Inbox, categories, projects, tasks, and subtasks have distinct icons; projects visibly support create, rename, move, schedule, complete, and Trash transitions. Moved items render under their truthful parent on each side and cross-highlight their counterpart, while shared hierarchy disclosure stays synchronized. Deep hierarchies scroll horizontally within each pane, and single-state views provide the full content width.
+
+Use **Day sections: Show/Hide** to layer explicit Today-list groupings over the hierarchy. Day sections such as Waiting or Main are visually distinct from categories and projects. Switch to **Changes** for the aligned operation diff. Action totals filter either mode, and item details expose the reason, identifiers, exact field diff, hierarchy path, and supplied day-section context.
 
 It does not load a Marvin credential, call the Marvin API, persist task data in browser storage, or provide mutation controls. The selected plan is passed through the same strict validator used by `apply`.
 
 Press `Ctrl+C` in the launching terminal to stop it.
 
+Typed `display.beforePath` and `display.afterPath` metadata supplies offline ancestry without affecting apply. Empty paths mean a known Marvin root; omitted paths render under **Location not supplied** instead of being guessed. Optional path-node and target order values reproduce sibling ordering, while legacy `beforeSection`/`afterSection` values remain a visibly inferred fallback.
+
 See [`docs/visualizer-test-matrix.md`](docs/visualizer-test-matrix.md) for reusable samples and browser verification coverage.
 
 ## Plans and recovery
 
-Plans are versioned, closed-schema JSON documents containing stable `operationId` values and typed `create`, `update`, or `trash` operations.
+Plans are versioned, closed-schema JSON documents containing stable `operationId` values and typed `create`, `update`, `complete`, or `trash` operations. Every action accepts a task or project target.
 
 Generate the authoritative schema and example directly from the installed CLI:
 
@@ -245,7 +249,11 @@ marvin-pilot example --output plan.json
 marvin-pilot help plan-format
 ```
 
-V1 supports common Marvin task fields including titles, categories, dates and scheduling, labels, estimates, notes, ranks, sections, priorities, backburner state, review dates, snooze values, and dependencies.
+V1 supports common task and project fields including titles, parents/categories, dates and scheduling, labels, estimates, notes, ranks, sections, priorities, backburner state, review dates, and snooze values. Tasks additionally support star priority, `masterRank`, and dependencies. JSON `null` clears a supported value.
+
+Project creates write native `Categories` documents with `type: "project"`; updates can rename, move, or edit allowlisted fields; completion records an explicit historical RFC 3339 timestamp; and Trash uses the same reversible transition as tasks. Planned project ancestry is checked before writes, including parents created earlier in the same plan and cycle prevention.
+
+One upstream distinction matters for audits: a task completed through the full-access document path receives native completion fields, but live testing found that the limited `/doneItems` endpoint does not index that backdated mutation. Project completion dates remain directly readable as `doneDate`. Use the receipt or full document rather than `/doneItems` as the sole oracle for Pilot-applied historical completion.
 
 Permanent deletion is intentionally not implemented. `trash` uses Marvin's reversible Trash behavior.
 
@@ -296,7 +304,7 @@ python -m playwright install chromium
 MARVIN_PILOT_BROWSER_TESTS=1 python -m pytest -m browser tests/browser
 ```
 
-Live contract testing has covered the v1 field set, create/update/schedule/unschedule/Trash/restore/revert workflows, and a 200-operation scale run against a dedicated development account.
+Live contract testing has covered the v1 task and project field set, project CRUD, historical completion, create/update/schedule/unschedule/Trash/restore/revert workflows, and a 200-operation scale run against a dedicated development account.
 
 See [`docs/live-contract-test-report.md`](docs/live-contract-test-report.md) for sanitized results and [`contract-tests/README.md`](contract-tests/README.md) before running live contract cases.
 

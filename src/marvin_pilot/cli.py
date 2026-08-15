@@ -101,7 +101,7 @@ def root(
         typer.Option("--version", callback=_version_callback, is_eager=True, help="Show version."),
     ] = None,
 ) -> None:
-    """Safe, reviewed task changes for Amazing Marvin."""
+    """Safe, reviewed task and project changes for Amazing Marvin."""
 
 
 def _fail(error: MarvinPilotError) -> None:
@@ -448,7 +448,7 @@ def example_command(
         typer.Option("--output", "-o", help="Create this file instead of writing to stdout."),
     ] = None,
 ) -> None:
-    """Print a complete valid update/create/trash plan."""
+    """Print a complete valid task-reorganization plan."""
 
     content = json.dumps(EXAMPLE_PLAN, ensure_ascii=False, indent=2) + "\n"
     _write_or_print(content, output)
@@ -573,19 +573,27 @@ The root is an object with schemaVersion 1, a UUID planId, an RFC 3339 createdAt
 with an explicit offset, a non-empty summary, and one or more operations.
 
 Actions:
-  update  Existing task. before and after must contain identical allowlisted field sets.
-  create  New task. target.id must be a caller-generated UUID and after.title is required.
-  trash   Existing task. Reversible Marvin UI-style Trash; permanent deletion is unsupported.
+  update    Existing task or project. before/after use identical allowlisted field sets.
+  create    New task or project. target.id is a caller-generated UUID; after.title is required.
+  complete  Existing task or project. completedAt is the historical RFC 3339 completion time.
+  trash     Existing task or project. Reversible UI-style Trash; permanent deletion is unsupported.
 
-Every operation requires a unique lowercase-hyphen operationId, a task target, and a reason.
-Use operationId—not task ID—for selective revert. A single revert may repeat --only:
+Every operation requires a unique lowercase-hyphen operationId, a typed target, and a reason.
+Use operationId—not the task/project ID—for selective revert. A single revert may repeat --only:
   marvin-pilot revert RECEIPT.json --only op-a --only op-b
 
-Optional review-only section metadata:
-  display.beforeSection    section title for the Before visualization
-  display.afterSection     section title for the After visualization
-The closed display object is included in the plan digest but never compiles to a Marvin setter.
-Create normally uses afterSection, Trash normally uses beforeSection, and update may use both.
+Optional review-only Preview metadata:
+  reviewDisplay.showDaySectionsByDefault   recommend Today grouping for this plan
+  display.beforePath / afterPath           typed ancestor arrays for each state
+  display.beforeOrder / afterOrder         optional target sibling order for each state
+  display.beforeDaySection                 visible Today section {{key,title,order}}
+  display.afterDaySection                  visible Today section {{key,title,order}}
+  display.beforeSection / afterSection     legacy untyped context fallback
+Path nodes use {{id,type,title}} with type inbox, category, project, or task; optional emoji,
+#RRGGBB color, and integer order are display-only. Paths contain ancestors only, never the target
+itself. An empty path means a known root; omitted/null paths render as location not supplied.
+Day sections are Today-view grouping, not category ancestry, and may have custom titles. The
+closed review objects are included in the plan digest but never compile to Marvin setters.
 
 Conventions:
   dates                   YYYY-MM-DD
@@ -598,11 +606,11 @@ Conventions:
 
 Normal task start times are generally written into task titles. A task is not a calendar time
 block. JSON comments, trailing commas, locale dates, the string "none", raw setters, credentials,
-API URLs, system timestamps, completion, recurrence, reminders, calendar sync, and permanent
+API URLs, raw completion fields, recurrence, reminders, calendar sync, and permanent
 deletion are rejected.
 
-Allowlisted task fields:
-  title                       non-empty task title
+Allowlisted task/project fields:
+  title                       non-empty item title
   parent                      {{"id": "...", "title": "optional review hint"}}
   scheduledDate               YYYY-MM-DD or null to unschedule
   dueDate/startDate/endDate   YYYY-MM-DD or null
@@ -611,18 +619,32 @@ Allowlisted task fields:
   labels                      array of {{"id": "...", "title": "optional hint"}} or null
   estimatedTimeDuration       duration string or null; maps to Marvin timeEstimate
   note                        string or null
-  dayRank/masterRank          finite number or null
+  dayRank                     finite number or null
+  masterRank                  finite number or null; tasks only
   dailySection                Morning, Afternoon, Evening, or null
   bonusSection                Essential, Bonus, or null
   customSectionId             existing section ID or null
   timeBlockSectionId          existing time-block section ID or null
-  starPriority                yellow, orange, red, or null
+  starPriority                yellow, orange, red, or null; tasks only
   frogSize                    normal, baby, monster, or null
   backburner                  true, false, or null
   reviewDate                  YYYY-MM-DD or null
   snoozedUntil                RFC 3339 timestamp with offset or null
   permanentSnoozeUntil        HH:mm or null
-  dependencies                array of task/project IDs or null
+  dependencies                array of task/project IDs or null; tasks only
+
+Project notes:
+  - Use target.type "project". Pilot stores projects in Marvin's Categories database with
+    type "project"; it does not create categories.
+  - A task or project may use a project created earlier in the same plan as its parent. Put the
+    parent create operation first and list its operationId in dependsOnOperations.
+  - Project moves are rejected if the proposed ancestry would create or inherit a parent cycle.
+  - complete.completedAt may not be later than the plan's createdAt. Pilot writes a task's
+    historical doneAt or the local YYYY-MM-DD doneDate required by a project.
+  - Revert restores the prior open/completed fields. Create and Trash remain reversible Marvin
+    Trash transitions; Marvin's permanent /doc/delete endpoint is never used.
+  - Marvin's server-maintained /doneItems history does not index backdated /doc/update task
+    completions. Audit those completion dates through full-document reads and Pilot receipts.
 
 Generate a complete example with:
   marvin-pilot example

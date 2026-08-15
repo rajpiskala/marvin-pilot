@@ -37,12 +37,12 @@
           <span class="eyebrow">Human review before Marvin changes</span>
           <h1 id="landing-title">See the plan clearly before you apply it.</h1>
           <p>
-            Load a Marvin Pilot JSON plan to compare every proposed task change. This page is
+            Load a Marvin Pilot JSON plan to compare every proposed task or project change. This page is
             read-only, uses no Marvin credential, and stays on your computer.
           </p>
           <div class="safety-points" aria-label="Visualizer guarantees">
             <span><i aria-hidden="true">✓</i> No Marvin API calls</span>
-            <span><i aria-hidden="true">✓</i> No plan history</span>
+            <span><i aria-hidden="true">✓</i> No persistent plan storage</span>
             <span><i aria-hidden="true">✓</i> Strict schema validation</span>
           </div>
         </div>
@@ -65,11 +65,18 @@
             </div>
           </div>
           <div class="plan-actions">
+            <div class="segmented-control" role="radiogroup" aria-label="Review mode">
+              <button type="button" role="radio" data-mode-choice="preview">Preview</button>
+              <button type="button" role="radio" data-mode-choice="changes">Changes</button>
+            </div>
             <div class="segmented-control" role="radiogroup" aria-label="Comparison view">
               <button type="button" role="radio" data-view-choice="split">Side by side</button>
               <button type="button" role="radio" data-view-choice="before">Now only</button>
               <button type="button" role="radio" data-view-choice="after">After only</button>
             </div>
+            <button type="button" id="day-sections-toggle" class="secondary-button day-sections-toggle" aria-pressed="false">
+              Day sections: Hidden
+            </button>
             <button type="button" id="open-another" class="secondary-button"><span aria-hidden="true">📁</span> Open plan</button>
           </div>
         </div>
@@ -78,6 +85,7 @@
           <div class="action-summary" aria-label="Operation totals">
             <button type="button" class="count-chip create" data-action-filter="create" aria-pressed="true" title="Show only Creates"><b id="create-count">0</b> Create</button>
             <button type="button" class="count-chip update" data-action-filter="update" aria-pressed="true" title="Show only Updates"><b id="update-count">0</b> Update</button>
+            <button type="button" class="count-chip complete" data-action-filter="complete" aria-pressed="true" title="Show only Completions"><b id="complete-count">0</b> Complete</button>
             <button type="button" class="count-chip trash" data-action-filter="trash" aria-pressed="true" title="Show only Trash operations"><b id="trash-count">0</b> Trash</button>
           </div>
           <details class="plan-information">

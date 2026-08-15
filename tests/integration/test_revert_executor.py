@@ -166,6 +166,61 @@ def revert_fixture(
     )
 
 
+def test_project_completion_apply_and_revert_restores_open_state(tmp_path: Path) -> None:
+    project_id = "project-completion-id"
+    documents = {
+        project_id: {
+            "_id": project_id,
+            "_rev": "1-project",
+            "db": "Categories",
+            "type": "project",
+            "title": "Completed delivery",
+            "done": False,
+            "updatedAt": 100,
+        }
+    }
+    value = {
+        "schemaVersion": 1,
+        "planId": "44444444-4444-4444-8444-444444444444",
+        "createdAt": "2026-08-11T12:00:00-07:00",
+        "summary": "Complete a project on its historical delivery date.",
+        "operations": [
+            {
+                "operationId": "complete-delivery",
+                "action": "complete",
+                "target": {
+                    "type": "project",
+                    "id": project_id,
+                    "title": "Completed delivery",
+                },
+                "reason": "The delivery finished on July 23.",
+                "completedAt": "2026-07-23T18:30:00-07:00",
+                "expectedUpdatedAt": 100,
+            }
+        ],
+    }
+    raw = json.dumps(value).encode()
+    client = InMemoryMarvin(documents)
+    clock = Clock()
+    source = execute_apply(
+        parse_plan_bytes(raw),
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _checked: True,
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+
+    assert client.documents[project_id]["done"] is True
+    assert client.documents[project_id]["doneDate"] == "2026-07-23"
+    assert source.receipt.operations[0].targetType == "project"
+
+    revert_fixture(tmp_path, client, source, clock)
+    assert client.documents[project_id]["done"] is False
+    assert client.documents[project_id]["doneDate"] is None
+
+
 def test_full_revert_runs_in_reverse_apply_order_and_restores_values(
     tmp_path: Path, documents: dict
 ) -> None:

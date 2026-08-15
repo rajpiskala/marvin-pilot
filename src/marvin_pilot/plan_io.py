@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
 from marvin_pilot.errors import PlanSemanticError, PlanSyntaxError
-from marvin_pilot.models.plan_v1 import ChangePlanV1, UpdateOperation
+from marvin_pilot.models.plan_v1 import (
+    ChangePlanV1,
+    CompleteOperation,
+    CreateOperation,
+    UpdateOperation,
+)
 
 MAX_PLAN_BYTES = 4 * 1024 * 1024
 PLAN_MODELS = {1: ChangePlanV1}
@@ -80,6 +86,18 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
     operation_ids: set[str] = set()
     target_ids: set[str] = set()
     prior_operation_ids: set[str] = set()
+    prior_creates: dict[str, CreateOperation] = {}
+    all_creates = {
+        operation.target.id: operation
+        for operation in plan.operations
+        if isinstance(operation, CreateOperation)
+    }
+    plan_created_at = datetime.fromisoformat(plan.createdAt.replace("Z", "+00:00"))
+    display_types: dict[tuple[str, str], str] = {}
+    display_titles: dict[tuple[str, str], str] = {}
+    display_parents: dict[tuple[str, str], str | None] = {}
+    display_orders: dict[tuple[str, str], int | None] = {}
+    day_sections: dict[tuple[str, str], tuple[str, int]] = {}
 
     for operation in plan.operations:
         if operation.operationId in operation_ids:
@@ -88,10 +106,118 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
 
         if operation.target.id in target_ids:
             raise PlanSemanticError(
-                f"more than one operation targets task {operation.target.id!r}; "
+                f"more than one operation targets item {operation.target.id!r}; "
                 "coalesce the changes"
             )
         target_ids.add(operation.target.id)
+
+        if operation.display is not None:
+            if isinstance(operation, CreateOperation):
+                invalid = operation.display.model_fields_set & {
+                    "beforePath",
+                    "beforeOrder",
+                    "beforeDaySection",
+                }
+                if invalid:
+                    raise PlanSemanticError(
+                        f"create operation {operation.operationId!r} has no before state; "
+                        f"remove display metadata: {', '.join(sorted(invalid))}"
+                    )
+            if operation.action == "trash":
+                invalid = operation.display.model_fields_set & {
+                    "afterPath",
+                    "afterOrder",
+                    "afterDaySection",
+                }
+                if invalid:
+                    raise PlanSemanticError(
+                        f"trash operation {operation.operationId!r} has no active after state; "
+                        f"remove display metadata: {', '.join(sorted(invalid))}"
+                    )
+
+            for side in ("before", "after"):
+                side_exists = not (
+                    (side == "before" and isinstance(operation, CreateOperation))
+                    or (side == "after" and operation.action == "trash")
+                )
+                if not side_exists:
+                    continue
+                path_field = f"{side}Path"
+                path = getattr(operation.display, path_field)
+                if path_field in operation.display.model_fields_set and path is not None:
+                    parent_id = None
+                    for node in path:
+                        identity_key = (side, node.id)
+                        previous_type = display_types.setdefault(identity_key, node.type)
+                        if previous_type != node.type:
+                            raise PlanSemanticError(
+                                f"display path item {node.id!r} is both {previous_type!r} and "
+                                f"{node.type!r} on the {side} side"
+                            )
+                        previous_title = display_titles.setdefault(identity_key, node.title)
+                        if previous_title != node.title:
+                            raise PlanSemanticError(
+                                f"display path item {node.id!r} has conflicting {side} titles"
+                            )
+                        previous_parent = display_parents.setdefault(identity_key, parent_id)
+                        if previous_parent != parent_id:
+                            raise PlanSemanticError(
+                                f"display path item {node.id!r} has conflicting {side} parents"
+                            )
+                        previous_order = display_orders.setdefault(identity_key, node.order)
+                        if previous_order != node.order:
+                            raise PlanSemanticError(
+                                f"display path item {node.id!r} has conflicting {side} order"
+                            )
+                        parent_id = node.id
+
+                    target_key = (side, operation.target.id)
+                    previous_type = display_types.setdefault(target_key, operation.target.type)
+                    if previous_type != operation.target.type:
+                        raise PlanSemanticError(
+                            f"target {operation.target.id!r} conflicts with its {side} display "
+                            "path type"
+                        )
+                    target_fields = getattr(operation, side, None)
+                    target_title = getattr(operation.target, "title", None)
+                    if (
+                        target_fields is not None
+                        and "title" in target_fields.model_fields_set
+                        and target_fields.title is not None
+                    ):
+                        target_title = target_fields.title
+                    if target_title is not None:
+                        previous_title = display_titles.setdefault(target_key, target_title)
+                        if previous_title != target_title:
+                            raise PlanSemanticError(
+                                f"target {operation.target.id!r} conflicts with its {side} "
+                                "display path title"
+                            )
+                    previous_parent = display_parents.setdefault(target_key, parent_id)
+                    if previous_parent != parent_id:
+                        raise PlanSemanticError(
+                            f"target {operation.target.id!r} has conflicting {side} display parents"
+                        )
+
+                    fields = getattr(operation, side, None)
+                    if fields is not None and "parent" in fields.model_fields_set:
+                        expected_parent = fields.parent.id if fields.parent is not None else None
+                        if parent_id != expected_parent:
+                            raise PlanSemanticError(
+                                f"operation {operation.operationId!r} display.{path_field} does "
+                                f"not end at its {side} parent"
+                            )
+
+                day_field = f"{side}DaySection"
+                section = getattr(operation.display, day_field)
+                if section is not None:
+                    section_key = (side, section.key)
+                    definition = (section.title, section.order)
+                    previous = day_sections.setdefault(section_key, definition)
+                    if previous != definition:
+                        raise PlanSemanticError(
+                            f"day section {section.key!r} has conflicting {side} display metadata"
+                        )
 
         for dependency in operation.dependsOnOperations:
             if dependency not in prior_operation_ids:
@@ -133,7 +259,59 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                     f"update operation {operation.operationId!r} does not change any values"
                 )
 
+        if operation.target.type == "project" and isinstance(
+            operation, (UpdateOperation, CreateOperation)
+        ):
+            fields = (
+                operation.after.model_fields_set
+                if isinstance(operation, CreateOperation)
+                else operation.after.model_fields_set | operation.before.model_fields_set
+            )
+            unsupported = sorted(fields & {"dependencies", "masterRank", "starPriority"})
+            if unsupported:
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} uses task-only project field(s): "
+                    + ", ".join(unsupported)
+                )
+
+        field_sets = []
+        if isinstance(operation, UpdateOperation):
+            field_sets.extend((operation.before, operation.after))
+        elif isinstance(operation, CreateOperation):
+            field_sets.append(operation.after)
+        for fields in field_sets:
+            dumped = fields.model_dump(exclude_unset=True, mode="json")
+            parent = dumped.get("parent")
+            if parent is None or parent["id"] not in all_creates:
+                continue
+            if parent["id"] not in prior_creates:
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} references project created later in "
+                    "the plan; create parents before their children"
+                )
+            parent_create = prior_creates[parent["id"]]
+            if parent_create.target.type != "project":
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} uses newly created non-project "
+                    f"{parent['id']!r} as its parent"
+                )
+            if parent_create.operationId not in operation.dependsOnOperations:
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} references project created by "
+                    f"{parent_create.operationId!r}; add it to dependsOnOperations"
+                )
+
+        if isinstance(operation, CompleteOperation):
+            completed_at = datetime.fromisoformat(operation.completedAt.replace("Z", "+00:00"))
+            if completed_at > plan_created_at:
+                raise PlanSemanticError(
+                    f"complete operation {operation.operationId!r} completedAt is later than "
+                    "the plan's createdAt"
+                )
+
         prior_operation_ids.add(operation.operationId)
+        if isinstance(operation, CreateOperation):
+            prior_creates[operation.target.id] = operation
 
 
 def load_plan(path: Path) -> tuple[ChangePlanV1, bytes]:

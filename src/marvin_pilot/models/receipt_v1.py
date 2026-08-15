@@ -46,8 +46,9 @@ class RequestRecord(ReceiptModel):
 
 class ReceiptOperationV1(ReceiptModel):
     operationId: str
-    action: Literal["update", "create", "trash"]
+    action: Literal["update", "create", "trash", "complete"]
     targetId: str
+    targetType: Literal["task", "project"] = "task"
     targetTitle: str | None = None
     status: OperationStatus = "not-started"
     applyIndex: int | None = None

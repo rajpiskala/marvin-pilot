@@ -58,7 +58,7 @@ packages = ["src/marvin_pilot"]
 addopts = "--strict-config --strict-markers -ra -p no:cacheprovider"
 testpaths = ["tests"]
 markers = [
-  "browser: opt-in Chromium tests (set MARVIN_PILOT_BROWSER_TESTS=1)",
+  "browser: opt-in browser tests (set MARVIN_PILOT_BROWSER_TESTS=1)",
 ]
 
 [tool.coverage.run]

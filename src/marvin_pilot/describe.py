@@ -6,7 +6,12 @@ import json
 from collections import Counter
 from typing import Any
 
-from marvin_pilot.models.plan_v1 import ChangePlanV1, CreateOperation, UpdateOperation
+from marvin_pilot.models.plan_v1 import (
+    ChangePlanV1,
+    CompleteOperation,
+    CreateOperation,
+    UpdateOperation,
+)
 from marvin_pilot.plan_io import plan_digest
 from marvin_pilot.preflight import PreflightResult
 from marvin_pilot.reverter import RevertPreflight
@@ -76,9 +81,11 @@ def render_plan_description(plan: ChangePlanV1) -> str:
         title = getattr(operation.target, "title", None)
         display = f' "{title}"' if title is not None else ""
         lines.append(
-            f"{index}. {operation.action.upper()}{display} ({operation.target.id}) "
+            f"{index}. {operation.action.upper()}{display} "
+            f"({operation.target.id}) "
             f"[{operation.operationId}]"
         )
+        lines.append(f"   target type: {operation.target.type}")
 
         if isinstance(operation, UpdateOperation):
             before = operation.before.model_dump(exclude_unset=True, mode="json")
@@ -92,6 +99,8 @@ def render_plan_description(plan: ChangePlanV1) -> str:
             after = operation.after.model_dump(exclude_unset=True, mode="json")
             for field, new_value in after.items():
                 lines.append(f"   {FIELD_LABELS[field]}: {_format_value(field, new_value)}")
+        elif isinstance(operation, CompleteOperation):
+            lines.append(f"   completed at: {operation.completedAt}")
 
         expected_updated_at = getattr(operation, "expectedUpdatedAt", None)
         if expected_updated_at is not None:
@@ -103,7 +112,7 @@ def render_plan_description(plan: ChangePlanV1) -> str:
 
     ordered_totals = [
         f"{counts[action]} {action}{'' if counts[action] == 1 else 's'}"
-        for action in ("create", "update", "trash")
+        for action in ("create", "update", "complete", "trash")
         if counts[action]
     ]
     lines.append("Totals: " + ", ".join(ordered_totals))
@@ -127,7 +136,9 @@ def render_live_preflight(result: PreflightResult) -> str:
         if "firstScheduled" in desired:
             compiler_fields.append(f"firstScheduled={desired['firstScheduled']}")
         if operation.action == "create":
-            compiler_fields.append("task identity/defaults/timestamps")
+            compiler_fields.append(f"{operation.target.type} identity/defaults/timestamps")
+        if operation.action == "complete":
+            compiler_fields.append("done state and historical completion timestamp")
         if operation.action == "trash":
             compiler_fields.append("deletedAt and field update timestamps")
         if compiler_fields:
@@ -156,9 +167,11 @@ def render_revert_preflight(result: RevertPreflight) -> str:
             f"({source.targetId}) [{source.operationId}]"
         )
         if source.action == "create":
-            lines.append("   move the task created by this operation to Marvin Trash")
+            lines.append(
+                f"   move the {source.targetType} created by this operation to Marvin Trash"
+            )
         elif source.action == "trash":
-            lines.append("   restore the task from Marvin Trash")
+            lines.append(f"   restore the {source.targetType} from Marvin Trash")
         for field, desired in checked.compiled.desired_fields.items():
             before = checked.compiled.before_fields[field]
             old_value = before.get("value") if before["present"] else "<absent>"

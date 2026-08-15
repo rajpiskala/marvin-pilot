@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,7 +10,7 @@ import pytest
 
 from marvin_pilot.errors import HistoryError
 from marvin_pilot.examples import EXAMPLE_PLAN
-from marvin_pilot.history import HistoryStore, receipt_hash
+from marvin_pilot.history import HistoryStore, receipt_file_bytes, receipt_hash
 from marvin_pilot.plan_io import parse_plan_bytes, plan_digest
 from marvin_pilot.preflight import preflight_plan
 
@@ -99,6 +100,41 @@ def test_persist_rehashes_every_operation_transition(tmp_path: Path) -> None:
     assert loaded.status == "applying"
     assert loaded.operations[0].status == "sending"
     assert loaded.receiptHash != old_hash
+
+
+def test_legacy_task_receipt_without_target_type_keeps_its_integrity_hash(tmp_path: Path) -> None:
+    _, preflight = make_preflight()
+    store = HistoryStore(tmp_path, now=Clock())
+    handle = store.begin_apply(
+        preflight, json.dumps(EXAMPLE_PLAN).encode(), api_base_host="https://x"
+    )
+    value = json.loads(handle.path.read_text(encoding="utf-8"))
+    for operation in value["operations"]:
+        operation.pop("targetType")
+    unsigned = dict(value)
+    unsigned.pop("receiptHash")
+    value["receiptHash"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(
+                unsigned,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    )
+    handle.path.write_text(json.dumps(value), encoding="utf-8")
+
+    loaded = store.load(handle.path)
+
+    assert all(operation.targetType == "task" for operation in loaded.operations)
+    assert receipt_hash(loaded) == value["receiptHash"]
+    assert all(
+        "targetType" not in operation
+        for operation in json.loads(receipt_file_bytes(loaded))["operations"]
+    )
 
 
 @pytest.mark.parametrize(

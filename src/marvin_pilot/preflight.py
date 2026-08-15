@@ -10,6 +10,7 @@ from marvin_pilot.errors import LivePreconditionError
 from marvin_pilot.field_registry import FIELD_SPECS, live_field_matches
 from marvin_pilot.models.plan_v1 import (
     ChangePlanV1,
+    CompleteOperation,
     CreateOperation,
     Operation,
     TrashOperation,
@@ -78,12 +79,16 @@ def _revision_snapshot(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def _check_existing_preconditions(
-    operation: UpdateOperation | TrashOperation,
+    operation: UpdateOperation | TrashOperation | CompleteOperation,
     document: dict[str, Any],
 ) -> None:
-    if document.get("db") != "Tasks":
+    expected_db = "Tasks" if operation.target.type == "task" else "Categories"
+    if document.get("db") != expected_db or (
+        operation.target.type == "project" and document.get("type") != "project"
+    ):
+        document_kind = "a non-Task" if operation.target.type == "task" else "not a live project"
         raise LivePreconditionError(
-            f"operation {operation.operationId!r} targets a non-Task document"
+            f"operation {operation.operationId!r} target is {document_kind} document"
         )
     if document.get("title") != operation.target.title:
         raise LivePreconditionError(
@@ -107,10 +112,14 @@ def _check_existing_preconditions(
     if _meaningful(document.get("deletedAt")):
         if isinstance(operation, TrashOperation):
             raise LivePreconditionError(
-                f"operation {operation.operationId!r} targets a task already in Trash"
+                f"operation {operation.operationId!r} targets an item already in Trash"
             )
         raise LivePreconditionError(
-            f"operation {operation.operationId!r} targets a task currently in Trash"
+            f"operation {operation.operationId!r} targets an item currently in Trash"
+        )
+    if isinstance(operation, CompleteOperation) and document.get("done") is True:
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} targets an item already completed"
         )
     if isinstance(operation, UpdateOperation):
         mismatches = []
@@ -157,11 +166,26 @@ def _verify_reference(
     operation_id: str,
     reader: DocumentReader,
     cache: dict[str, dict[str, Any] | None],
+    planned_creates: dict[str, CreateOperation],
 ) -> None:
     if kind == "parent" and reference_id == "unassigned":
         if title_hint is not None and title_hint != "Inbox":
             raise LivePreconditionError(
                 f"operation {operation_id!r} calls parent 'unassigned' {title_hint!r}, not 'Inbox'"
+            )
+        return
+    planned = planned_creates.get(reference_id)
+    if planned is not None:
+        if kind == "parent" and planned.target.type != "project":
+            raise LivePreconditionError(
+                f"operation {operation_id!r} references newly created non-project parent "
+                f"{reference_id!r}"
+            )
+        planned_title = planned.after.title
+        if title_hint is not None and planned_title != title_hint:
+            raise LivePreconditionError(
+                f"operation {operation_id!r} {kind} title is stale for planned create "
+                f"{reference_id!r}: expected {title_hint!r}, found {planned_title!r}"
             )
         return
     if reference_id not in cache:
@@ -183,6 +207,7 @@ def _verify_references(
     reader: DocumentReader,
     cache: dict[str, dict[str, Any] | None],
     metadata_cache: dict[str, Any],
+    planned_creates: dict[str, CreateOperation],
 ) -> None:
     parents, labels, dependencies = _reference_hints(operation)
     seen: set[tuple[str, str, str | None]] = set()
@@ -196,6 +221,7 @@ def _verify_references(
                 operation_id=operation.operationId,
                 reader=reader,
                 cache=cache,
+                planned_creates=planned_creates,
             )
             seen.add(key)
     for label in labels:
@@ -225,7 +251,52 @@ def _verify_references(
             operation_id=operation.operationId,
             reader=reader,
             cache=cache,
+            planned_creates=planned_creates,
         )
+
+
+def _verify_project_parent_hierarchy(
+    operation: Operation,
+    reader: DocumentReader,
+    cache: dict[str, dict[str, Any] | None],
+    planned_creates: dict[str, CreateOperation],
+) -> None:
+    if operation.target.type != "project" or not isinstance(
+        operation, (UpdateOperation, CreateOperation)
+    ):
+        return
+    after = operation.after.model_dump(exclude_unset=True, mode="json")
+    if "parent" not in after or after["parent"] is None:
+        return
+    current_id = after["parent"]["id"]
+    seen: set[str] = set()
+    while current_id not in {"", "unassigned"}:
+        if current_id == operation.target.id:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} would create a project parent cycle"
+            )
+        if current_id in seen:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} proposed parent hierarchy is already cyclic"
+            )
+        seen.add(current_id)
+
+        planned = planned_creates.get(current_id)
+        if planned is not None:
+            planned_after = planned.after.model_dump(exclude_unset=True, mode="json")
+            planned_parent = planned_after.get("parent")
+            current_id = planned_parent["id"] if planned_parent is not None else "unassigned"
+            continue
+
+        if current_id not in cache:
+            cache[current_id] = reader.get_doc(current_id)
+        document = cache[current_id]
+        if document is None or document.get("db") != "Categories":
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} proposed parent ancestry contains a "
+                f"missing or non-Category document {current_id!r}"
+            )
+        current_id = document.get("parentId") or "unassigned"
 
 
 def preflight_plan(
@@ -239,6 +310,11 @@ def preflight_plan(
 
     cache: dict[str, dict[str, Any] | None] = {}
     metadata_cache: dict[str, Any] = {}
+    planned_creates = {
+        operation.target.id: operation
+        for operation in plan.operations
+        if isinstance(operation, CreateOperation)
+    }
     checked: list[PreflightOperation] = []
     for operation in plan.operations:
         target_id = operation.target.id
@@ -254,11 +330,12 @@ def preflight_plan(
         else:
             if live is None:
                 raise LivePreconditionError(
-                    f"operation {operation.operationId!r} target task does not exist"
+                    f"operation {operation.operationId!r} target item does not exist"
                 )
             _check_existing_preconditions(operation, live)
             revision = _revision_snapshot(live)
-        _verify_references(operation, reader, cache, metadata_cache)
+        _verify_references(operation, reader, cache, metadata_cache, planned_creates)
+        _verify_project_parent_hierarchy(operation, reader, cache, planned_creates)
         checked.append(
             PreflightOperation(
                 operation=operation,

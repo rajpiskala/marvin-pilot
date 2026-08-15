@@ -102,7 +102,7 @@ def _compile_inverse(
     *,
     now_ms: int,
 ) -> CompiledMutation:
-    if source.action == "update":
+    if source.action in {"update", "complete"}:
         desired = {
             field: _snapshot_restore_value(field, snapshot)
             for field, snapshot in source.beforeFields.items()
@@ -214,11 +214,15 @@ def preflight_revert(
         live = client.get_doc(source_operation.targetId)
         if live is None:
             raise LivePreconditionError(
-                f"operation {source_operation.operationId!r} target task no longer exists"
+                f"operation {source_operation.operationId!r} target item no longer exists"
             )
-        if live.get("db") != "Tasks":
+        expected_db = "Tasks" if source_operation.targetType == "task" else "Categories"
+        if live.get("db") != expected_db or (
+            source_operation.targetType == "project" and live.get("type") != "project"
+        ):
             raise LivePreconditionError(
-                f"operation {source_operation.operationId!r} targets a non-Task document"
+                f"operation {source_operation.operationId!r} target is not a live "
+                f"{source_operation.targetType} document"
             )
         reasons = coupled_task_reasons(live)
         if reasons:
@@ -284,7 +288,7 @@ def _receipt_operations(preflight: RevertPreflight) -> list[ReceiptOperationV1]:
     result = []
     for checked in preflight.operations:
         source = checked.source_operation
-        if source.action == "update":
+        if source.action in {"update", "complete"}:
             planned_before, planned_after = source.plannedAfter, source.plannedBefore
         elif source.action == "create":
             planned_before, planned_after = source.plannedAfter, None
@@ -295,6 +299,7 @@ def _receipt_operations(preflight: RevertPreflight) -> list[ReceiptOperationV1]:
                 operationId=source.operationId,
                 action=source.action,
                 targetId=source.targetId,
+                targetType=source.targetType,
                 targetTitle=checked.live_document.get("title"),
                 plannedBefore=planned_before,
                 plannedAfter=planned_after,

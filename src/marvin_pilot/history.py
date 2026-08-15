@@ -22,7 +22,7 @@ from marvin_pilot.atomic import (
     replace_with_retry,
 )
 from marvin_pilot.errors import HistoryError
-from marvin_pilot.models.plan_v1 import CreateOperation, UpdateOperation
+from marvin_pilot.models.plan_v1 import CompleteOperation, CreateOperation, UpdateOperation
 from marvin_pilot.models.receipt_v1 import (
     ReceiptOperationV1,
     ReceiptStatus,
@@ -60,6 +60,9 @@ def _filename_timestamp(value: str) -> str:
 def _canonical_receipt_bytes(receipt: ReceiptV1, *, include_hash: bool) -> bytes:
     excluded = set() if include_hash else {"receiptHash"}
     value = receipt.model_dump(mode="json", exclude_none=True, exclude=excluded)
+    for operation, serialized in zip(receipt.operations, value["operations"], strict=True):
+        if "targetType" not in operation.model_fields_set:
+            serialized.pop("targetType", None)
     try:
         return json.dumps(
             value,
@@ -82,6 +85,9 @@ def receipt_hash(receipt: ReceiptV1) -> str:
 def receipt_file_bytes(receipt: ReceiptV1) -> bytes:
     receipt.receiptHash = receipt_hash(receipt)
     value = receipt.model_dump(mode="json", exclude_none=True)
+    for operation, serialized in zip(receipt.operations, value["operations"], strict=True):
+        if "targetType" not in operation.model_fields_set:
+            serialized.pop("targetType", None)
     return (json.dumps(value, ensure_ascii=False, allow_nan=False, indent=2) + "\n").encode("utf-8")
 
 
@@ -150,11 +156,18 @@ class HistoryStore:
                 planned_after = operation.after.model_dump(exclude_unset=True, mode="json")
             elif isinstance(operation, CreateOperation):
                 planned_after = operation.after.model_dump(exclude_unset=True, mode="json")
+            elif isinstance(operation, CompleteOperation):
+                planned_before = {"done": False}
+                planned_after = {
+                    "done": True,
+                    "completedAt": operation.completedAt,
+                }
             operations.append(
                 ReceiptOperationV1(
                     operationId=operation.operationId,
                     action=operation.action,
                     targetId=operation.target.id,
+                    targetType=operation.target.type,
                     targetTitle=getattr(operation.target, "title", None),
                     plannedBefore=planned_before,
                     plannedAfter=planned_after,
