@@ -42,14 +42,14 @@ def running_visualizer(*, preload: bool = True, plan_dict: dict | None = None):
         assert not thread.is_alive()
 
 
-def private_regression_plan(number: str) -> dict:
+def regression_plan(number: str) -> dict:
     corpus = os.environ.get("MARVIN_PILOT_PRIVATE_PLAN_DIR")
-    if not corpus:
-        pytest.skip("set MARVIN_PILOT_PRIVATE_PLAN_DIR to run the private regression corpus")
-    path = Path(corpus) / f"{number}.json"
-    if not path.is_file():
-        pytest.skip(f"private regression fixture {number}.json is not present")
-    return json.loads(path.read_text(encoding="utf-8"))
+    if corpus:
+        path = Path(corpus) / f"{number}.json"
+        if not path.is_file():
+            pytest.fail(f"private regression fixture {number}.json is not present")
+        return json.loads(path.read_text(encoding="utf-8"))
+    return synthetic_regression_plan(number)
 
 
 def hierarchy_plan(*, show_day_sections: bool = False, depth: int = 2) -> dict:
@@ -115,6 +115,139 @@ def hierarchy_plan(*, show_day_sections: bool = False, depth: int = 2) -> dict:
             },
         ],
     }
+
+
+def synthetic_regression_plan(number: str) -> dict:
+    workspace = {
+        "id": "category-workspace",
+        "type": "category",
+        "title": "Example Workspace",
+    }
+    atlas = {"id": "category-atlas", "type": "category", "title": "Project Atlas"}
+    monitoring = {
+        "id": "project-monitoring",
+        "type": "project",
+        "title": "Release Monitoring",
+    }
+    followups = {"id": "project-followups", "type": "project", "title": "Follow-ups"}
+
+    if number == "01":
+        plan = hierarchy_plan(show_day_sections=True)
+        path = plan["operations"][0]["display"]["beforePath"]
+        plan["operations"].append(
+            {
+                "operationId": "move-alert-review",
+                "action": "update",
+                "target": {
+                    "type": "task",
+                    "id": "task-alert-review",
+                    "title": "Review alert routing",
+                },
+                "reason": "Group follow-up work together.",
+                "before": {
+                    "parent": {
+                        "id": "project-monitoring",
+                        "title": "Release Monitoring",
+                    }
+                },
+                "after": {"parent": {"id": "project-followups", "title": "Follow-ups"}},
+                "display": {
+                    "beforePath": [*path, monitoring],
+                    "afterPath": [*path, followups],
+                    "beforeDaySection": {"key": "waiting", "title": "Waiting", "order": 10},
+                    "afterDaySection": {"key": "main", "title": "Main", "order": 30},
+                },
+            }
+        )
+        return plan
+
+    if number == "02":
+        personal = {"id": "category-personal", "type": "category", "title": "Personal"}
+        learning = {"id": "category-learning", "type": "category", "title": "Learning"}
+        skills = {"id": "project-skills", "type": "project", "title": "Skills"}
+        study = {"id": "project-study", "type": "project", "title": "Study Plan"}
+        return {
+            "schemaVersion": 1,
+            "planId": "77777777-7777-4777-8777-777777777777",
+            "createdAt": "2026-08-13T12:00:00-07:00",
+            "summary": "Move a task to an external hierarchy.",
+            "operations": [
+                {
+                    "operationId": "move-learning-task",
+                    "action": "update",
+                    "target": {"type": "task", "id": "task-learning", "title": "Review notes"},
+                    "reason": "Place the task with its learning material.",
+                    "before": {
+                        "parent": {
+                            "id": "project-monitoring",
+                            "title": "Release Monitoring",
+                        }
+                    },
+                    "after": {"parent": {"id": "project-study", "title": "Study Plan"}},
+                    "display": {
+                        "beforePath": [workspace, atlas, monitoring],
+                        "afterPath": [personal, learning, skills, study],
+                    },
+                }
+            ],
+        }
+
+    if number == "03":
+        plan = hierarchy_plan()
+        plan["planId"] = "88888888-8888-4888-8888-888888888888"
+        path = plan["operations"][0]["display"]["afterPath"]
+        plan["operations"].append(
+            {
+                "operationId": "create-release-check",
+                "action": "create",
+                "target": {
+                    "type": "task",
+                    "id": "99999999-9999-4999-8999-999999999999",
+                },
+                "reason": "Add an explicit verification step.",
+                "after": {
+                    "title": "Verify the release candidate",
+                    "parent": {
+                        "id": "project-monitoring",
+                        "title": "Monitoring",
+                    },
+                },
+                "display": {
+                    "afterPath": [
+                        *path,
+                        {**monitoring, "title": "Monitoring"},
+                    ]
+                },
+            }
+        )
+        return plan
+
+    if number == "04":
+        return {
+            "schemaVersion": 1,
+            "planId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "createdAt": "2026-08-13T12:00:00-07:00",
+            "summary": "Complete a delivered synthetic project.",
+            "operations": [
+                {
+                    "operationId": "complete-delivered-project",
+                    "action": "complete",
+                    "target": {
+                        "type": "project",
+                        "id": "project-delivered",
+                        "title": "Delivered project",
+                    },
+                    "reason": "The final deliverable shipped.",
+                    "completedAt": "2026-08-12T17:00:00-07:00",
+                    "display": {
+                        "beforePath": [workspace, atlas],
+                        "afterPath": [workspace, atlas],
+                    },
+                }
+            ],
+        }
+
+    raise AssertionError(f"unknown regression fixture {number}")
 
 
 def project_actions_plan() -> dict:
@@ -652,8 +785,8 @@ def test_marvin_hierarchy_icons_day_sections_and_counterpart_highlighting(page) 
         assert page.locator(".diff-row").count() == 2
 
 
-def test_private_regression_01_has_exact_cross_pane_indentation_and_move_navigation(page) -> None:
-    plan = private_regression_plan("01")
+def test_regression_01_has_exact_cross_pane_indentation_and_move_navigation(page) -> None:
+    plan = regression_plan("01")
     renamed_project = next(
         operation
         for operation in plan["operations"]
@@ -737,8 +870,8 @@ def test_private_regression_01_has_exact_cross_pane_indentation_and_move_navigat
         assert "today section" in page.locator(".hierarchy-group-header").first.inner_text().lower()
 
 
-def test_private_regression_02_preserves_external_destination_and_regresses_ui(page) -> None:
-    plan = private_regression_plan("02")
+def test_regression_02_preserves_external_destination_and_regresses_ui(page) -> None:
+    plan = regression_plan("02")
     moved = next(
         operation
         for operation in plan["operations"]
@@ -774,8 +907,8 @@ def test_private_regression_02_preserves_external_destination_and_regresses_ui(p
 
 
 @pytest.mark.parametrize("number", ["03", "04"])
-def test_private_held_out_plans_obey_general_hierarchy_invariants(page, number: str) -> None:
-    plan = private_regression_plan(number)
+def test_held_out_plans_obey_general_hierarchy_invariants(page, number: str) -> None:
+    plan = regression_plan(number)
     with running_visualizer(plan_dict=plan) as server:
         page.set_viewport_size({"width": 1692, "height": 1100})
         page.goto(server.url)
