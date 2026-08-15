@@ -223,3 +223,101 @@ def test_desired_field_verification_is_exact() -> None:
     assert not desired_fields_match({"title": "Other"}, {"title": "New"})
     assert not desired_fields_match({}, {"title": None})
     assert not desired_fields_match(None, {})
+
+
+def _subtask_conversion_plan():
+    value = {
+        "schemaVersion": 1,
+        "planId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "createdAt": "2026-08-14T08:00:00-07:00",
+        "summary": "Consolidate a loose dinner task.",
+        "operations": [
+            {
+                "operationId": "build-dinner-checklist",
+                "action": "update",
+                "target": {"type": "task", "id": "parent-task", "title": "Handle dinner"},
+                "reason": "Put the workflow in one ordered checklist.",
+                "before": {"subtasks": []},
+                "after": {
+                    "subtasks": [
+                        {
+                            "id": "sub-order",
+                            "title": "Order food",
+                            "sourceTask": {"id": "loose-order", "title": "Order food"},
+                        }
+                    ]
+                },
+            },
+            {
+                "operationId": "trash-loose-order",
+                "action": "trash",
+                "target": {"type": "task", "id": "loose-order", "title": "Order food"},
+                "reason": "The new subtask replaces this loose task.",
+                "dependsOnOperations": ["build-dinner-checklist"],
+            },
+        ],
+    }
+    return parse_plan_bytes(json.dumps(value).encode())
+
+
+def _subtask_documents() -> dict[str, dict[str, Any]]:
+    return {
+        "parent-task": {
+            "_id": "parent-task",
+            "_rev": "1-parent",
+            "db": "Tasks",
+            "title": "Handle dinner",
+            "subtasks": {},
+            "updatedAt": 100,
+        },
+        "loose-order": {
+            "_id": "loose-order",
+            "_rev": "1-source",
+            "db": "Tasks",
+            "title": "Order food",
+            "done": False,
+            "day": "unassigned",
+            "parentId": "unassigned",
+            "updatedAt": 200,
+        },
+    }
+
+
+def test_subtask_conversion_preflight_preserves_source_and_compiles_atomically() -> None:
+    result = preflight_plan(
+        _subtask_conversion_plan(), FakeReader(_subtask_documents()), now_ms=NOW_MS
+    )
+    update, trash = result.operations
+    subtasks = next(
+        setter["val"]
+        for setter in update.compiled.payload["setters"]
+        if setter["key"] == "subtasks"
+    )
+    assert subtasks == {
+        "sub-order": {"_id": "sub-order", "title": "Order food", "rank": 1, "done": False}
+    }
+    assert trash.operation.dependsOnOperations == ["build-dinner-checklist"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda docs: docs.pop("loose-order"), "missing or non-Task"),
+        (lambda docs: docs["loose-order"].update({"title": "Order takeout"}), "title is stale"),
+        (
+            lambda docs: docs["loose-order"].update({"done": True}),
+            "cannot convert completed sourceTask",
+        ),
+        (lambda docs: docs["loose-order"].update({"note": "Keep this"}), "not represented.*note"),
+        (
+            lambda docs: docs["loose-order"].update({"isStarred": 1}),
+            "not represented.*isStarred",
+        ),
+        (lambda docs: docs["loose-order"].update({"isPinned": True}), "coupled behavior"),
+    ],
+)
+def test_subtask_conversion_rejects_lossy_or_stale_sources(mutation, message: str) -> None:
+    documents = _subtask_documents()
+    mutation(documents)
+    with pytest.raises(LivePreconditionError, match=message):
+        preflight_plan(_subtask_conversion_plan(), FakeReader(documents), now_ms=NOW_MS)

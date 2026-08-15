@@ -413,6 +413,22 @@
           "default": null,
           "title": "Startdate"
         },
+        "subtasks": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/SubtaskFields"
+              },
+              "maxItems": 500,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subtasks"
+        },
         "timeBlockSectionId": {
           "anyOf": [
             {
@@ -760,6 +776,62 @@
       "title": "ReviewDisplay",
       "type": "object"
     },
+    "SubtaskFields": {
+      "additionalProperties": false,
+      "description": "Ordered, reviewable subset of one Marvin embedded subtask.",
+      "properties": {
+        "done": {
+          "default": false,
+          "title": "Done",
+          "type": "boolean"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "sourceTask": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SubtaskSourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "title": "SubtaskFields",
+      "type": "object"
+    },
+    "SubtaskSourceRef": {
+      "additionalProperties": false,
+      "description": "Optional provenance for safely converting a loose task into a subtask.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "title": "SubtaskSourceRef",
+      "type": "object"
+    },
     "TaskFields": {
       "additionalProperties": false,
       "description": "Normal, allowlisted task fields; unset and explicit null remain distinguishable.",
@@ -1057,6 +1129,22 @@
           ],
           "default": null,
           "title": "Startdate"
+        },
+        "subtasks": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/SubtaskFields"
+              },
+              "maxItems": 500,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subtasks"
         },
         "timeBlockSectionId": {
           "anyOf": [

@@ -6,6 +6,7 @@ const THEMES = ["light", "dusk", "night"];
 const VIEWS = ["split", "before", "after"];
 const MODES = ["preview", "changes"];
 const ACTIONS = ["create", "update", "complete", "trash"];
+const CHANGE_GROUPINGS = ["after", "before", "plan", "day"];
 const MAX_PLAN_BYTES = 4 * 1024 * 1024;
 const COMPACT_FIELD_PREFIXES = {
   dueDate: "Due",
@@ -36,6 +37,10 @@ let selectedTheme = readPreference(THEME_KEY, THEMES, "light");
 let selectedView = readPreference(VIEW_KEY, VIEWS, "split");
 let selectedMode = "preview";
 let showDaySections = false;
+let selectedChangeGrouping = "after";
+let movedOnly = false;
+let searchQuery = "";
+let selectedOperationId = null;
 let currentPlan = null;
 const visibleActions = new Set(ACTIONS);
 
@@ -61,6 +66,13 @@ const elements = {
   completeCount: document.querySelector("#complete-count"),
   trashCount: document.querySelector("#trash-count"),
   daySectionsToggle: document.querySelector("#day-sections-toggle"),
+  changesGroupingControl: document.querySelector("#changes-grouping-control"),
+  changesGrouping: document.querySelector("#changes-grouping"),
+  changesSearchControl: document.querySelector("#changes-search-control"),
+  changesSearch: document.querySelector("#changes-search"),
+  movedFilter: document.querySelector("#moved-filter"),
+  movedCount: document.querySelector("#moved-count"),
+  comparisonTray: document.querySelector("#comparison-tray"),
   sections: document.querySelector("#sections"),
   emptyFilter: document.querySelector("#empty-filter"),
 };
@@ -95,9 +107,35 @@ function setMode(mode) {
     button.setAttribute("aria-checked", String(button.dataset.modeChoice === selectedMode));
   });
   elements.daySectionsToggle.hidden = selectedMode !== "preview";
+  elements.changesGroupingControl.hidden = selectedMode !== "changes";
+  elements.changesSearchControl.hidden = selectedMode !== "changes";
   if (currentPlan) {
     renderSections();
   }
+}
+
+function operationSearchText(operation) {
+  return [
+    operation.target_title,
+    operation.before?.title,
+    operation.after?.title,
+    operation.reason,
+    ...operation.before_path.map((entry) => entry.title),
+    ...operation.after_path.map((entry) => entry.title),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase();
+}
+
+function operationMatchesFilters(operation) {
+  if (!visibleActions.has(operation.action)) {
+    return false;
+  }
+  if (movedOnly && !operation.change_kinds.includes("moved")) {
+    return false;
+  }
+  return selectedMode !== "changes" || !searchQuery || operationSearchText(operation).includes(searchQuery);
 }
 
 function syncDaySectionToggle() {
@@ -176,10 +214,10 @@ function lineIcon(className, label) {
 }
 
 function objectIcon(type) {
-  if (type === "task") {
-    const task = node("span", "object-icon task-circle");
+  if (type === "task" || type === "subtask") {
+    const task = node("span", `object-icon task-circle${type === "subtask" ? " subtask-circle" : ""}`);
     task.setAttribute("role", "img");
-    task.setAttribute("aria-label", "Task");
+    task.setAttribute("aria-label", type === "subtask" ? "Subtask" : "Task");
     return task;
   }
   if (type === "project") {
@@ -309,6 +347,36 @@ function renderCard(
     noteDetails.append(node("p", "", card.note));
     article.append(noteDetails);
   }
+  if (card.subtasks.length > 0) {
+    const subtaskDetails = node("details", "task-subtasks");
+    subtaskDetails.open = true;
+    subtaskDetails.append(
+      node(
+        "summary",
+        "subtask-summary",
+        `${card.subtasks.length} subtask${card.subtasks.length === 1 ? "" : "s"}`,
+      ),
+    );
+    const list = node("ol", "subtask-list");
+    card.subtasks.forEach((subtask) => {
+      const item = node("li", `subtask-row${subtask.done ? " done" : ""}`);
+      item.dataset.subtaskId = subtask.id;
+      if (subtask.source_task_id) {
+        item.dataset.sourceTaskId = subtask.source_task_id;
+      }
+      item.append(objectIcon("subtask"));
+      const title = node("span", "subtask-title", subtask.title);
+      item.append(title);
+      if (subtask.source_task_title) {
+        const source = node("span", "subtask-source", `From ${subtask.source_task_title}`);
+        source.title = `Converted from loose task ${subtask.source_task_id}`;
+        item.append(source);
+      }
+      list.append(item);
+    });
+    subtaskDetails.append(list);
+    article.append(subtaskDetails);
+  }
   return article;
 }
 
@@ -339,6 +407,72 @@ function describeDaySection(placement) {
     return "No day section";
   }
   return "Not supplied in plan";
+}
+
+function renderSubtaskDiff(operation) {
+  const before = operation.before?.subtasks || [];
+  const after = operation.after?.subtasks || [];
+  if (before.length === 0 && after.length === 0) {
+    return null;
+  }
+  const beforeById = new Map(before.map((item, index) => [item.id, { item, index }]));
+  const afterById = new Map(after.map((item, index) => [item.id, { item, index }]));
+  const ids = [...before.map((item) => item.id)];
+  after.forEach((item) => {
+    if (!beforeById.has(item.id)) {
+      ids.push(item.id);
+    }
+  });
+  const section = node("section", "subtask-diff");
+  section.append(node("h4", "", "Subtask changes"));
+  const list = node("ul", "subtask-diff-list");
+  ids.forEach((id) => {
+    const oldEntry = beforeById.get(id);
+    const newEntry = afterById.get(id);
+    let kind = "unchanged";
+    let description = "Unchanged";
+    let title = oldEntry?.item.title || newEntry?.item.title || id;
+    if (!oldEntry) {
+      kind = "added";
+      description = newEntry.item.source_task_title
+        ? `Converted from loose task: ${newEntry.item.source_task_title}`
+        : "Added";
+    } else if (!newEntry) {
+      kind = "removed";
+      description = "Removed";
+    } else {
+      const changes = [];
+      if (oldEntry.item.title !== newEntry.item.title) {
+        changes.push(`Renamed from “${oldEntry.item.title}”`);
+        title = newEntry.item.title;
+      }
+      if (oldEntry.item.done !== newEntry.item.done) {
+        changes.push(newEntry.item.done ? "Completed" : "Reopened");
+      }
+      if (oldEntry.index !== newEntry.index) {
+        changes.push(`Moved from ${oldEntry.index + 1} to ${newEntry.index + 1}`);
+      }
+      if (changes.length > 0) {
+        kind = "changed";
+        description = changes.join(" · ");
+      }
+    }
+    if (kind === "unchanged") {
+      return;
+    }
+    const row = node("li", `subtask-diff-row ${kind}`);
+    row.append(
+      node("span", "subtask-diff-kind", kind),
+      node("strong", "", title),
+      node("span", "subtask-diff-description", description),
+    );
+    list.append(row);
+  });
+  if (list.children.length === 0) {
+    return null;
+  }
+  section.append(list);
+  return section;
 }
 
 function renderOperationDetails(operation) {
@@ -406,25 +540,33 @@ function renderOperationDetails(operation) {
     body.append(warnings);
   }
 
-  const wrap = node("div", "diff-wrap");
-  const table = node("table", "diff-table");
-  const head = node("thead");
-  const headerRow = node("tr");
-  ["Field", "Before", "After"].forEach((label) => headerRow.append(node("th", "", label)));
-  head.append(headerRow);
-  table.append(head);
-  const tableBody = node("tbody");
-  operation.diffs.forEach((diff) => {
-    const row = node("tr");
-    const field = node("td");
-    field.append(node("span", "diff-summary", diff.label));
-    field.append(node("code", "diff-exact", diff.field));
-    row.append(field, renderDiffValue(diff.before), renderDiffValue(diff.after));
-    tableBody.append(row);
-  });
-  table.append(tableBody);
-  wrap.append(table);
-  body.append(wrap);
+  const subtaskDiff = renderSubtaskDiff(operation);
+  if (subtaskDiff) {
+    body.append(subtaskDiff);
+  }
+
+  const visibleDiffs = operation.diffs.filter((diff) => diff.field !== "subtasks");
+  if (visibleDiffs.length > 0) {
+    const wrap = node("div", "diff-wrap");
+    const table = node("table", "diff-table");
+    const head = node("thead");
+    const headerRow = node("tr");
+    ["Field", "Before", "After"].forEach((label) => headerRow.append(node("th", "", label)));
+    head.append(headerRow);
+    table.append(head);
+    const tableBody = node("tbody");
+    visibleDiffs.forEach((diff) => {
+      const row = node("tr");
+      const field = node("td");
+      field.append(node("span", "diff-summary", diff.label));
+      field.append(node("code", "diff-exact", diff.field));
+      row.append(field, renderDiffValue(diff.before), renderDiffValue(diff.after));
+      tableBody.append(row);
+    });
+    table.append(tableBody);
+    wrap.append(table);
+    body.append(wrap);
+  }
   details.append(body);
   return details;
 }
@@ -436,11 +578,14 @@ function renderStateOperation(operation, sideName) {
   }
   const wrapper = node("article", `operation-row action-${operation.action}`);
   wrapper.dataset.operationId = operation.operation_id;
+  wrapper.dataset.side = sideName;
+  wrapper.tabIndex = 0;
   wrapper.setAttribute(
     "aria-label",
     `${operation.action} operation ${operation.operation_id}`,
   );
   wrapper.append(
+    renderLocationBreadcrumb(operation, sideName),
     renderCard(card, sideName, operation.target_type, operation.action, {
       changeKinds: operation.change_kinds,
     }),
@@ -454,6 +599,7 @@ function renderDiffCell(operation, sideName) {
   const card = operation[sideName];
   if (card) {
     cell.append(
+      renderLocationBreadcrumb(operation, sideName),
       renderCard(card, sideName, operation.target_type, operation.action, {
         changeKinds: operation.change_kinds,
       }),
@@ -473,6 +619,151 @@ function renderDiffCell(operation, sideName) {
   return cell;
 }
 
+function pathIdentity(path, state) {
+  if (state === "root") {
+    return "root";
+  }
+  return `${state}:${path.map((entry) => `${entry.type}:${entry.id}`).join("/")}`;
+}
+
+function operationGrouping(operation) {
+  if (selectedChangeGrouping === "plan") {
+    return { key: "plan", kind: "plan", title: "Plan order", path: [], state: "root" };
+  }
+
+  let sideName = selectedChangeGrouping === "before" ? "before" : "after";
+  if (selectedChangeGrouping === "day") {
+    sideName = selectedView === "before" ? "before" : "after";
+  }
+  if (!operation[sideName]) {
+    const title = sideName === "before" ? "Created by this plan" : "Marvin Trash";
+    return {
+      key: `terminal:${sideName}`,
+      kind: "terminal",
+      title,
+      path: [],
+      state: "root",
+    };
+  }
+
+  if (selectedChangeGrouping === "day") {
+    const placement = operation[`${sideName}_day_section`];
+    if (placement.state === "value") {
+      return {
+        key: `day:${placement.key}`,
+        kind: "day",
+        title: placement.title,
+        path: [],
+        state: "value",
+      };
+    }
+    const title = placement.state === "none" ? "No Today section" : "Today section not supplied";
+    return {
+      key: `day:${placement.state}`,
+      kind: "day",
+      title,
+      path: [],
+      state: placement.state,
+    };
+  }
+
+  const path = operation[`${sideName}_path`];
+  const state = operation[`${sideName}_path_state`];
+  return {
+    key: `${sideName}:${pathIdentity(path, state)}`,
+    kind: "location",
+    title: state === "unknown" ? "Location not supplied" : state === "root" ? "Marvin root" : "",
+    path,
+    state,
+  };
+}
+
+function groupedOperations(operations) {
+  const groups = new Map();
+  currentPlan.operations.forEach((operation) => {
+    if (!operationMatchesFilters(operation)) {
+      return;
+    }
+    const descriptor = operationGrouping(operation);
+    if (!groups.has(descriptor.key)) {
+      groups.set(descriptor.key, { ...descriptor, operations: [] });
+    }
+    groups.get(descriptor.key).operations.push(operation);
+  });
+  return [...groups.values()];
+}
+
+function renderPathCrumbs(path, state, { compact = false } = {}) {
+  const crumbs = node("span", `path-crumbs${compact ? " compact" : ""}`);
+  if (state === "unknown") {
+    crumbs.append(node("span", "path-missing", "Location not supplied"));
+    return crumbs;
+  }
+  if (state === "root" || path.length === 0) {
+    crumbs.append(node("span", "path-root", "Marvin root"));
+    return crumbs;
+  }
+  path.forEach((entry, index) => {
+    const crumb = node("span", `path-crumb item-type-${entry.type}`);
+    if (entry.color) {
+      crumb.style.setProperty("--node-color", entry.color);
+    }
+    crumb.append(objectIcon(entry.type));
+    if (entry.emoji) {
+      crumb.append(node("span", "path-emoji", entry.emoji));
+    }
+    crumb.append(node("span", "path-title", entry.title));
+    crumbs.append(crumb);
+    if (index < path.length - 1) {
+      crumbs.append(node("span", "path-separator", "›"));
+    }
+  });
+  if (state === "legacy") {
+    crumbs.append(node("span", "path-state-label", "Inferred location"));
+  }
+  return crumbs;
+}
+
+function renderLocationBreadcrumb(operation, sideName) {
+  const location = node("div", "card-location");
+  location.append(
+    node("span", "card-location-label", sideName === "before" ? "Now" : "After"),
+    renderPathCrumbs(
+      operation[`${sideName}_path`],
+      operation[`${sideName}_path_state`],
+      { compact: true },
+    ),
+  );
+  return location;
+}
+
+function renderChangeGroupHeader(group) {
+  const header = node("header", "section-header diff-section-header hierarchy-group-header");
+  const label = selectedChangeGrouping === "day"
+    ? "Today section"
+    : selectedChangeGrouping === "before"
+      ? "Now location"
+      : selectedChangeGrouping === "after"
+        ? "After location"
+        : "Review sequence";
+  header.append(node("span", "group-kind-label", label));
+  const title = node("h3", "hierarchy-group-title");
+  if (group.kind === "location" && group.path.length > 0) {
+    title.append(renderPathCrumbs(group.path, group.state));
+  } else {
+    title.append(node("span", "group-terminal-title", group.title));
+  }
+  title.append(
+    node(
+      "span",
+      "section-counts",
+      `${group.operations.length} change${group.operations.length === 1 ? "" : "s"}`,
+    ),
+  );
+  header.append(title);
+  return header;
+}
+
 function renderSplitPreview(operations) {
   const preview = node("section", "split-diff");
   const headings = node("header", "diff-pane-headings");
@@ -480,22 +771,19 @@ function renderSplitPreview(operations) {
   preview.append(headings);
 
   let renderedCount = 0;
-  currentPlan.layouts.split.forEach((section) => {
-    const members = section.operation_ids
-      .map((operationId) => operations.get(operationId))
-      .filter((operation) => operation && visibleActions.has(operation.action));
+  groupedOperations(operations).forEach((section) => {
+    const members = section.operations;
     if (members.length === 0) {
       return;
     }
     renderedCount += members.length;
     const group = node("section", "section-group diff-section");
     group.dataset.sectionKey = section.key;
-    const header = node("header", "section-header diff-section-header");
-    header.append(node("h3", "", section.title));
-    group.append(header);
+    group.append(renderChangeGroupHeader(section));
     members.forEach((operation) => {
       const row = node("div", `operation-row diff-row action-${operation.action}`);
       row.dataset.operationId = operation.operation_id;
+      row.tabIndex = 0;
       row.setAttribute(
         "aria-label",
         `${operation.action} operation ${operation.operation_id}`,
@@ -522,22 +810,15 @@ function renderStatePane(operations, sideName) {
   pane.append(paneHeader);
 
   let renderedCount = 0;
-  currentPlan.layouts[sideName].forEach((section) => {
-    const members = section.operation_ids
-      .map((operationId) => operations.get(operationId))
-      .filter(
-        (operation) =>
-          operation && visibleActions.has(operation.action) && operation[sideName],
-      );
+  groupedOperations(operations).forEach((section) => {
+    const members = section.operations.filter((operation) => operation[sideName]);
     if (members.length === 0) {
       return;
     }
     renderedCount += members.length;
     const group = node("section", "section-group");
     group.dataset.sectionKey = section.key;
-    const header = node("header", "section-header");
-    header.append(node("h3", "", section.title));
-    group.append(header);
+    group.append(renderChangeGroupHeader({ ...section, operations: members }));
     members.forEach((operation) => group.append(renderStateOperation(operation, sideName)));
     pane.append(group);
   });
@@ -550,7 +831,7 @@ function renderStatePane(operations, sideName) {
 
 function hierarchyNodeIsVisible(item, operations) {
   const operation = item.operation_id ? operations.get(item.operation_id) : null;
-  const ownVisible = operation && visibleActions.has(operation.action);
+  const ownVisible = operation && operationMatchesFilters(operation);
   return ownVisible || item.children.some((child) => hierarchyNodeIsVisible(child, operations));
 }
 
@@ -573,7 +854,7 @@ function setHierarchyNodeExpanded(nodeKey, expanded) {
 
 function renderHierarchyNode(item, sideName, operations, depth = 0) {
   const operation = item.operation_id ? operations.get(item.operation_id) : null;
-  const ownVisible = operation && visibleActions.has(operation.action);
+  const ownVisible = operation && operationMatchesFilters(operation);
   const visibleChildren = item.children.filter((child) => hierarchyNodeIsVisible(child, operations));
   if (!ownVisible && visibleChildren.length === 0) {
     return null;
@@ -593,6 +874,8 @@ function renderHierarchyNode(item, sideName, operations, depth = 0) {
   );
   if (ownVisible) {
     row.dataset.operationId = operation.operation_id;
+    row.dataset.side = sideName;
+    row.tabIndex = 0;
     row.setAttribute("aria-label", `${operation.action} ${operation.target_type} ${item.title}`);
   }
 
@@ -687,7 +970,7 @@ function appendHierarchyRoots(container, roots, sideName, operations) {
 function renderDaySectionGroup(group, sideName, operations) {
   const visibleOperationIds = group.operation_ids.filter((operationId) => {
     const operation = operations.get(operationId);
-    return operation && visibleActions.has(operation.action) && operation[sideName];
+    return operation && operationMatchesFilters(operation) && operation[sideName];
   });
   if (visibleOperationIds.length === 0) {
     return null;
@@ -761,6 +1044,175 @@ function renderHierarchyPreview(operations) {
   return { preview, renderedCount };
 }
 
+function comparisonQueue(selectedOperation) {
+  const matching = currentPlan.operations.filter((operation) => operationMatchesFilters(operation));
+  if (selectedOperation?.change_kinds.includes("moved")) {
+    return matching.filter((operation) => operation.change_kinds.includes("moved"));
+  }
+  return matching;
+}
+
+function renderComparisonSide(operation, sideName) {
+  const side = node("div", `comparison-side comparison-side-${sideName}`);
+  side.append(
+    node("span", "comparison-side-label", sideName === "before" ? "Now" : "After (preview)"),
+    renderPathCrumbs(
+      operation[`${sideName}_path`],
+      operation[`${sideName}_path_state`],
+      { compact: true },
+    ),
+  );
+  const card = operation[sideName];
+  if (card) {
+    side.append(
+      renderCard(card, sideName, operation.target_type, operation.action, {
+        changeKinds: operation.change_kinds,
+      }),
+    );
+  } else {
+    side.append(
+      node(
+        "div",
+        "comparison-empty",
+        sideName === "before" ? operation.before_empty_label : operation.after_empty_label,
+      ),
+    );
+  }
+  return side;
+}
+
+function operationElement(operationId, sideName) {
+  const candidates = [...elements.sections.querySelectorAll("[data-operation-id]")].filter(
+    (element) => element.dataset.operationId === operationId,
+  );
+  const exact = candidates.find((element) => element.dataset.side === sideName);
+  return exact || (selectedMode === "changes" ? candidates[0] : null) || null;
+}
+
+function updateJumpDirections() {
+  elements.comparisonTray.querySelectorAll("[data-jump-side]").forEach((button) => {
+    const sideName = button.dataset.jumpSide;
+    const operation = currentPlan?.operations.find(
+      (candidate) => candidate.operation_id === selectedOperationId,
+    );
+    if (!operation?.[sideName]) {
+      button.disabled = true;
+      button.textContent = `No ${sideName === "before" ? "Now" : "After"} state`;
+      return;
+    }
+    button.disabled = false;
+    const target = operationElement(selectedOperationId, sideName);
+    let direction = "";
+    if (target) {
+      const box = target.getBoundingClientRect();
+      if (box.bottom < 0) {
+        direction = " ↑";
+      } else if (box.top > window.innerHeight) {
+        direction = " ↓";
+      } else {
+        direction = " · visible";
+      }
+    }
+    button.textContent = `Jump to ${sideName === "before" ? "Now" : "After"}${direction}`;
+  });
+}
+
+function jumpToOperation(sideName) {
+  if (selectedMode !== "preview") {
+    setMode("preview");
+  }
+  if (selectedView !== "split" && selectedView !== sideName) {
+    setView(sideName, false);
+  }
+  window.requestAnimationFrame(() => {
+    const target = operationElement(selectedOperationId, sideName);
+    if (!target) {
+      return;
+    }
+    target.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+    target.focus({ preventScroll: true });
+    window.setTimeout(updateJumpDirections, 350);
+  });
+}
+
+function cycleSelectedOperation(offset) {
+  const selected = currentPlan.operations.find(
+    (operation) => operation.operation_id === selectedOperationId,
+  );
+  const queue = comparisonQueue(selected);
+  if (queue.length === 0) {
+    return;
+  }
+  const index = Math.max(
+    0,
+    queue.findIndex((operation) => operation.operation_id === selectedOperationId),
+  );
+  setSelectedOperation(queue[(index + offset + queue.length) % queue.length].operation_id);
+}
+
+function renderComparisonTray() {
+  const operation = currentPlan?.operations.find(
+    (candidate) => candidate.operation_id === selectedOperationId,
+  );
+  if (!operation || !operationMatchesFilters(operation)) {
+    selectedOperationId = null;
+    elements.comparisonTray.hidden = true;
+    elements.comparisonTray.replaceChildren();
+    return;
+  }
+
+  const queue = comparisonQueue(operation);
+  const queueIndex = queue.findIndex((candidate) => candidate.operation_id === operation.operation_id);
+  const header = node("header", "comparison-tray-header");
+  const heading = node("div");
+  heading.append(
+    node("span", "comparison-tray-eyebrow", "Pinned comparison"),
+    node(
+      "strong",
+      "comparison-tray-title",
+      `${queueIndex + 1} of ${queue.length}${operation.change_kinds.includes("moved") ? " moved items" : " visible changes"}`,
+    ),
+  );
+  const navigation = node("div", "comparison-navigation");
+  const previous = node("button", "secondary-button", "Previous");
+  previous.type = "button";
+  previous.disabled = queue.length <= 1;
+  previous.addEventListener("click", () => cycleSelectedOperation(-1));
+  const next = node("button", "secondary-button", "Next");
+  next.type = "button";
+  next.disabled = queue.length <= 1;
+  next.addEventListener("click", () => cycleSelectedOperation(1));
+  const close = node("button", "comparison-close", "×");
+  close.type = "button";
+  close.setAttribute("aria-label", "Close pinned comparison");
+  close.addEventListener("click", () => setSelectedOperation(null));
+  navigation.append(previous, next, close);
+  header.append(heading, navigation);
+
+  const sides = node("div", "comparison-sides");
+  sides.append(renderComparisonSide(operation, "before"), renderComparisonSide(operation, "after"));
+  const actions = node("div", "comparison-jumps");
+  ["before", "after"].forEach((sideName) => {
+    const button = node("button", "secondary-button");
+    button.type = "button";
+    button.dataset.jumpSide = sideName;
+    button.addEventListener("click", () => jumpToOperation(sideName));
+    actions.append(button);
+  });
+
+  elements.comparisonTray.replaceChildren(header, sides, actions);
+  elements.comparisonTray.hidden = false;
+  window.requestAnimationFrame(updateJumpDirections);
+}
+
+function setSelectedOperation(operationId) {
+  selectedOperationId = operationId;
+  document.querySelectorAll("[data-operation-id]").forEach((element) => {
+    element.classList.toggle("selected-operation", element.dataset.operationId === operationId);
+  });
+  renderComparisonTray();
+}
+
 function renderSections() {
   const operations = new Map(currentPlan.operations.map((operation) => [operation.operation_id, operation]));
   const fragment = document.createDocumentFragment();
@@ -791,10 +1243,22 @@ function renderSections() {
   elements.sections.classList.toggle("hierarchy-mode", selectedMode === "preview");
   elements.sections.replaceChildren(fragment);
   elements.emptyFilter.hidden = renderedCount !== 0;
+  document.querySelectorAll("[data-operation-id]").forEach((element) => {
+    element.classList.toggle(
+      "selected-operation",
+      Boolean(selectedOperationId) && element.dataset.operationId === selectedOperationId,
+    );
+  });
+  renderComparisonTray();
 }
 
 function renderPlan(plan) {
   currentPlan = plan;
+  movedOnly = false;
+  searchQuery = "";
+  selectedOperationId = null;
+  elements.movedFilter.setAttribute("aria-pressed", "false");
+  elements.changesSearch.value = "";
   showDaySections = Boolean(plan.previews?.show_day_sections_by_default);
   syncDaySectionToggle();
   elements.summary.textContent = plan.summary;
@@ -806,6 +1270,19 @@ function renderPlan(plan) {
   elements.updateCount.textContent = plan.counts.update;
   elements.completeCount.textContent = plan.counts.complete;
   elements.trashCount.textContent = plan.counts.trash;
+  const movedCount = plan.operations.filter((operation) => operation.change_kinds.includes("moved")).length;
+  elements.movedCount.textContent = movedCount;
+  elements.movedFilter.disabled = movedCount === 0;
+  const hasDaySections = plan.operations.some(
+    (operation) => operation.before_day_section.state === "value" || operation.after_day_section.state === "value",
+  );
+  const dayOption = elements.changesGrouping.querySelector('option[value="day"]');
+  dayOption.disabled = !hasDaySections;
+  dayOption.textContent = hasDaySections ? "Day section" : "Day section (not supplied)";
+  if (!hasDaySections && selectedChangeGrouping === "day") {
+    selectedChangeGrouping = "after";
+    elements.changesGrouping.value = selectedChangeGrouping;
+  }
   elements.landing.hidden = true;
   elements.planView.hidden = false;
   document.title = `Marvin Pilot - ${plan.summary}`;
@@ -890,6 +1367,27 @@ elements.daySectionsToggle.addEventListener("click", () => {
     renderSections();
   }
 });
+elements.changesGrouping.addEventListener("change", () => {
+  selectedChangeGrouping = CHANGE_GROUPINGS.includes(elements.changesGrouping.value)
+    ? elements.changesGrouping.value
+    : "after";
+  if (currentPlan) {
+    renderSections();
+  }
+});
+elements.changesSearch.addEventListener("input", () => {
+  searchQuery = elements.changesSearch.value.trim().toLocaleLowerCase();
+  if (currentPlan) {
+    renderSections();
+  }
+});
+elements.movedFilter.addEventListener("click", () => {
+  movedOnly = !movedOnly;
+  elements.movedFilter.setAttribute("aria-pressed", String(movedOnly));
+  if (currentPlan) {
+    renderSections();
+  }
+});
 
 ["dragenter", "dragover"].forEach((eventName) => {
   elements.dropZone.addEventListener(eventName, (event) => {
@@ -947,7 +1445,25 @@ function setCounterpartHighlight(operationId, highlighted) {
   });
 }
 
+function setSourceTaskHighlight(sourceTaskId, highlighted) {
+  const sourceOperation = currentPlan?.operations.find(
+    (operation) => operation.target_id === sourceTaskId,
+  );
+  if (sourceOperation) {
+    setCounterpartHighlight(sourceOperation.operation_id, highlighted);
+  }
+  document.querySelectorAll("[data-source-task-id]").forEach((element) => {
+    if (element.dataset.sourceTaskId === sourceTaskId) {
+      element.classList.toggle("source-highlight", highlighted);
+    }
+  });
+}
+
 elements.sections.addEventListener("pointerover", (event) => {
+  const subtask = event.target.closest?.("[data-source-task-id]");
+  if (subtask) {
+    setSourceTaskHighlight(subtask.dataset.sourceTaskId, true);
+  }
   const operation = event.target.closest?.("[data-operation-id]");
   if (operation) {
     setCounterpartHighlight(operation.dataset.operationId, true);
@@ -955,6 +1471,10 @@ elements.sections.addEventListener("pointerover", (event) => {
 });
 
 elements.sections.addEventListener("pointerout", (event) => {
+  const subtask = event.target.closest?.("[data-source-task-id]");
+  if (subtask && !subtask.contains(event.relatedTarget)) {
+    setSourceTaskHighlight(subtask.dataset.sourceTaskId, false);
+  }
   const operation = event.target.closest?.("[data-operation-id]");
   if (operation && !operation.contains(event.relatedTarget)) {
     setCounterpartHighlight(operation.dataset.operationId, false);
@@ -974,5 +1494,30 @@ elements.sections.addEventListener("focusout", (event) => {
     setCounterpartHighlight(operation.dataset.operationId, false);
   }
 });
+
+elements.sections.addEventListener("click", (event) => {
+  if (event.target.closest?.("button, summary, a, input, select")) {
+    return;
+  }
+  const operation = event.target.closest?.("[data-operation-id]");
+  if (operation) {
+    setSelectedOperation(operation.dataset.operationId);
+  }
+});
+
+elements.sections.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+  const operation = event.target.closest?.("[data-operation-id]");
+  if (!operation || event.target.closest?.("button, summary, a, input, select")) {
+    return;
+  }
+  event.preventDefault();
+  setSelectedOperation(operation.dataset.operationId);
+});
+
+window.addEventListener("scroll", updateJumpDirections, { passive: true });
+elements.sections.addEventListener("scroll", updateJumpDirections, { passive: true, capture: true });
 
 loadCurrentPlan();

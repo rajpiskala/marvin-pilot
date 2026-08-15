@@ -243,6 +243,9 @@ def generate_contract_suite(
     rich_id = _uuid(run_id, "task:rich")
     conflict_id = _uuid(run_id, "task:conflict")
     trash_id = _uuid(run_id, "task:trash")
+    subtask_a_id = _uuid(run_id, "subtask:rich:a")
+    subtask_b_id = _uuid(run_id, "subtask:rich:b")
+    subtask_c_id = _uuid(run_id, "subtask:rich:c")
     anchor = base_date + timedelta(days=(-base_date.weekday()) % 7)
     ds = lambda offset: (anchor + timedelta(days=offset)).isoformat()  # noqa: E731
 
@@ -439,6 +442,7 @@ def generate_contract_suite(
         "plannedMonth": None,
         "estimatedTimeDuration": None,
         "note": None,
+        "subtasks": None,
         "dayRank": None,
         "masterRank": None,
         "dailySection": None,
@@ -461,6 +465,10 @@ def generate_contract_suite(
         "plannedMonth": _month_offset(anchor, 0),
         "estimatedTimeDuration": "1h30m",
         "note": "Disposable rich-field note for the Marvin Pilot contract suite.",
+        "subtasks": [
+            {"id": subtask_a_id, "title": "First contract subtask", "done": False},
+            {"id": subtask_b_id, "title": "Second contract subtask", "done": True},
+        ],
         "dayRank": 100.5,
         "masterRank": 200.25,
         "dailySection": "Morning",
@@ -507,7 +515,7 @@ def generate_contract_suite(
                 ],
             ),
             "apply succeeds",
-            tuple(f"D{index:02d}" for index in range(1, 26)),
+            tuple(f"D{index:02d}" for index in range(1, 27)),
             "Coverage of parent/label/custom/time-block references follows account config.",
         )
     )
@@ -523,6 +531,11 @@ def generate_contract_suite(
         "plannedMonth": _month_offset(anchor, 1),
         "estimatedTimeDuration": "2h",
         "note": "",
+        "subtasks": [
+            {"id": subtask_b_id, "title": "Second contract subtask reopened", "done": False},
+            {"id": subtask_c_id, "title": "New middle contract subtask", "done": False},
+            {"id": subtask_a_id, "title": "First contract subtask renamed", "done": True},
+        ],
         "dayRank": -50.25,
         "masterRank": 0,
         "dailySection": "Afternoon",
@@ -568,7 +581,7 @@ def generate_contract_suite(
                 ],
             ),
             "apply succeeds",
-            ("D01-D25",),
+            ("D01-D26",),
             "Run immediately after 03; retain receipt for reverse-order cleanup.",
         )
     )
@@ -597,7 +610,7 @@ def generate_contract_suite(
                 ],
             ),
             "apply succeeds",
-            ("D03-D24",),
+            ("D03-D26",),
             "Run immediately after 04; verify tracked duration remains untouched.",
         )
     )
@@ -915,6 +928,18 @@ def generate_contract_suite(
         "plannedMonth": _month_offset(anchor, 0),
         "estimatedTimeDuration": "45m",
         "note": "Disposable rich-create note for the Marvin Pilot contract suite.",
+        "subtasks": [
+            {
+                "id": _uuid(run_id, "subtask:scheduled-rich:first"),
+                "title": "Created first subtask",
+                "done": False,
+            },
+            {
+                "id": _uuid(run_id, "subtask:scheduled-rich:second"),
+                "title": "Created completed subtask",
+                "done": True,
+            },
+        ],
         "dayRank": 1.5,
         "masterRank": 2.5,
         "dailySection": "Morning",
@@ -1022,6 +1047,7 @@ def generate_contract_suite(
         "label": config.label is not None,
         "customSectionId": bool(config.customSectionIds),
         "timeBlockSectionId": bool(config.timeBlockSectionIds),
+        "subtasks": True,
         "nonTaskBoundary": config.nonTaskDocument is not None,
     }
     manifest_cases = []

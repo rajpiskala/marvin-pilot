@@ -23,6 +23,18 @@
         "plannedMonth": "2026-08",
         "estimatedTimeDuration": "45m",
         "note": "Disposable rich-create note for the Marvin Pilot contract suite.",
+        "subtasks": [
+          {
+            "id": "b96492b7-bead-5462-bc61-b3e041bdbd71",
+            "title": "Created first subtask",
+            "done": false
+          },
+          {
+            "id": "3747d8ac-d6d8-54fb-89d8-d2f98b02c7c2",
+            "title": "Created completed subtask",
+            "done": true
+          }
+        ],
         "dayRank": 1.5,
         "masterRank": 2.5,
         "dailySection": "Morning",

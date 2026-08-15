@@ -28,6 +28,19 @@ from marvin_pilot.models.plan_v1 import TaskFields
         ("snoozedUntil", "1970-01-01T00:01:00Z", "itemSnoozeTime", 60_000),
         ("dependencies", ["a", "b"], "dependsOn", {"a": True, "b": True}),
         ("dependencies", None, "dependsOn", {}),
+        (
+            "subtasks",
+            [
+                {"id": "sub-a", "title": "First", "done": False},
+                {"id": "sub-b", "title": "Second", "done": True},
+            ],
+            "subtasks",
+            {
+                "sub-a": {"_id": "sub-a", "title": "First", "rank": 1, "done": False},
+                "sub-b": {"_id": "sub-b", "title": "Second", "rank": 2, "done": True},
+            },
+        ),
+        ("subtasks", None, "subtasks", {}),
     ],
 )
 def test_field_compilation(
@@ -49,6 +62,7 @@ def test_registry_covers_exact_plan_field_allowlist() -> None:
         "labels",
         "estimatedTimeDuration",
         "note",
+        "subtasks",
         "dayRank",
         "masterRank",
         "dailySection",
@@ -77,6 +91,26 @@ def test_registry_covers_exact_plan_field_allowlist() -> None:
         ("labels", [{"id": "a", "title": "A"}], {"labelIds": ["a"]}),
         ("dependencies", [], {}),
         ("dependencies", ["a"], {"dependsOn": {"a": True, "ignored": False}}),
+        ("subtasks", [], {}),
+        (
+            "subtasks",
+            [
+                {"id": "sub-a", "title": "First", "done": False},
+                {"id": "sub-b", "title": "Second", "done": True},
+            ],
+            {
+                "subtasks": {
+                    "sub-b": {"_id": "sub-b", "title": "Second", "rank": 20, "done": True},
+                    "sub-a": {
+                        "_id": "sub-a",
+                        "title": "First",
+                        "rank": 10,
+                        "done": False,
+                        "nativeExtension": "preserved but ignored for comparison",
+                    },
+                }
+            },
+        ),
         ("estimatedTimeDuration", None, {}),
     ],
 )
@@ -89,6 +123,23 @@ def test_live_comparison_uses_semantic_storage(
 def test_live_comparison_detects_mismatch() -> None:
     assert not live_field_matches("scheduledDate", "2026-08-09", {"day": "2026-08-08"})
     assert not live_field_matches("parent", {"id": "people"}, {"parentId": "work"})
+
+
+@pytest.mark.parametrize(
+    "subtasks",
+    [
+        {"wrong-key": {"_id": "sub-a", "title": "First", "rank": 1, "done": False}},
+        {
+            "sub-a": {"_id": "sub-a", "title": "First", "rank": 1, "done": False},
+            "sub-b": {"_id": "sub-b", "title": "Second", "rank": 1, "done": False},
+        },
+        {"sub-a": {"_id": "sub-a", "title": "First", "rank": True, "done": False}},
+        {"sub-a": {"_id": "sub-a", "title": "First", "rank": 1, "done": 1}},
+    ],
+)
+def test_live_subtask_comparison_rejects_ambiguous_native_shapes(subtasks: dict) -> None:
+    expected = [{"id": "sub-a", "title": "First", "done": False}]
+    assert not live_field_matches("subtasks", expected, {"subtasks": subtasks})
 
 
 def test_field_snapshot_distinguishes_missing_and_null() -> None:

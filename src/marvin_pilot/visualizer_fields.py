@@ -38,6 +38,7 @@ FIELD_PRESENTATIONS: dict[str, FieldPresentationSpec] = {
     "snoozedUntil": FieldPresentationSpec("Snoozed until", "datetime", 64),
     "permanentSnoozeUntil": FieldPresentationSpec("Permanent snooze time", "time", 65),
     "dependencies": FieldPresentationSpec("Dependencies", "dependencies", 70),
+    "subtasks": FieldPresentationSpec("Subtasks", "subtasks", 75),
     "dayRank": FieldPresentationSpec("Day rank", "rank", 80),
     "masterRank": FieldPresentationSpec("Master rank", "rank", 81),
     "note": FieldPresentationSpec("Note", "note", 90),
@@ -67,6 +68,9 @@ def short_value(field: str, value: Any) -> str:
     if field == "dependencies":
         count = len(value)
         return f"{count} dependenc{'y' if count == 1 else 'ies'}"
+    if field == "subtasks":
+        count = len(value)
+        return f"{count} subtask{'s' if count != 1 else ''}"
     if isinstance(value, bool):
         return "On" if value else "Off"
     if isinstance(value, list):

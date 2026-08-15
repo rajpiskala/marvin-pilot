@@ -67,6 +67,8 @@ def _absent_restore_value(field: str) -> Any:
         return []
     if field == "dependsOn":
         return {}
+    if field == "subtasks":
+        return {}
     if field == "title":
         raise LivePreconditionError("cannot safely restore a structurally absent task title")
     return None

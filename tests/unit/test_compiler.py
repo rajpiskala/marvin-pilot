@@ -152,3 +152,110 @@ def test_display_metadata_never_compiles_to_marvin() -> None:
     assert "display" not in serialized
     assert "beforeSection" not in serialized
     assert "afterSection" not in serialized
+
+
+def test_subtask_update_preserves_native_metadata_and_applies_exact_order() -> None:
+    value = {
+        "schemaVersion": 1,
+        "planId": "11111111-1111-4111-8111-111111111111",
+        "createdAt": "2026-08-14T08:00:00-07:00",
+        "summary": "Edit ordered subtasks.",
+        "operations": [
+            {
+                "operationId": "edit-subtasks",
+                "action": "update",
+                "target": {"type": "task", "id": "parent-task", "title": "Handle dinner"},
+                "reason": "Make the dinner sequence explicit.",
+                "before": {
+                    "subtasks": [
+                        {"id": "sub-a", "title": "Order food", "done": False},
+                        {"id": "sub-b", "title": "Pick up food", "done": True},
+                        {"id": "sub-remove", "title": "Obsolete", "done": False},
+                    ]
+                },
+                "after": {
+                    "subtasks": [
+                        {"id": "sub-b", "title": "Pick up food", "done": True},
+                        {"id": "sub-a", "title": "Order food now", "done": True},
+                        {"id": "sub-c", "title": "Check the food", "done": False},
+                    ]
+                },
+            }
+        ],
+    }
+    operation = parse_plan_bytes(json.dumps(value).encode()).operations[0]
+    live = {
+        "subtasks": {
+            "sub-a": {
+                "_id": "sub-a",
+                "title": "Order food",
+                "rank": 10,
+                "done": False,
+                "nativeExtension": {"keep": True},
+            },
+            "sub-b": {
+                "_id": "sub-b",
+                "title": "Pick up food",
+                "rank": 20,
+                "done": True,
+                "doneAt": 123,
+            },
+            "sub-remove": {
+                "_id": "sub-remove",
+                "title": "Obsolete",
+                "rank": 30,
+                "done": False,
+            },
+        }
+    }
+
+    compiled = compile_update(operation, live, NOW_MS)
+    subtasks = setter_map(compiled.payload)["subtasks"]
+
+    assert list(subtasks) == ["sub-b", "sub-a", "sub-c"]
+    assert [item["rank"] for item in subtasks.values()] == [1, 2, 3]
+    assert subtasks["sub-b"]["doneAt"] == 123
+    assert subtasks["sub-a"]["doneAt"] == NOW_MS
+    assert subtasks["sub-a"]["nativeExtension"] == {"keep": True}
+    assert "sub-remove" not in subtasks
+    assert compiled.before_fields["subtasks"]["value"] == live["subtasks"]
+
+
+def test_create_compiles_ordered_subtasks_without_source_provenance() -> None:
+    value = {
+        "schemaVersion": 1,
+        "planId": "22222222-2222-4222-8222-222222222222",
+        "createdAt": "2026-08-14T08:00:00-07:00",
+        "summary": "Create a task with subtasks.",
+        "operations": [
+            {
+                "operationId": "create-dinner",
+                "action": "create",
+                "target": {
+                    "type": "task",
+                    "id": "33333333-3333-4333-8333-333333333333",
+                },
+                "reason": "Represent the workflow as one task.",
+                "after": {
+                    "title": "Handle dinner",
+                    "subtasks": [
+                        {"id": "sub-1", "title": "Order food"},
+                        {"id": "sub-2", "title": "Pick up food", "done": True},
+                    ],
+                },
+            }
+        ],
+    }
+    operation = parse_plan_bytes(json.dumps(value).encode()).operations[0]
+    compiled = compile_create(operation, NOW_MS)
+
+    assert compiled.payload["subtasks"] == {
+        "sub-1": {"_id": "sub-1", "title": "Order food", "rank": 1, "done": False},
+        "sub-2": {
+            "_id": "sub-2",
+            "title": "Pick up food",
+            "rank": 2,
+            "done": True,
+            "doneAt": NOW_MS,
+        },
+    }

@@ -24,6 +24,7 @@
         "plannedMonth": null,
         "estimatedTimeDuration": null,
         "note": null,
+        "subtasks": null,
         "dayRank": null,
         "masterRank": null,
         "dailySection": null,
@@ -53,6 +54,18 @@
         "plannedMonth": "2026-08",
         "estimatedTimeDuration": "1h30m",
         "note": "Disposable rich-field note for the Marvin Pilot contract suite.",
+        "subtasks": [
+          {
+            "id": "2001d861-a13c-5ac2-adf4-94197c72bd13",
+            "title": "First contract subtask",
+            "done": false
+          },
+          {
+            "id": "35527355-92af-5f1f-a126-91e8c341ffb9",
+            "title": "Second contract subtask",
+            "done": true
+          }
+        ],
         "dayRank": 100.5,
         "masterRank": 200.25,
         "dailySection": "Morning",

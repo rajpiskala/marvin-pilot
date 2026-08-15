@@ -27,12 +27,19 @@ class CompiledMutation:
 
 
 def _setters_for_fields(
-    fields: dict[str, Any], now_ms: int, *, target_type: str
+    fields: dict[str, Any],
+    now_ms: int,
+    *,
+    target_type: str,
+    live_document: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     setters: list[dict[str, Any]] = []
     desired: dict[str, Any] = {}
     for plan_field, plan_value in fields.items():
         marvin_field, marvin_value = compile_plan_field(plan_field, plan_value)
+        if plan_field == "subtasks":
+            live_subtasks = live_document.get("subtasks") if live_document is not None else None
+            marvin_value = _merge_subtasks(plan_value, live_subtasks, now_ms=now_ms)
         if target_type == "project" and plan_field == "scheduledDate" and plan_value is None:
             marvin_value = None
         setters.extend(
@@ -45,13 +52,52 @@ def _setters_for_fields(
     return setters, desired
 
 
+def _merge_subtasks(
+    planned: list[dict[str, Any]] | None,
+    live_value: Any,
+    *,
+    now_ms: int,
+) -> dict[str, dict[str, Any]]:
+    """Merge the typed subtask subset while preserving unedited native metadata by ID."""
+
+    if planned is None:
+        return {}
+    live = live_value if isinstance(live_value, dict) else {}
+    result: dict[str, dict[str, Any]] = {}
+    for rank, item in enumerate(planned, start=1):
+        identifier = item["id"]
+        previous = live.get(identifier)
+        native = dict(previous) if isinstance(previous, dict) else {}
+        was_done = bool(native.get("done", False))
+        is_done = bool(item.get("done", False))
+        native.update(
+            {
+                "_id": identifier,
+                "title": item["title"],
+                "rank": rank,
+                "done": is_done,
+            }
+        )
+        if is_done and not was_done:
+            native["doneAt"] = now_ms
+        elif not is_done:
+            native.pop("doneAt", None)
+        result[identifier] = native
+    return result
+
+
 def compile_update(
     operation: UpdateOperation, live_document: dict[str, Any], now_ms: int
 ) -> CompiledMutation:
     """Compile one item update, including first-scheduling metadata when necessary."""
 
     after = operation.after.model_dump(exclude_unset=True, mode="json")
-    setters, desired = _setters_for_fields(after, now_ms, target_type=operation.target.type)
+    setters, desired = _setters_for_fields(
+        after,
+        now_ms,
+        target_type=operation.target.type,
+        live_document=live_document,
+    )
 
     if "scheduledDate" in after:
         new_day = after["scheduledDate"]
@@ -97,6 +143,8 @@ def compile_create(operation: CreateOperation, now_ms: int) -> CompiledMutation:
     field_updates: dict[str, int] = {}
     for plan_field, plan_value in after.items():
         marvin_field, marvin_value = compile_plan_field(plan_field, plan_value)
+        if plan_field == "subtasks":
+            marvin_value = _merge_subtasks(plan_value, None, now_ms=now_ms)
         if is_project and plan_field == "scheduledDate" and plan_value is None:
             marvin_value = None
         document[marvin_field] = marvin_value

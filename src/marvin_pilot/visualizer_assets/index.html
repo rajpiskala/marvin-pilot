@@ -77,6 +77,15 @@
             <button type="button" id="day-sections-toggle" class="secondary-button day-sections-toggle" aria-pressed="false">
               Day sections: Hidden
             </button>
+            <label id="changes-grouping-control" class="changes-control" hidden>
+              <span>Group by</span>
+              <select id="changes-grouping">
+                <option value="after">After location</option>
+                <option value="before">Before location</option>
+                <option value="plan">Plan order</option>
+                <option value="day">Day section</option>
+              </select>
+            </label>
             <button type="button" id="open-another" class="secondary-button"><span aria-hidden="true">📁</span> Open plan</button>
           </div>
         </div>
@@ -87,7 +96,12 @@
             <button type="button" class="count-chip update" data-action-filter="update" aria-pressed="true" title="Show only Updates"><b id="update-count">0</b> Update</button>
             <button type="button" class="count-chip complete" data-action-filter="complete" aria-pressed="true" title="Show only Completions"><b id="complete-count">0</b> Complete</button>
             <button type="button" class="count-chip trash" data-action-filter="trash" aria-pressed="true" title="Show only Trash operations"><b id="trash-count">0</b> Trash</button>
+            <button type="button" id="moved-filter" class="count-chip moved" aria-pressed="false" title="Show only moved items"><b id="moved-count">0</b> Moved</button>
           </div>
+          <label id="changes-search-control" class="changes-search" hidden>
+            <span class="visually-hidden">Search changes</span>
+            <input id="changes-search" type="search" placeholder="Search changes" autocomplete="off">
+          </label>
           <details class="plan-information">
             <summary>Plan information</summary>
             <dl class="plan-metadata">
@@ -100,6 +114,7 @@
           </details>
         </div>
 
+        <section id="comparison-tray" class="comparison-tray" hidden aria-live="polite"></section>
         <div id="sections" class="sections"></div>
         <p id="empty-filter" class="empty-filter" hidden>
           No operations match the current filters.

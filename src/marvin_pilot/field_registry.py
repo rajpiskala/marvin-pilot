@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -77,6 +78,59 @@ def _dependencies_live(value: Any, present: bool) -> dict[str, bool]:
     return {key: bool(enabled) for key, enabled in value.items() if enabled}
 
 
+def _subtasks_to_marvin(value: list[dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
+    if value is None:
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for rank, item in enumerate(value, start=1):
+        result[item["id"]] = {
+            "_id": item["id"],
+            "title": item["title"],
+            "rank": rank,
+            "done": item.get("done", False),
+        }
+    return result
+
+
+def _invalid_subtasks() -> dict[str, dict[str, Any]]:
+    return {"<invalid>": {"_id": "<invalid>", "title": "<invalid>", "rank": 1, "done": False}}
+
+
+def _subtasks_live(value: Any, present: bool) -> dict[str, dict[str, Any]]:
+    if not present or value is None:
+        return {}
+    if not isinstance(value, dict):
+        return _invalid_subtasks()
+    ordered: list[tuple[float, int, dict[str, Any]]] = []
+    seen_ranks: set[float] = set()
+    for position, (key, raw) in enumerate(value.items()):
+        if not isinstance(key, str) or not isinstance(raw, dict):
+            return _invalid_subtasks()
+        identifier = raw.get("_id", key)
+        title = raw.get("title")
+        if not isinstance(identifier, str) or identifier != key or not isinstance(title, str):
+            return _invalid_subtasks()
+        rank = raw.get("rank")
+        if isinstance(rank, bool) or not isinstance(rank, (int, float)) or not math.isfinite(rank):
+            return _invalid_subtasks()
+        sortable_rank = float(rank)
+        if sortable_rank in seen_ranks:
+            return _invalid_subtasks()
+        seen_ranks.add(sortable_rank)
+        done = raw.get("done", False)
+        if not isinstance(done, bool):
+            return _invalid_subtasks()
+        ordered.append(
+            (
+                sortable_rank,
+                position,
+                {"id": identifier, "title": title, "done": done},
+            )
+        )
+    ordered.sort(key=lambda entry: (entry[0], entry[1]))
+    return _subtasks_to_marvin([entry[2] for entry in ordered])
+
+
 @dataclass(frozen=True, slots=True)
 class FieldSpec:
     plan_name: str
@@ -99,6 +153,7 @@ FIELD_SPECS: dict[str, FieldSpec] = {
         "estimatedTimeDuration", "timeEstimate", _estimate_to_marvin
     ),
     "note": FieldSpec("note", "note"),
+    "subtasks": FieldSpec("subtasks", "subtasks", _subtasks_to_marvin, _subtasks_live),
     "dayRank": FieldSpec("dayRank", "rank"),
     "masterRank": FieldSpec("masterRank", "masterRank"),
     "dailySection": FieldSpec("dailySection", "dailySection"),

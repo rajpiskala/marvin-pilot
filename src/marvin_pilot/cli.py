@@ -619,6 +619,7 @@ Allowlisted task/project fields:
   labels                      array of {{"id": "...", "title": "optional hint"}} or null
   estimatedTimeDuration       duration string or null; maps to Marvin timeEstimate
   note                        string or null
+  subtasks                    ordered array of {{id,title,done?,sourceTask?}} or null; tasks only
   dayRank                     finite number or null
   masterRank                  finite number or null; tasks only
   dailySection                Morning, Afternoon, Evening, or null
@@ -632,6 +633,16 @@ Allowlisted task/project fields:
   snoozedUntil                RFC 3339 timestamp with offset or null
   permanentSnoozeUntil        HH:mm or null
   dependencies                array of task/project IDs or null; tasks only
+
+Subtask notes:
+  - Array order is Marvin subtask order. IDs are stable subtask identities; omission removes a
+    prior subtask, and null clears the checklist. Title and done support rename/reopen/complete.
+  - To consolidate a loose task, add sourceTask: {{"id":"...","title":"..."}} only on a new
+    after.subtasks item, then add a later trash operation for that source task. The Trash must
+    depend on the parent create/update operation. Live preflight rejects stale, coupled, completed,
+    or metadata-rich sources that a basic subtask cannot preserve.
+  - Pilot merges retained native subtask records by ID, preserves unknown native metadata, writes
+    deterministic ranks, snapshots the entire embedded map, and restores it exactly on revert.
 
 Project notes:
   - Use target.type "project". Pilot stores projects in Marvin's Categories database with

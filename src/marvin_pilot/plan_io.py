@@ -11,10 +11,12 @@ from typing import Any
 from pydantic import ValidationError
 
 from marvin_pilot.errors import PlanSemanticError, PlanSyntaxError
+from marvin_pilot.field_registry import compile_plan_field
 from marvin_pilot.models.plan_v1 import (
     ChangePlanV1,
     CompleteOperation,
     CreateOperation,
+    TrashOperation,
     UpdateOperation,
 )
 
@@ -92,6 +94,15 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
         for operation in plan.operations
         if isinstance(operation, CreateOperation)
     }
+    operation_positions = {
+        operation.operationId: position for position, operation in enumerate(plan.operations)
+    }
+    trash_by_target = {
+        operation.target.id: operation
+        for operation in plan.operations
+        if isinstance(operation, TrashOperation)
+    }
+    converted_sources: dict[str, str] = {}
     plan_created_at = datetime.fromisoformat(plan.createdAt.replace("Z", "+00:00"))
     display_types: dict[tuple[str, str], str] = {}
     display_titles: dict[tuple[str, str], str] = {}
@@ -254,10 +265,83 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                 )
             before = operation.before.model_dump(exclude_unset=True, mode="json")
             after = operation.after.model_dump(exclude_unset=True, mode="json")
-            if before == after:
+            semantic_before = dict(
+                compile_plan_field(field, value) for field, value in before.items()
+            )
+            semantic_after = dict(
+                compile_plan_field(field, value) for field, value in after.items()
+            )
+            if semantic_before == semantic_after:
                 raise PlanSemanticError(
                     f"update operation {operation.operationId!r} does not change any values"
                 )
+
+        if isinstance(operation, (UpdateOperation, CreateOperation)):
+            after_subtasks = (
+                operation.after.subtasks
+                if "subtasks" in operation.after.model_fields_set
+                and operation.after.subtasks is not None
+                else []
+            )
+            before_subtask_ids: set[str] = set()
+            if isinstance(operation, UpdateOperation):
+                before_subtasks = (
+                    operation.before.subtasks
+                    if "subtasks" in operation.before.model_fields_set
+                    and operation.before.subtasks is not None
+                    else []
+                )
+                before_subtask_ids = {subtask.id for subtask in before_subtasks}
+                if any(subtask.sourceTask is not None for subtask in before_subtasks):
+                    raise PlanSemanticError(
+                        f"update operation {operation.operationId!r} may use sourceTask only in "
+                        "after.subtasks"
+                    )
+            for subtask in after_subtasks:
+                source = subtask.sourceTask
+                if source is None:
+                    continue
+                if subtask.id in before_subtask_ids:
+                    raise PlanSemanticError(
+                        f"operation {operation.operationId!r} uses sourceTask on existing "
+                        f"subtask {subtask.id!r}; provenance is only valid for a new subtask"
+                    )
+                if source.id == operation.target.id:
+                    raise PlanSemanticError(
+                        f"operation {operation.operationId!r} cannot convert its own target "
+                        "into a subtask"
+                    )
+                previous_conversion = converted_sources.get(source.id)
+                if previous_conversion is not None:
+                    raise PlanSemanticError(
+                        f"source task {source.id!r} is converted more than once by operations "
+                        f"{previous_conversion!r} and {operation.operationId!r}"
+                    )
+                converted_sources[source.id] = operation.operationId
+                source_trash = trash_by_target.get(source.id)
+                if source_trash is None:
+                    raise PlanSemanticError(
+                        f"operation {operation.operationId!r} converts source task {source.id!r}; "
+                        "add a corresponding later trash operation"
+                    )
+                if source_trash.target.type != "task" or source_trash.target.title != source.title:
+                    raise PlanSemanticError(
+                        f"operation {operation.operationId!r} sourceTask title/type does not match "
+                        f"trash operation {source_trash.operationId!r}"
+                    )
+                if (
+                    operation_positions[source_trash.operationId]
+                    <= operation_positions[operation.operationId]
+                ):
+                    raise PlanSemanticError(
+                        f"source task {source.id!r} must be trashed after its replacement subtask "
+                        "is created"
+                    )
+                if operation.operationId not in source_trash.dependsOnOperations:
+                    raise PlanSemanticError(
+                        f"trash operation {source_trash.operationId!r} must depend on "
+                        f"{operation.operationId!r} before converting source task {source.id!r}"
+                    )
 
         if operation.target.type == "project" and isinstance(
             operation, (UpdateOperation, CreateOperation)
@@ -267,7 +351,9 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                 if isinstance(operation, CreateOperation)
                 else operation.after.model_fields_set | operation.before.model_fields_set
             )
-            unsupported = sorted(fields & {"dependencies", "masterRank", "starPriority"})
+            unsupported = sorted(
+                fields & {"dependencies", "masterRank", "starPriority", "subtasks"}
+            )
             if unsupported:
                 raise PlanSemanticError(
                     f"operation {operation.operationId!r} uses task-only project field(s): "

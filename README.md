@@ -17,7 +17,7 @@ Amazing Marvin MCP       AI             You              Marvin Pilot
 Marvin Pilot validates the plan against live state, asks for confirmation, applies operations one at a time, verifies the result, and writes an integrity-checked receipt that can be fully or selectively reverted.
 
 > [!WARNING]
-> **Marvin Pilot is pre-alpha.** The task lifecycle and a 200-operation scale run were verified on 2026-08-08, and project CRUD plus historical completion were verified on 2026-08-11, against a dedicated development account. The client has not yet seen enough real-world account shapes and upstream conditions for production use. Back up Marvin and evaluate it with non-critical data first.
+> **Marvin Pilot is pre-alpha.** The task lifecycle and a 200-operation scale run were verified on 2026-08-08, project CRUD plus historical completion on 2026-08-11, and ordered subtask CRUD/consolidation/revert on 2026-08-14, against a dedicated development account. The client has not yet seen enough real-world account shapes and upstream conditions for production use. Back up Marvin and evaluate it with non-critical data first.
 
 ## Why Marvin Pilot?
 
@@ -225,9 +225,9 @@ For large reorganizations, prefer reviewed batches over one enormous plan.
 marvin-pilot visualize plan.json
 ```
 
-The default **Preview** renders Marvin-like **Now** and **After (preview)** hierarchies. Inbox, categories, projects, tasks, and subtasks have distinct icons; projects visibly support create, rename, move, schedule, complete, and Trash transitions. Moved items render under their truthful parent on each side and cross-highlight their counterpart, while shared hierarchy disclosure stays synchronized. Deep hierarchies scroll horizontally within each pane, and single-state views provide the full content width.
+The default **Preview** renders Marvin-like **Now** and **After (preview)** hierarchies. Inbox, categories, projects, tasks, and subtasks have distinct icons; projects visibly support create, rename, move, schedule, complete, and Trash transitions. Moved items render under their truthful parent on each side and cross-highlight their counterpart, while shared hierarchy disclosure stays synchronized. Click any row to pin its two states in a sticky comparison tray; moved-item Previous/Next and Jump controls avoid hunting for a far-away destination. Deep hierarchies scroll horizontally within each pane, and single-state views provide the full content width.
 
-Use **Day sections: Show/Hide** to layer explicit Today-list groupings over the hierarchy. Day sections such as Waiting or Main are visually distinct from categories and projects. Switch to **Changes** for the aligned operation diff. Action totals filter either mode, and item details expose the reason, identifiers, exact field diff, hierarchy path, and supplied day-section context.
+Use **Day sections: Show/Hide** to layer explicit Today-list groupings over the hierarchy. Day sections such as Waiting or Main are visually distinct from categories and projects. Switch to **Changes** for an aligned operation diff grouped by typed After location, Now location, plan order, or supplied Today section. Search and the Moved filter keep large cleanups navigable. Action totals filter either mode, and item details expose the reason, identifiers, exact field diff, hierarchy path, supplied day-section context, and structured subtask changes.
 
 It does not load a Marvin credential, call the Marvin API, persist task data in browser storage, or provide mutation controls. The selected plan is passed through the same strict validator used by `apply`.
 
@@ -235,7 +235,9 @@ Press `Ctrl+C` in the launching terminal to stop it.
 
 Typed `display.beforePath` and `display.afterPath` metadata supplies offline ancestry without affecting apply. Empty paths mean a known Marvin root; omitted paths render under **Location not supplied** instead of being guessed. Optional path-node and target order values reproduce sibling ordering, while legacy `beforeSection`/`afterSection` values remain a visibly inferred fallback.
 
-See [`docs/visualizer-test-matrix.md`](docs/visualizer-test-matrix.md) for reusable samples and browser verification coverage.
+The browser suite includes synthetic hierarchy, lifecycle, movement, and subtask cases. Maintainers
+can point `MARVIN_PILOT_PRIVATE_PLAN_DIR` at an ignored local regression corpus containing
+`01.json` through `04.json`; private fixtures must never be committed.
 
 ## Plans and recovery
 
@@ -249,7 +251,9 @@ marvin-pilot example --output plan.json
 marvin-pilot help plan-format
 ```
 
-V1 supports common task and project fields including titles, parents/categories, dates and scheduling, labels, estimates, notes, ranks, sections, priorities, backburner state, review dates, and snooze values. Tasks additionally support star priority, `masterRank`, and dependencies. JSON `null` clears a supported value.
+V1 supports common task and project fields including titles, parents/categories, dates and scheduling, labels, estimates, notes, ranks, sections, priorities, backburner state, review dates, and snooze values. Tasks additionally support star priority, `masterRank`, dependencies, and ordered embedded `subtasks`. JSON `null` clears a supported value.
+
+Each subtask has a stable `id`, exact `title`, and `done` state; array order becomes native Marvin rank. Retained subtask records are merged by ID so unknown native metadata survives. Omission removes a prior subtask and `null` clears the checklist. A new subtask may include review-only `sourceTask: {id, title}` when consolidating a loose task, but only with a later dependent `trash` operation. Live preflight refuses stale, coupled, completed, or metadata-rich sources that cannot be represented losslessly, and receipts restore the original embedded map exactly.
 
 Project creates write native `Categories` documents with `type: "project"`; updates can rename, move, or edit allowlisted fields; completion records an explicit historical RFC 3339 timestamp; and Trash uses the same reversible transition as tasks. Planned project ancestry is checked before writes, including parents created earlier in the same plan and cycle prevention.
 
@@ -304,11 +308,13 @@ python -m playwright install chromium
 MARVIN_PILOT_BROWSER_TESTS=1 python -m pytest -m browser tests/browser
 ```
 
-Live contract testing has covered the v1 task and project field set, project CRUD, historical completion, create/update/schedule/unschedule/Trash/restore/revert workflows, and a 200-operation scale run against a dedicated development account.
+Live contract testing has covered the v1 task and project field set, project CRUD, historical completion, ordered subtask create/read/update/delete/reorder/complete/reopen/consolidation, create/update/schedule/unschedule/Trash/restore/revert workflows, and a 200-operation scale run against a dedicated development account.
 
-See [`docs/live-contract-test-report.md`](docs/live-contract-test-report.md) for sanitized results and [`contract-tests/README.md`](contract-tests/README.md) before running live contract cases.
+See [`contract-tests/README.md`](contract-tests/README.md) before running live contract cases.
 
-The deeper API research, threat model, design decisions, and rollout gates live in [`Implementation-Plan.md`](Implementation-Plan.md).
+Developer investigation notes, live-account reports, and private visual-regression corpora belong
+under the ignored `dev/` directory. Durable setup, safety, and supported behavior must be documented
+in this README or the contract-test guide so a checkout is safe to share by default.
 
 ## Project status
 

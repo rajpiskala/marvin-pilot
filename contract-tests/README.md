@@ -80,13 +80,13 @@ suite. The high-level progression is:
 |---|---|---|
 | `01-create-fixtures` | Apply succeeds; retain receipt until final cleanup. | Create shape, dependencies, audit |
 | `02a-*` through `02h-*` | Each applicable case exits 5 during live preflight with zero writes. | Stale state, references, task boundary, collision |
-| `03` through `06` | Apply in order; inspect after each; revert in reverse order. | Every configured field, variants, null clears, enum extremes |
+| `03` through `06` | Apply in order; inspect after each; revert in reverse order. | Every configured field, ordered subtask add/remove/rename/reorder/complete/reopen, null clears, enum extremes |
 | `07` and `08` | Reverting 07 while 08 is applied must conflict; then revert 08 and 07. | Touched-field conflict |
 | `09` and `10` | Reverting 09 must preserve the note from 10; then revert 10. | Unrelated-field preservation |
 | `11` through `13` | Trash succeeds; update/re-trash fail; reverting 11 restores. | UI Trash and restore |
 | `14` | Apply, then use repeated `--only` for two operation IDs. | Ordered create and multi-ID selective revert |
 | `15` and `16` | Apply 15 through stdin with a controlling TTY; apply/revert 16, then 15. | Stdin durability, pacing, progress, ETA |
-| `17` | Apply, verify scheduling/`firstScheduled`, then revert to Trash. | Rich scheduled create and create inverse |
+| `17` | Apply, verify scheduling/`firstScheduled` and create-time subtask order/completion, then revert to Trash. | Rich scheduled create and create inverse |
 | `18` | Apply and revert the configured scale count, resuming partial receipts if necessary. | Backoff, reconciliation, audit scale |
 | `19a` and `19b` | Offline validation only: 500 passes and 501 fails. | Maximum-operation boundary |
 
@@ -145,9 +145,8 @@ Start at case 01 and stop at the smallest failing case; do not reuse someone els
 a filled copy of `evidence-report-template.md`, but sanitize task content and never attach tokens,
 credential files, or unsanitized receipts.
 
-The original matrix and first live baseline remain in
-[`../docs/live-contract-test-plan.md`](../docs/live-contract-test-plan.md) and
-[`../docs/live-contract-test-report.md`](../docs/live-contract-test-report.md).
+Live-account evidence and maintainer run notes may contain account-derived details and belong under
+the repository's ignored `dev/` directory. Keep only sanitized, reusable contract fixtures here.
 
 ## Maintaining the checked-in snapshot
 

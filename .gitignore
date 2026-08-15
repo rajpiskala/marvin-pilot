@@ -10,6 +10,7 @@ Project-Task.md
 
 # Local plans and audit/history data (may contain private task content)
 plans/
+dev/
 history/
 receipts/
 .marvin-pilot/

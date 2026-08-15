@@ -45,6 +45,16 @@ class CardItemView:
 
 
 @dataclass(frozen=True, slots=True)
+class SubtaskItemView:
+    id: str
+    title: str
+    done: bool
+    order: int
+    source_task_id: str | None
+    source_task_title: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class TaskCardView:
     title: str
     title_source: str
@@ -52,6 +62,7 @@ class TaskCardView:
     items: tuple[CardItemView, ...]
     note_state: str
     note: str | None
+    subtasks: tuple[SubtaskItemView, ...]
     fields_shown: int
 
 
@@ -233,7 +244,7 @@ def _task_card(fields: TaskFields, fallback_title: str, sparse_label: str) -> Ta
     title = title_value if isinstance(title_value, str) else fallback_title
     title_source = "plan" if isinstance(title_value, str) else "target"
     items = []
-    for field in _ordered_fields(set(values) - {"title", "note"}):
+    for field in _ordered_fields(set(values) - {"title", "note", "subtasks"}):
         value = values[field]
         spec = presentation_for(field)
         items.append(
@@ -252,6 +263,17 @@ def _task_card(fields: TaskFields, fallback_title: str, sparse_label: str) -> Ta
         note_state, note = "clear", None
     else:
         note_state, note = "value", values["note"]
+    subtasks = tuple(
+        SubtaskItemView(
+            id=item["id"],
+            title=item["title"],
+            done=item.get("done", False),
+            order=index,
+            source_task_id=(item.get("sourceTask") or {}).get("id"),
+            source_task_title=(item.get("sourceTask") or {}).get("title"),
+        )
+        for index, item in enumerate(values.get("subtasks") or [], start=1)
+    )
     return TaskCardView(
         title=title,
         title_source=title_source,
@@ -259,6 +281,7 @@ def _task_card(fields: TaskFields, fallback_title: str, sparse_label: str) -> Ta
         items=tuple(items),
         note_state=note_state,
         note=note,
+        subtasks=subtasks,
         fields_shown=len(values),
     )
 
@@ -271,6 +294,7 @@ def _target_only_card(title: str) -> TaskCardView:
         items=(),
         note_state="absent",
         note=None,
+        subtasks=(),
         fields_shown=0,
     )
 

@@ -255,6 +255,84 @@ def _verify_references(
         )
 
 
+_SUBTASK_CONVERSION_LOSS_FIELDS = tuple(
+    dict.fromkeys(
+        [
+            spec.marvin_name
+            for plan_name, spec in FIELD_SPECS.items()
+            if plan_name not in {"title", "parent"}
+        ]
+        + ["firstScheduled", "times", "duration", "workedOnAt"]
+    )
+)
+
+
+def _conversion_value_is_meaningful(value: Any) -> bool:
+    if isinstance(value, (list, dict)):
+        return bool(value)
+    return value is not None and value != "" and value is not False and value != "unassigned"
+
+
+def _verify_subtask_sources(
+    operation: Operation,
+    reader: DocumentReader,
+    cache: dict[str, dict[str, Any] | None],
+    planned_creates: dict[str, CreateOperation],
+) -> None:
+    if not isinstance(operation, (UpdateOperation, CreateOperation)):
+        return
+    if "subtasks" not in operation.after.model_fields_set or operation.after.subtasks is None:
+        return
+    for subtask in operation.after.subtasks:
+        source = subtask.sourceTask
+        if source is None:
+            continue
+        if source.id in planned_creates:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} source task {source.id!r} is newly "
+                "created; sourceTask conversion requires an existing loose task"
+            )
+        if source.id not in cache:
+            cache[source.id] = reader.get_doc(source.id)
+        document = cache[source.id]
+        if document is None or document.get("db") != "Tasks":
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} references missing or non-Task "
+                f"sourceTask ID {source.id!r}"
+            )
+        if document.get("title") != source.title:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} sourceTask title is stale for "
+                f"{source.id!r}: expected {source.title!r}, found {document.get('title')!r}"
+            )
+        if document.get("done") is True:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} cannot convert completed sourceTask "
+                f"{source.id!r}; its historical completion timestamp is not represented"
+            )
+        if bool(document.get("done", False)) != subtask.done:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} must preserve sourceTask {source.id!r} "
+                f"completion as subtasks[].done={bool(document.get('done', False))!r}"
+            )
+        reasons = coupled_task_reasons(document)
+        if reasons:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} cannot convert sourceTask {source.id!r} "
+                "with coupled behavior: " + ", ".join(reasons)
+            )
+        lossy = [
+            field
+            for field in _SUBTASK_CONVERSION_LOSS_FIELDS
+            if _conversion_value_is_meaningful(document.get(field))
+        ]
+        if lossy:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} cannot convert sourceTask {source.id!r}; "
+                "these fields are not represented by a basic subtask: " + ", ".join(lossy)
+            )
+
+
 def _verify_project_parent_hierarchy(
     operation: Operation,
     reader: DocumentReader,
@@ -335,6 +413,7 @@ def preflight_plan(
             _check_existing_preconditions(operation, live)
             revision = _revision_snapshot(live)
         _verify_references(operation, reader, cache, metadata_cache, planned_creates)
+        _verify_subtask_sources(operation, reader, cache, planned_creates)
         _verify_project_parent_hierarchy(operation, reader, cache, planned_creates)
         checked.append(
             PreflightOperation(

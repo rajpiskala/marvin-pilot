@@ -347,6 +347,24 @@ def test_update_must_change_a_value(example_plan_dict: dict) -> None:
         parse_plan_bytes(encode(example_plan_dict))
 
 
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ({"subtasks": None}, {"subtasks": []}),
+        (
+            {"parent": {"id": "same-parent", "title": "Old review hint"}},
+            {"parent": {"id": "same-parent", "title": "New review hint"}},
+        ),
+    ],
+)
+def test_update_rejects_semantic_noops(example_plan_dict: dict, before: dict, after: dict) -> None:
+    operation = example_plan_dict["operations"][0]
+    operation["before"] = before
+    operation["after"] = after
+    with pytest.raises(PlanSemanticError, match="does not change"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
 def test_duplicate_operation_ids_are_rejected(example_plan_dict: dict) -> None:
     example_plan_dict["operations"][1]["operationId"] = example_plan_dict["operations"][0][
         "operationId"
@@ -377,6 +395,109 @@ def test_earlier_operation_dependency_is_valid(example_plan_dict: dict) -> None:
 def test_plan_size_limit() -> None:
     with pytest.raises(PlanSyntaxError, match="exceeds"):
         parse_plan_bytes(b" " * (MAX_PLAN_BYTES + 1))
+
+
+def _subtask_conversion_plan() -> dict:
+    return {
+        "schemaVersion": 1,
+        "planId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "createdAt": "2026-08-14T08:00:00-07:00",
+        "summary": "Consolidate a loose dinner task.",
+        "operations": [
+            {
+                "operationId": "build-dinner-checklist",
+                "action": "update",
+                "target": {"type": "task", "id": "parent-task", "title": "Handle dinner"},
+                "reason": "Put the workflow in one ordered checklist.",
+                "before": {"subtasks": []},
+                "after": {
+                    "subtasks": [
+                        {
+                            "id": "sub-order",
+                            "title": "Order food",
+                            "done": False,
+                            "sourceTask": {"id": "loose-order", "title": "Order food"},
+                        }
+                    ]
+                },
+            },
+            {
+                "operationId": "trash-loose-order",
+                "action": "trash",
+                "target": {"type": "task", "id": "loose-order", "title": "Order food"},
+                "reason": "The new subtask replaces this loose task.",
+                "dependsOnOperations": ["build-dinner-checklist"],
+            },
+        ],
+    }
+
+
+def test_subtask_conversion_requires_ordered_dependent_trash() -> None:
+    parse_plan_bytes(encode(_subtask_conversion_plan()))
+
+    missing_trash = _subtask_conversion_plan()
+    missing_trash["operations"].pop()
+    with pytest.raises(PlanSemanticError, match="corresponding later trash"):
+        parse_plan_bytes(encode(missing_trash))
+
+    missing_dependency = _subtask_conversion_plan()
+    missing_dependency["operations"][1]["dependsOnOperations"] = []
+    with pytest.raises(PlanSemanticError, match="must depend on"):
+        parse_plan_bytes(encode(missing_dependency))
+
+
+def test_subtask_source_provenance_is_strict_and_single_use() -> None:
+    value = _subtask_conversion_plan()
+    value["operations"][0]["before"]["subtasks"] = [
+        {
+            "id": "sub-existing",
+            "title": "Existing",
+            "sourceTask": {"id": "loose-order", "title": "Order food"},
+        }
+    ]
+    with pytest.raises(PlanSemanticError, match=r"only in after\.subtasks"):
+        parse_plan_bytes(encode(value))
+
+    duplicate = _subtask_conversion_plan()
+    duplicate["operations"].insert(
+        1,
+        {
+            "operationId": "also-build-dinner-checklist",
+            "action": "update",
+            "target": {"type": "task", "id": "second-parent", "title": "Second parent"},
+            "reason": "This invalidly reuses the source.",
+            "before": {"subtasks": []},
+            "after": {
+                "subtasks": [
+                    {
+                        "id": "sub-order-again",
+                        "title": "Order food",
+                        "sourceTask": {"id": "loose-order", "title": "Order food"},
+                    }
+                ]
+            },
+        },
+    )
+    duplicate["operations"][2]["dependsOnOperations"] = [
+        "build-dinner-checklist",
+        "also-build-dinner-checklist",
+    ]
+    with pytest.raises(PlanSemanticError, match="converted more than once"):
+        parse_plan_bytes(encode(duplicate))
+
+
+def test_subtask_ids_are_unique_and_projects_reject_subtasks() -> None:
+    duplicate_ids = _subtask_conversion_plan()
+    duplicate_ids["operations"][0]["after"]["subtasks"].append(
+        {"id": "sub-order", "title": "Duplicate ID"}
+    )
+    with pytest.raises(PlanSyntaxError, match="unique IDs"):
+        parse_plan_bytes(encode(duplicate_ids))
+
+    project = _subtask_conversion_plan()
+    project["operations"][0]["target"]["type"] = "project"
+    with pytest.raises(PlanSemanticError, match=r"task-only project field.*subtasks"):
+        parse_plan_bytes(encode(project))
 
 
 def test_load_plan_requires_a_regular_file(tmp_path: Path) -> None:

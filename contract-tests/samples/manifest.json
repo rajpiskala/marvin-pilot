@@ -11,12 +11,13 @@
     "label": true,
     "customSectionId": true,
     "timeBlockSectionId": true,
+    "subtasks": true,
     "nonTaskBoundary": true
   },
   "schemas": {
     "changePlan": {
       "file": "change-plan-v1.schema.json",
-      "sha256": "9096a9c006f45c32c56b853f0f13728e6e2100d863e4650b33cc9f35fa8c44a9"
+      "sha256": "ca5ca685d59a25b8f97316b6e90be50eff8da47a5cd41235a3227adb9e8dd179"
     },
     "accountConfig": {
       "file": "account-config-v1.schema.json",
@@ -130,7 +131,7 @@
     {
       "caseId": "set-all-fields",
       "file": "03-set-all-fields.json",
-      "sha256": "921afdaacfb216734283f7f45c9db5a5c97e5d8e7dedb6993171d8412eb373c7",
+      "sha256": "dde3cf06b4699f3f44f9d043a2a4356a4003db628b7d8e8719702486f585959d",
       "expectedOfflineValidation": "valid",
       "expectedLiveResult": "apply succeeds",
       "matrix": [
@@ -158,29 +159,30 @@
         "D22",
         "D23",
         "D24",
-        "D25"
+        "D25",
+        "D26"
       ],
       "notes": "Coverage of parent/label/custom/time-block references follows account config."
     },
     {
       "caseId": "field-variants",
       "file": "04-field-variants.json",
-      "sha256": "29a9a699a865a8248a63dc949c473bd65b4bb043e67acf6d87f99bbfd1d40324",
+      "sha256": "08d3680aadf55439f5786424c927d5e7674ae7c54ff34219fa0eef65f8228eb8",
       "expectedOfflineValidation": "valid",
       "expectedLiveResult": "apply succeeds",
       "matrix": [
-        "D01-D25"
+        "D01-D26"
       ],
       "notes": "Run immediately after 03; retain receipt for reverse-order cleanup."
     },
     {
       "caseId": "clear-all-fields",
       "file": "05-clear-all-fields.json",
-      "sha256": "4ec0655fb7ff59bf83f2cd7958f268e28ad831e9181dd158a3c54728944089bf",
+      "sha256": "f671860125b76699e3fca346e34b7d04dee8f42175b2161f99b9c6b559a2c6e4",
       "expectedOfflineValidation": "valid",
       "expectedLiveResult": "apply succeeds",
       "matrix": [
-        "D03-D24"
+        "D03-D26"
       ],
       "notes": "Run immediately after 04; verify tracked duration remains untouched."
     },
@@ -319,7 +321,7 @@
     {
       "caseId": "scheduled-rich-create",
       "file": "17-scheduled-rich-create.json",
-      "sha256": "60c0504b50e89848d34e9bd53c8be9ac6c9879175bd897cdda937fb1194f8d71",
+      "sha256": "184a5985cac3cd39dc88ea5c3b4515ed790d76dfd0ae3b991079b98b54b56fe3",
       "expectedOfflineValidation": "valid",
       "expectedLiveResult": "apply succeeds; revert moves created task to UI Trash",
       "matrix": [

@@ -94,6 +94,42 @@ class LabelRef(ClosedModel):
         return None if value is None else _non_empty(value, "labels[].title", maximum=1_000)
 
 
+class SubtaskSourceRef(ClosedModel):
+    """Optional provenance for safely converting a loose task into a subtask."""
+
+    id: StrictStr
+    title: StrictStr
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        return _non_empty(value, "subtasks[].sourceTask.id", maximum=500)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        return _non_empty(value, "subtasks[].sourceTask.title", maximum=1_000)
+
+
+class SubtaskFields(ClosedModel):
+    """Ordered, reviewable subset of one Marvin embedded subtask."""
+
+    id: StrictStr
+    title: StrictStr
+    done: StrictBool = False
+    sourceTask: SubtaskSourceRef | None = None
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        return _non_empty(value, "subtasks[].id", maximum=500)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        return _non_empty(value, "subtasks[].title", maximum=1_000)
+
+
 class TaskFields(ClosedModel):
     """Normal, allowlisted task fields; unset and explicit null remain distinguishable."""
 
@@ -108,6 +144,7 @@ class TaskFields(ClosedModel):
     labels: list[LabelRef] | None = None
     estimatedTimeDuration: StrictStr | None = None
     note: StrictStr | None = None
+    subtasks: Annotated[list[SubtaskFields], Field(max_length=500)] | None = None
     dayRank: StrictFloat | StrictInt | None = None
     masterRank: StrictFloat | StrictInt | None = None
     dailySection: Literal["Morning", "Afternoon", "Evening"] | None = None
@@ -207,6 +244,19 @@ class TaskFields(ClosedModel):
             ids = [item.id for item in value]
             if len(ids) != len(set(ids)):
                 raise ValueError("labels must contain unique IDs")
+        return value
+
+    @field_validator("subtasks")
+    @classmethod
+    def validate_subtasks(cls, value: list[SubtaskFields] | None) -> list[SubtaskFields] | None:
+        if value is None:
+            return None
+        ids = [item.id for item in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("subtasks must contain unique IDs")
+        source_ids = [item.sourceTask.id for item in value if item.sourceTask is not None]
+        if len(source_ids) != len(set(source_ids)):
+            raise ValueError("subtasks must not convert the same source task more than once")
         return value
 
     @field_validator("dependencies")

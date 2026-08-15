@@ -221,6 +221,105 @@ def test_project_completion_apply_and_revert_restores_open_state(tmp_path: Path)
     assert client.documents[project_id]["doneDate"] is None
 
 
+def test_subtask_consolidation_apply_and_revert_restores_exact_embedded_map(
+    tmp_path: Path,
+) -> None:
+    parent_id = "parent-dinner"
+    source_id = "loose-order-food"
+    original_subtasks = {
+        "existing-pickup": {
+            "_id": "existing-pickup",
+            "title": "Pick up food",
+            "rank": 10,
+            "done": False,
+            "nativeExtension": {"keep": "exactly"},
+        }
+    }
+    documents = {
+        parent_id: {
+            "_id": parent_id,
+            "_rev": "1-parent",
+            "db": "Tasks",
+            "title": "Handle dinner",
+            "subtasks": copy.deepcopy(original_subtasks),
+            "updatedAt": 100,
+        },
+        source_id: {
+            "_id": source_id,
+            "_rev": "1-source",
+            "db": "Tasks",
+            "title": "Order food",
+            "done": False,
+            "day": "unassigned",
+            "parentId": "unassigned",
+            "updatedAt": 200,
+        },
+    }
+    value = {
+        "schemaVersion": 1,
+        "planId": "55555555-5555-4555-8555-555555555555",
+        "createdAt": "2026-08-14T08:00:00-07:00",
+        "summary": "Consolidate loose dinner work into ordered subtasks.",
+        "operations": [
+            {
+                "operationId": "build-dinner-checklist",
+                "action": "update",
+                "target": {"type": "task", "id": parent_id, "title": "Handle dinner"},
+                "reason": "Put the workflow in one ordered checklist.",
+                "before": {
+                    "subtasks": [{"id": "existing-pickup", "title": "Pick up food", "done": False}]
+                },
+                "after": {
+                    "subtasks": [
+                        {
+                            "id": "converted-order",
+                            "title": "Order food",
+                            "done": False,
+                            "sourceTask": {"id": source_id, "title": "Order food"},
+                        },
+                        {
+                            "id": "existing-pickup",
+                            "title": "Pick up the food",
+                            "done": True,
+                        },
+                        {"id": "check-food", "title": "Check the food is correct"},
+                    ]
+                },
+            },
+            {
+                "operationId": "trash-loose-order",
+                "action": "trash",
+                "target": {"type": "task", "id": source_id, "title": "Order food"},
+                "reason": "The new subtask replaces this loose task.",
+                "dependsOnOperations": ["build-dinner-checklist"],
+            },
+        ],
+    }
+    raw = json.dumps(value).encode()
+    client = InMemoryMarvin(documents)
+    clock = Clock()
+    source = execute_apply(
+        parse_plan_bytes(raw),
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _checked: True,
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+
+    applied = client.documents[parent_id]["subtasks"]
+    assert list(applied) == ["converted-order", "existing-pickup", "check-food"]
+    assert [item["rank"] for item in applied.values()] == [1, 2, 3]
+    assert applied["existing-pickup"]["nativeExtension"] == {"keep": "exactly"}
+    assert applied["existing-pickup"]["doneAt"] == APPLY_MS
+    assert client.documents[source_id]["deletedAt"] == APPLY_MS
+
+    revert_fixture(tmp_path, client, source, clock)
+    assert client.documents[parent_id]["subtasks"] == original_subtasks
+    assert client.documents[source_id]["deletedAt"] is None
+
+
 def test_full_revert_runs_in_reverse_apply_order_and_restores_values(
     tmp_path: Path, documents: dict
 ) -> None:

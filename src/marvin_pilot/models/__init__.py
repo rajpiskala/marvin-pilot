@@ -1,6 +1,13 @@
 """Versioned models for untrusted Marvin Pilot files."""
 
-from marvin_pilot.models.plan_v1 import ChangePlanV1, Operation, OperationDisplay, TaskFields
+from marvin_pilot.models.plan_v1 import (
+    ChangePlanV1,
+    Operation,
+    OperationDisplay,
+    SubtaskFields,
+    SubtaskSourceRef,
+    TaskFields,
+)
 from marvin_pilot.models.receipt_v1 import ReceiptOperationV1, ReceiptV1
 
 __all__ = [
@@ -9,5 +16,7 @@ __all__ = [
     "OperationDisplay",
     "ReceiptOperationV1",
     "ReceiptV1",
+    "SubtaskFields",
+    "SubtaskSourceRef",
     "TaskFields",
 ]
