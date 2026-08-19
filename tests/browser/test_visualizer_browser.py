@@ -599,6 +599,32 @@ def test_filters_details_and_narrow_split_layout(page) -> None:
         trash_filter.click()
         assert page.locator(".operation-row").count() == 1
         trash_filter.click()
+        moved_filter = page.locator("#moved-filter")
+        moved_filter.click()
+        assert page.locator(".operation-row").count() == int(
+            page.locator("#moved-count").inner_text()
+        )
+        assert moved_filter.get_attribute("aria-pressed") == "true"
+        assert all(
+            button.get_attribute("aria-pressed") == "false"
+            for button in (create_filter, update_filter, trash_filter)
+        )
+        create_filter.click()
+        assert page.locator(".operation-row").count() == 1
+        assert moved_filter.get_attribute("aria-pressed") == "false"
+        assert create_filter.get_attribute("aria-pressed") == "true"
+        assert update_filter.get_attribute("aria-pressed") == "false"
+        assert trash_filter.get_attribute("aria-pressed") == "false"
+        create_filter.click()
+        assert page.locator(".operation-row").count() == 4
+        moved_filter.click()
+        moved_filter.click()
+        assert page.locator(".operation-row").count() == 4
+        assert moved_filter.get_attribute("aria-pressed") == "false"
+        assert all(
+            button.get_attribute("aria-pressed") == "true"
+            for button in (create_filter, update_filter, trash_filter)
+        )
         page.locator(".operation-details summary").first.click()
         assert page.locator(".operation-details[open]").count() == 1
         assert "scheduledDate" in page.locator(".diff-table").first.inner_text()
@@ -688,6 +714,19 @@ def test_project_completion_is_visible_and_filterable(page) -> None:
         assert page.locator(".action-complete").count() == 2
         assert page.locator(".action-complete .task-card").count() == 2
         assert page.locator(".action-complete .project-flag").count() == 2
+        completion_time = page.locator(
+            '.hierarchy-pane-after [data-operation-id="complete-project"] .completion-time'
+        )
+        assert completion_time.count() == 1
+        assert completion_time.get_attribute("datetime") == "2026-07-23T18:30:00-07:00"
+        expected_local = page.evaluate(
+            """value => new Intl.DateTimeFormat(undefined, {
+                year: "numeric", month: "short", day: "numeric",
+                hour: "numeric", minute: "2-digit",
+            }).format(new Date(value))""",
+            "2026-07-23T18:30:00-07:00",
+        )
+        assert completion_time.inner_text() == f"Done {expected_local}"
 
         page.locator(".operation-details summary").first.click()
         details = page.locator(".operation-details[open]").inner_text()
@@ -696,6 +735,67 @@ def test_project_completion_is_visible_and_filterable(page) -> None:
 
         page.locator('[data-action-filter="complete"]').click()
         assert page.locator(".action-complete").count() == 2
+
+
+def test_completed_task_move_is_visibly_completed_on_both_sides(page) -> None:
+    completed_at = "2026-07-23T18:30:00-07:00"
+    category = {"id": "category-work", "type": "category", "title": "Work"}
+    old_project = {"id": "project-old", "type": "project", "title": "Project Alpha"}
+    new_project = {"id": "project-new", "type": "project", "title": "Project Beta"}
+    plan = {
+        "schemaVersion": 1,
+        "planId": "1f7c28a6-6bbd-4629-93c3-73517834a169",
+        "createdAt": "2026-08-18T12:00:00-07:00",
+        "summary": "Move completed history without reopening it.",
+        "operations": [
+            {
+                "operationId": "move-completed-task",
+                "action": "update",
+                "target": {
+                    "type": "task",
+                    "id": "task-completed",
+                    "title": "Prepare release notes",
+                },
+                "reason": "Group the historical work under its durable project.",
+                "before": {"parent": {"id": "project-old", "title": "Project Alpha"}},
+                "after": {"parent": {"id": "project-new", "title": "Project Beta"}},
+                "display": {
+                    "beforePath": [category, old_project],
+                    "afterPath": [category, new_project],
+                    "existingCompletedAt": completed_at,
+                },
+            }
+        ],
+    }
+    with running_visualizer(plan_dict=plan) as server:
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+
+        expected_local = page.evaluate(
+            """value => new Intl.DateTimeFormat(undefined, {
+                year: "numeric", month: "short", day: "numeric",
+                hour: "numeric", minute: "2-digit",
+            }).format(new Date(value))""",
+            completed_at,
+        )
+        for pane in ("before", "after"):
+            operation = page.locator(
+                f'.hierarchy-pane-{pane} [data-operation-id="move-completed-task"]'
+            )
+            completion = operation.locator(".completion-time")
+            assert completion.count() == 1
+            assert completion.get_attribute("datetime") == completed_at
+            assert completion.inner_text() == f"Done {expected_local}"
+            completed_icon = operation.locator(
+                '.task-circle.completed[aria-label="Completed task"]'
+            )
+            assert completed_icon.count() == 1
+            assert "MOVED" in operation.locator(".action-badge").inner_text()
+
+        page.get_by_role("radio", name="Changes").click()
+        row = page.locator('[data-operation-id="move-completed-task"].diff-row')
+        assert row.locator(".completion-time").count() == 2
+        assert row.locator(".task-circle.completed").count() == 2
 
 
 def test_every_project_action_is_a_first_class_hierarchy_row(page) -> None:
@@ -1018,6 +1118,120 @@ def test_plan_recommended_day_section_visibility_is_not_a_global_preference(page
         assert page.locator("#day-sections-toggle").get_attribute("aria-pressed") == "true"
         assert page.locator(".day-section-title").all_inner_texts() == ["Waiting", "Main"]
         assert "daySection" not in " ".join(page.evaluate("Object.keys(window.localStorage)"))
+
+
+def test_recurring_series_and_occurrence_scopes_are_unmistakable(page) -> None:
+    path = [{"id": "category-sandbox", "type": "category", "title": "Sandbox"}]
+    plan = {
+        "schemaVersion": 1,
+        "planId": "99999999-9999-4999-8999-999999999999",
+        "createdAt": "2026-08-15T20:00:00-07:00",
+        "summary": "Preview explicit recurrence scopes.",
+        "operations": [
+            {
+                "operationId": "rename-series",
+                "action": "update",
+                "target": {
+                    "type": "recurringTask",
+                    "id": "series-fixture",
+                    "title": "Review recurrence fixture",
+                },
+                "reason": "Clarify the future recurrence series.",
+                "display": {"beforePath": path, "afterPath": path},
+                "before": {
+                    "title": "Review recurrence fixture",
+                    "subtasks": [],
+                    "cadence": {"type": "daily", "startDate": "2026-08-15"},
+                },
+                "after": {
+                    "title": "Review updated recurrence fixture",
+                    "subtasks": [
+                        {"id": "fixture-step-a", "title": "First fixture step"},
+                        {"id": "fixture-step-b", "title": "Second fixture step"},
+                    ],
+                    "cadence": {
+                        "type": "n per week",
+                        "startDate": "2026-08-15",
+                        "weekdays": [2, 6],
+                    },
+                },
+            },
+            {
+                "operationId": "trash-occurrence",
+                "action": "trash",
+                "target": {
+                    "type": "task",
+                    "id": "occurrence-fixture",
+                    "title": "Review recurrence fixture",
+                    "recurrence": {
+                        "scope": "occurrence",
+                        "seriesId": "series-fixture",
+                        "seriesTitle": "Review recurrence fixture",
+                        "scheduledDate": "2026-08-14",
+                    },
+                },
+                "reason": "Remove only the stale generated occurrence.",
+                "display": {"beforePath": path},
+            },
+        ],
+    }
+    with running_visualizer(plan_dict=plan) as server:
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+
+        assert page.locator(".scope-series").count() == 2
+        assert page.locator(".scope-occurrence").count() == 1
+        assert page.locator(".scope-series").all_inner_texts() == ["", ""]
+        assert page.locator(".scope-occurrence").inner_text() == ""
+        assert page.locator(".scope-series").first.get_attribute("aria-label") == (
+            "Recurring task definition"
+        )
+        assert page.locator(".scope-occurrence").get_attribute("aria-label") == (
+            "Recurring task occurrence scheduled for 2026-08-14"
+        )
+        occurrence_date = page.locator('[data-operation-id="trash-occurrence"] .occurrence-date')
+        assert occurrence_date.inner_text() == "Scheduled 2026-08-14"
+        assert occurrence_date.get_attribute("datetime") == "2026-08-14"
+        assert page.get_by_text("THIS OCCURRENCE", exact=True).count() == 0
+        assert page.get_by_text("ENTIRE SERIES", exact=True).count() == 0
+        assert (
+            page.locator(
+                '.hierarchy-pane-after [data-operation-id="rename-series"] '
+                ".hierarchy-icon-slot .object-icon"
+            ).count()
+            == 0
+        )
+        assert (
+            page.locator(
+                '.hierarchy-pane-after [data-operation-id="rename-series"] .recurrence-marker'
+            ).count()
+            == 1
+        )
+        assert page.locator(".hierarchy-pane-after .subtask-row").count() == 2
+        assert (
+            "n per week from 2026-08-15"
+            in page.locator(
+                '.hierarchy-pane-after [data-operation-id="rename-series"]'
+            ).inner_text()
+        )
+        assert (
+            page.locator(
+                '.hierarchy-pane-after [data-operation-id="rename-series"] .task-title'
+            ).bounding_box()["width"]
+            >= 240
+        )
+
+        page.locator('[data-operation-id="trash-occurrence"] .operation-details summary').click()
+        details = page.locator(
+            '[data-operation-id="trash-occurrence"] .operation-details[open]'
+        ).inner_text()
+        assert "Recurrence scope: This occurrence only" in details
+        assert "Occurrence date: 2026-08-14" in details
+
+        page.get_by_role("radio", name="Changes").click()
+        assert page.locator(".diff-row").count() == 2
+        assert page.locator(".scope-series").count() == 2
+        assert page.locator(".scope-occurrence").count() == 1
 
 
 def test_five_hundred_operation_plan_remains_reviewable(page) -> None:

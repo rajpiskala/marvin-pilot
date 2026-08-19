@@ -44,7 +44,7 @@ receipts in a public report.
 - Compensating revert attempted:
 - Revert receipt verified:
 - Remaining unresolved operation IDs:
-- Final UI Trash/restore state:
+- Final API deletion/Pilot recovery state:
 
 ## Notes
 

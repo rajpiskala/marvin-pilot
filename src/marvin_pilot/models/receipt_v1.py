@@ -44,12 +44,20 @@ class RequestRecord(ReceiptModel):
     payload: dict[str, Any]
 
 
+class ReceiptRecurrenceV1(ReceiptModel):
+    scope: Literal["occurrence"] = "occurrence"
+    seriesId: str
+    seriesTitle: str
+    scheduledDate: str
+
+
 class ReceiptOperationV1(ReceiptModel):
     operationId: str
     action: Literal["update", "create", "trash", "complete"]
     targetId: str
-    targetType: Literal["task", "project"] = "task"
+    targetType: Literal["task", "project", "recurringTask"] = "task"
     targetTitle: str | None = None
+    recurrence: ReceiptRecurrenceV1 | None = None
     status: OperationStatus = "not-started"
     applyIndex: int | None = None
     startedAt: str | None = None
@@ -59,6 +67,8 @@ class ReceiptOperationV1(ReceiptModel):
     beforeFields: dict[str, dict[str, Any]] = Field(default_factory=dict)
     desiredFields: dict[str, Any] = Field(default_factory=dict)
     afterFields: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    beforeDocument: dict[str, Any] | None = None
+    afterDocument: dict[str, Any] | None = None
     request: RequestRecord | None = None
     outcome: str | None = None
     error: str | None = None

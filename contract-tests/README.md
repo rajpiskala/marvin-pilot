@@ -83,7 +83,7 @@ suite. The high-level progression is:
 | `03` through `06` | Apply in order; inspect after each; revert in reverse order. | Every configured field, ordered subtask add/remove/rename/reorder/complete/reopen, null clears, enum extremes |
 | `07` and `08` | Reverting 07 while 08 is applied must conflict; then revert 08 and 07. | Touched-field conflict |
 | `09` and `10` | Reverting 09 must preserve the note from 10; then revert 10. | Unrelated-field preservation |
-| `11` through `13` | Trash succeeds; update/re-trash fail; reverting 11 restores. | UI Trash and restore |
+| `11` through `13` | Receipt-backed delete succeeds; update/re-delete fail; reverting 11 recreates the same ID. | API absence and Pilot recovery |
 | `14` | Apply, then use repeated `--only` for two operation IDs. | Ordered create and multi-ID selective revert |
 | `15` and `16` | Apply 15 through stdin with a controlling TTY; apply/revert 16, then 15. | Stdin durability, pacing, progress, ETA |
 | `17` | Apply, verify scheduling/`firstScheduled` and create-time subtask order/completion, then revert to Trash. | Rich scheduled create and create inverse |
@@ -110,6 +110,39 @@ marvin-pilot revert path/to/applied-14-receipt.json \
 Never automate answers to the approval prompt in a public test runner. The prompt is part of the
 contract being tested.
 
+### Recurrence contract extension
+
+Use unique, sanitized Inbox fixtures in the dedicated development account. Exercise an entire
+series with `target.type: "recurringTask"`, then exercise individual native generated occurrences
+with `target.type: "task"` plus the exact `target.recurrence` series ID, series title, and scheduled
+date. The minimum live matrix is:
+
+1. Create and read a series with an explicit cadence and ordered template subtasks.
+2. Rename it, change cadence and indicators, and reorder/add template subtasks.
+3. Update one generated occurrence, complete a second, and Trash a third.
+4. Verify the receipt, revert the occurrence operations in reverse order, and confirm exact state.
+5. Delete and restore the complete series, then finish by deleting every fixture through receipt-backed Trash.
+
+Use a full-document read and the synced browser database as independent oracles. Confirm the
+browser distinguishes the template (`db: "RecurringTasks"`) from generated tasks (`db: "Tasks"`,
+`recurring: true`, and the exact `recurringTaskId`). Do not reuse or mutate a person's real
+recurrence series as a fixture. Marvin owns occurrence generation; a same-day series created by the
+remote document API may sync without immediately backfilling an occurrence during a browser reload.
+
+### Completed-task reparent contract extension
+
+Use two disposable projects and one disposable ordinary task in the dedicated development account:
+
+1. Complete the task with an explicit historical timestamp and retain its full document.
+2. Update only its parent using `display.existingCompletedAt` with that exact timestamp.
+3. Verify through a full-document read and the browser that `parentId` changed while `done: true`
+   and `doneAt` remained byte-for-byte unchanged.
+4. Revert the move and verify the original parent and completion metadata are restored/preserved.
+5. Delete the fixtures through Pilot-managed Trash and retain the private recovery receipts locally.
+
+Also preview the move before applying it. Both Now and After must show the completed task marker and
+localized original completion timestamp under their respective project hierarchies.
+
 ## Independent live oracles
 
 Use at least two independent views for mutations:
@@ -119,14 +152,17 @@ Use at least two independent views for mutations:
 3. Limited Amazing Marvin MCP where it exposes the value.
 4. Browser/UI or browser-side PouchDB for schedule, visibility, Trash, and `_deleted` behavior.
 
-For Trash, verify `deletedAt`, `fieldUpdates.deletedAt`, and `updatedAt` agree, and that CouchDB
-`_deleted` is not set. For `estimatedTimeDuration`, verify `timeEstimate` changes and tracked
-`duration` does not.
+For Trash, verify the full-access single-document read returns Marvin's deleted/not-found result,
+Today no longer returns the item, and the apply receipt contains the complete pre-delete document.
+Then revert and verify the same ID and business fields were recreated without the stale `_rev`.
+The item will not appear in Marvin's browser-local native Trash. For `estimatedTimeDuration`,
+verify `timeEstimate` changes and tracked `duration` does not.
 
 ## Cleanup and interrupted runs
 
 Revert dependent receipts in reverse order. Revert the original `01-create-fixtures` receipt last;
-this moves any remaining created fixtures to UI-style Trash. Do not purge them.
+this deletes any remaining created fixtures after verifying that their complete post-create
+documents are unchanged.
 
 If an interrupted journal contains no `sending`, `verifying`, `unknown`, or `reverting` operation,
 it can be terminalized without a Marvin call:

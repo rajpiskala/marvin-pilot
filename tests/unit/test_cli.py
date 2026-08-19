@@ -45,6 +45,12 @@ class CliMarvinClient:
     def create_doc(self, document: dict):
         raise AssertionError("not expected in this CLI fixture")
 
+    def delete_doc(self, item_id: str):
+        assert item_id == self.document["_id"]
+        self.document = {}
+        self.mutations += 1
+        return {"ok": True}
+
     def close(self) -> None:
         self.closed = True
 
@@ -288,7 +294,7 @@ def test_plan_format_help_is_llm_complete() -> None:
     assert "estimatedTimeDuration" in result.stdout
     assert "scheduledDate: null" in result.stdout
     assert "comments" in result.stdout
-    assert "permanent deletion is unsupported" in result.stdout
+    assert "recovery is through `marvin-pilot revert`" in result.stdout
     assert "--only op-a --only op-b" in result.stdout
     assert all(field in result.stdout for field in FIELD_SPECS)
     example_text = result.stdout.split("COMPLETE VERSION 1 EXAMPLE\n", maxsplit=1)[1]
@@ -431,7 +437,10 @@ def test_apply_and_history_commands_work_end_to_end_with_mocked_marvin(
     assert applied.exit_code == 0
     assert "Live preflight: PASSED" in applied.stdout
     assert "Receipt:" in applied.stdout
-    assert "Operation 1/1 applied" in applied.stderr
+    assert "Preflight" in applied.stderr
+    assert "Apply" in applied.stderr
+    assert "1/1" in applied.stderr
+    assert "reschedule-wash-dishes" in applied.stderr
     assert received_key_files == [key_file]
     assert client.document["day"] == "2026-08-09"
     assert client.closed
@@ -461,7 +470,10 @@ def test_apply_and_history_commands_work_end_to_end_with_mocked_marvin(
     )
     assert reverted.exit_code == 0
     assert "Live revert preflight: PASSED" in reverted.stdout
-    assert "Operation 1/1 reverted" in reverted.stderr
+    assert "Revert preflight" in reverted.stderr
+    assert "Revert" in reverted.stderr
+    assert "1/1" in reverted.stderr
+    assert "reschedule-wash-dishes" in reverted.stderr
     assert client.document["day"] == "2026-08-08"
     assert client.closed
     assert received_key_files == [key_file, key_file]

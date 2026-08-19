@@ -81,6 +81,12 @@ def test_get_doc_returns_none_for_marvin_200_missing_document() -> None:
         assert client.get_doc("missing") is None
 
 
+def test_get_doc_returns_none_for_marvin_200_deleted_tombstone() -> None:
+    response = json_response(200, {"error": "not_found", "reason": "deleted"})
+    with client_for(lambda _request: response) as client:
+        assert client.get_doc("deleted") is None
+
+
 def test_get_doc_rejects_other_200_error_documents() -> None:
     response = json_response(200, {"error": "unexpected", "reason": "bad state"})
     with (
@@ -141,7 +147,18 @@ def test_create_sends_reviewed_document_and_accepts_empty_success() -> None:
     with client_for(handler) as client:
         assert client.create_doc(document) is None
     assert seen == [document]
-    assert not hasattr(client, "delete_doc")
+
+
+def test_delete_sends_exact_item_id_and_accepts_empty_success() -> None:
+    seen: list[tuple[str, str, dict[str, Any]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, json.loads(request.content)))
+        return httpx.Response(204)
+
+    with client_for(handler) as client:
+        assert client.delete_doc("task-to-delete") is None
+    assert seen == [("POST", "/api/doc/delete", {"itemId": "task-to-delete"})]
 
 
 def test_pacer_enforces_monotonic_start_interval() -> None:

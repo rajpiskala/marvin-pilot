@@ -7,6 +7,7 @@ import hmac
 import json
 import re
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,7 +23,12 @@ from marvin_pilot.atomic import (
     replace_with_retry,
 )
 from marvin_pilot.errors import HistoryError
-from marvin_pilot.models.plan_v1 import CompleteOperation, CreateOperation, UpdateOperation
+from marvin_pilot.models.plan_v1 import (
+    CompleteOperation,
+    CreateOperation,
+    TrashOperation,
+    UpdateOperation,
+)
 from marvin_pilot.models.receipt_v1 import (
     ReceiptOperationV1,
     ReceiptStatus,
@@ -169,10 +175,21 @@ class HistoryStore:
                     targetId=operation.target.id,
                     targetType=operation.target.type,
                     targetTitle=getattr(operation.target, "title", None),
+                    recurrence=(
+                        operation.target.recurrence.model_dump(mode="json")
+                        if getattr(operation.target, "recurrence", None) is not None
+                        else None
+                    ),
                     plannedBefore=planned_before,
                     plannedAfter=planned_after,
                     beforeFields=checked.compiled.before_fields,
                     desiredFields=checked.compiled.desired_fields,
+                    beforeDocument=(
+                        deepcopy(checked.live_document)
+                        if isinstance(operation, TrashOperation)
+                        and checked.live_document is not None
+                        else None
+                    ),
                     request=RequestRecord(
                         endpoint=checked.compiled.endpoint,
                         payload=checked.compiled.payload,

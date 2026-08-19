@@ -74,7 +74,15 @@
           "type": "string"
         },
         "after": {
-          "$ref": "#/$defs/CreateTaskFields"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CreateTaskFields"
+            },
+            {
+              "$ref": "#/$defs/CreateRecurringTaskFields"
+            }
+          ],
+          "title": "After"
         },
         "dependsOnOperations": {
           "items": {
@@ -114,6 +122,180 @@
         "after"
       ],
       "title": "CreateOperation",
+      "type": "object"
+    },
+    "CreateRecurringTaskFields": {
+      "additionalProperties": false,
+      "properties": {
+        "cadence": {
+          "discriminator": {
+            "mapping": {
+              "custom": "#/$defs/CustomCadence",
+              "daily": "#/$defs/DailyCadence",
+              "echo": "#/$defs/EchoCadence",
+              "monthly": "#/$defs/MonthlyCadence",
+              "n per week": "#/$defs/NPerWeekCadence",
+              "onOff": "#/$defs/OnOffCadence",
+              "repeat": "#/$defs/RepeatCadence",
+              "repeat month": "#/$defs/RepeatCadence",
+              "repeat week": "#/$defs/RepeatCadence",
+              "repeat year": "#/$defs/RepeatCadence",
+              "weekly": "#/$defs/WeeklyCadence"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DailyCadence"
+            },
+            {
+              "$ref": "#/$defs/WeeklyCadence"
+            },
+            {
+              "$ref": "#/$defs/MonthlyCadence"
+            },
+            {
+              "$ref": "#/$defs/NPerWeekCadence"
+            },
+            {
+              "$ref": "#/$defs/RepeatCadence"
+            },
+            {
+              "$ref": "#/$defs/EchoCadence"
+            },
+            {
+              "$ref": "#/$defs/OnOffCadence"
+            },
+            {
+              "$ref": "#/$defs/CustomCadence"
+            }
+          ],
+          "title": "Cadence"
+        },
+        "dueInDays": {
+          "anyOf": [
+            {
+              "maximum": 100000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dueindays"
+        },
+        "estimatedTimeDuration": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimatedtimeduration"
+        },
+        "frogSize": {
+          "anyOf": [
+            {
+              "enum": [
+                "normal",
+                "baby",
+                "monster"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Frogsize"
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/LabelRef"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Labels"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ParentRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "starPriority": {
+          "anyOf": [
+            {
+              "enum": [
+                "yellow",
+                "orange",
+                "red"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Starpriority"
+        },
+        "subtasks": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/RecurringSubtaskFields"
+              },
+              "maxItems": 500,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subtasks"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "cadence"
+      ],
+      "title": "CreateRecurringTaskFields",
       "type": "object"
     },
     "CreateTaskFields": {
@@ -452,6 +634,75 @@
       "title": "CreateTaskFields",
       "type": "object"
     },
+    "CustomCadence": {
+      "additionalProperties": false,
+      "properties": {
+        "endDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "expression": {
+          "title": "Expression",
+          "type": "string"
+        },
+        "startDate": {
+          "title": "Startdate",
+          "type": "string"
+        },
+        "type": {
+          "const": "custom",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "startDate",
+        "type",
+        "expression"
+      ],
+      "title": "CustomCadence",
+      "type": "object"
+    },
+    "DailyCadence": {
+      "additionalProperties": false,
+      "properties": {
+        "endDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "startDate": {
+          "title": "Startdate",
+          "type": "string"
+        },
+        "type": {
+          "const": "daily",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "startDate",
+        "type"
+      ],
+      "title": "DailyCadence",
+      "type": "object"
+    },
     "DaySectionRef": {
       "additionalProperties": false,
       "description": "Visible Today-list grouping supplied for offline review.",
@@ -479,12 +730,62 @@
       "title": "DaySectionRef",
       "type": "object"
     },
+    "EchoCadence": {
+      "additionalProperties": false,
+      "properties": {
+        "daysAfterCompletion": {
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Daysaftercompletion",
+          "type": "integer"
+        },
+        "endDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "startDate": {
+          "title": "Startdate",
+          "type": "string"
+        },
+        "type": {
+          "const": "echo",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "startDate",
+        "type",
+        "daysAfterCompletion"
+      ],
+      "title": "EchoCadence",
+      "type": "object"
+    },
     "ExistingItemTarget": {
       "additionalProperties": false,
       "properties": {
         "id": {
           "title": "Id",
           "type": "string"
+        },
+        "recurrence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecurringOccurrenceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "title": {
           "title": "Title",
@@ -493,7 +794,8 @@
         "type": {
           "enum": [
             "task",
-            "project"
+            "project",
+            "recurringTask"
           ],
           "title": "Type",
           "type": "string"
@@ -602,6 +904,93 @@
       "title": "LabelRef",
       "type": "object"
     },
+    "MonthlyCadence": {
+      "additionalProperties": false,
+      "properties": {
+        "endDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "limitToWeekdays": {
+          "default": false,
+          "title": "Limittoweekdays",
+          "type": "boolean"
+        },
+        "monthDate": {
+          "maximum": 31,
+          "minimum": 1,
+          "title": "Monthdate",
+          "type": "integer"
+        },
+        "startDate": {
+          "title": "Startdate",
+          "type": "string"
+        },
+        "type": {
+          "const": "monthly",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "startDate",
+        "type",
+        "monthDate"
+      ],
+      "title": "MonthlyCadence",
+      "type": "object"
+    },
+    "NPerWeekCadence": {
+      "additionalProperties": false,
+      "properties": {
+        "endDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "startDate": {
+          "title": "Startdate",
+          "type": "string"
+        },
+        "type": {
+          "const": "n per week",
+          "title": "Type",
+          "type": "string"
+        },
+        "weekdays": {
+          "items": {
+            "maximum": 6,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Weekdays",
+          "type": "array"
+        }
+      },
+      "required": [
+        "startDate",
+        "type",
+        "weekdays"
+      ],
+      "title": "NPerWeekCadence",
+      "type": "object"
+    },
     "NewItemTarget": {
       "additionalProperties": false,
       "properties": {
@@ -612,7 +1001,8 @@
         "type": {
           "enum": [
             "task",
-            "project"
+            "project",
+            "recurringTask"
           ],
           "title": "Type",
           "type": "string"
@@ -623,6 +1013,52 @@
         "id"
       ],
       "title": "NewItemTarget",
+      "type": "object"
+    },
+    "OnOffCadence": {
+      "additionalProperties": false,
+      "properties": {
+        "endDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "offDays": {
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Offdays",
+          "type": "integer"
+        },
+        "onDays": {
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Ondays",
+          "type": "integer"
+        },
+        "startDate": {
+          "title": "Startdate",
+          "type": "string"
+        },
+        "type": {
+          "const": "onOff",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "startDate",
+        "type",
+        "onDays",
+        "offDays"
+      ],
+      "title": "OnOffCadence",
       "type": "object"
     },
     "OperationDisplay": {
@@ -732,6 +1168,18 @@
           ],
           "default": null,
           "title": "Beforesection"
+        },
+        "existingCompletedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Existingcompletedat"
         }
       },
       "title": "OperationDisplay",
@@ -761,6 +1209,293 @@
         "id"
       ],
       "title": "ParentRef",
+      "type": "object"
+    },
+    "RecurringOccurrenceRef": {
+      "additionalProperties": false,
+      "description": "Exact series/date identity required to mutate one generated occurrence.",
+      "properties": {
+        "scheduledDate": {
+          "title": "Scheduleddate",
+          "type": "string"
+        },
+        "scope": {
+          "const": "occurrence",
+          "default": "occurrence",
+          "title": "Scope",
+          "type": "string"
+        },
+        "seriesId": {
+          "title": "Seriesid",
+          "type": "string"
+        },
+        "seriesTitle": {
+          "title": "Seriestitle",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seriesId",
+        "seriesTitle",
+        "scheduledDate"
+      ],
+      "title": "RecurringOccurrenceRef",
+      "type": "object"
+    },
+    "RecurringSubtaskFields": {
+      "additionalProperties": false,
+      "description": "One ordered, initially-open subtask copied into every generated occurrence.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "title": "RecurringSubtaskFields",
+      "type": "object"
+    },
+    "RecurringTaskFields": {
+      "additionalProperties": false,
+      "description": "Allowlisted fields stored on a recurring-task series template.",
+      "properties": {
+        "cadence": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "custom": "#/$defs/CustomCadence",
+                  "daily": "#/$defs/DailyCadence",
+                  "echo": "#/$defs/EchoCadence",
+                  "monthly": "#/$defs/MonthlyCadence",
+                  "n per week": "#/$defs/NPerWeekCadence",
+                  "onOff": "#/$defs/OnOffCadence",
+                  "repeat": "#/$defs/RepeatCadence",
+                  "repeat month": "#/$defs/RepeatCadence",
+                  "repeat week": "#/$defs/RepeatCadence",
+                  "repeat year": "#/$defs/RepeatCadence",
+                  "weekly": "#/$defs/WeeklyCadence"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/DailyCadence"
+                },
+                {
+                  "$ref": "#/$defs/WeeklyCadence"
+                },
+                {
+                  "$ref": "#/$defs/MonthlyCadence"
+                },
+                {
+                  "$ref": "#/$defs/NPerWeekCadence"
+                },
+                {
+                  "$ref": "#/$defs/RepeatCadence"
+                },
+                {
+                  "$ref": "#/$defs/EchoCadence"
+                },
+                {
+                  "$ref": "#/$defs/OnOffCadence"
+                },
+                {
+                  "$ref": "#/$defs/CustomCadence"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cadence"
+        },
+        "dueInDays": {
+          "anyOf": [
+            {
+              "maximum": 100000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dueindays"
+        },
+        "estimatedTimeDuration": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimatedtimeduration"
+        },
+        "frogSize": {
+          "anyOf": [
+            {
+              "enum": [
+                "normal",
+                "baby",
+                "monster"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Frogsize"
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/LabelRef"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Labels"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ParentRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "starPriority": {
+          "anyOf": [
+            {
+              "enum": [
+                "yellow",
+                "orange",
+                "red"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Starpriority"
+        },
+        "subtasks": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/RecurringSubtaskFields"
+              },
+              "maxItems": 500,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subtasks"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "title": "RecurringTaskFields",
+      "type": "object"
+    },
+    "RepeatCadence": {
+      "additionalProperties": false,
+      "properties": {
+        "endDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "interval": {
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Interval",
+          "type": "integer"
+        },
+        "limitToWeekdays": {
+          "default": false,
+          "title": "Limittoweekdays",
+          "type": "boolean"
+        },
+        "startDate": {
+          "title": "Startdate",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "repeat",
+            "repeat week",
+            "repeat month",
+            "repeat year"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "startDate",
+        "type",
+        "interval"
+      ],
+      "title": "RepeatCadence",
       "type": "object"
     },
     "ReviewDisplay": {
@@ -1243,10 +1978,26 @@
           "type": "string"
         },
         "after": {
-          "$ref": "#/$defs/TaskFields"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskFields"
+            },
+            {
+              "$ref": "#/$defs/RecurringTaskFields"
+            }
+          ],
+          "title": "After"
         },
         "before": {
-          "$ref": "#/$defs/TaskFields"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskFields"
+            },
+            {
+              "$ref": "#/$defs/RecurringTaskFields"
+            }
+          ],
+          "title": "Before"
         },
         "dependsOnOperations": {
           "items": {
@@ -1300,6 +2051,45 @@
         "after"
       ],
       "title": "UpdateOperation",
+      "type": "object"
+    },
+    "WeeklyCadence": {
+      "additionalProperties": false,
+      "properties": {
+        "endDate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "startDate": {
+          "title": "Startdate",
+          "type": "string"
+        },
+        "type": {
+          "const": "weekly",
+          "title": "Type",
+          "type": "string"
+        },
+        "weekday": {
+          "maximum": 6,
+          "minimum": 0,
+          "title": "Weekday",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "startDate",
+        "type",
+        "weekday"
+      ],
+      "title": "WeeklyCadence",
       "type": "object"
     }
   },

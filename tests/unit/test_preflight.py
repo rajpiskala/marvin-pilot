@@ -80,7 +80,15 @@ def example_plan():
 
 def test_whole_plan_preflight_compiles_without_writes(documents: dict) -> None:
     reader = FakeReader(documents)
-    result = preflight_plan(example_plan(), reader, now_ms=NOW_MS)
+    progress: list[tuple[int, int, str]] = []
+    result = preflight_plan(
+        example_plan(),
+        reader,
+        now_ms=NOW_MS,
+        progress=lambda current, total, operation_id: progress.append(
+            (current, total, operation_id)
+        ),
+    )
     assert len(result.operations) == 4
     assert [item.compiled.action for item in result.operations] == [
         "update",
@@ -95,6 +103,14 @@ def test_whole_plan_preflight_compiles_without_writes(documents: dict) -> None:
     }
     assert reader.calls.count("people-category-id") == 1
     assert reader.calls.count("40d06376-9125-4e9e-a6bd-631cb0e6dc55") == 1
+    assert progress == [
+        entry
+        for index, operation in enumerate(example_plan().operations, start=1)
+        for entry in (
+            (index - 1, 4, operation.operationId),
+            (index, 4, operation.operationId),
+        )
+    ]
 
 
 @pytest.mark.parametrize(

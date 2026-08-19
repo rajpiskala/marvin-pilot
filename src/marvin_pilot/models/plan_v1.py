@@ -130,6 +130,119 @@ class SubtaskFields(ClosedModel):
         return _non_empty(value, "subtasks[].title", maximum=1_000)
 
 
+class RecurringSubtaskFields(ClosedModel):
+    """One ordered, initially-open subtask copied into every generated occurrence."""
+
+    id: StrictStr
+    title: StrictStr
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        return _non_empty(value, "subtasks[].id", maximum=500)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        return _non_empty(value, "subtasks[].title", maximum=1_000)
+
+
+class RecurrenceCadenceBase(ClosedModel):
+    """Shared, explicit anchor and optional end date for a recurrence series."""
+
+    startDate: StrictStr
+    endDate: StrictStr | None = None
+
+    @field_validator("startDate")
+    @classmethod
+    def validate_start_date(cls, value: str) -> str:
+        return _iso_date(value, "cadence.startDate")
+
+    @field_validator("endDate")
+    @classmethod
+    def validate_end_date(cls, value: str | None) -> str | None:
+        return None if value is None else _iso_date(value, "cadence.endDate")
+
+    @model_validator(mode="after")
+    def validate_date_order(self) -> RecurrenceCadenceBase:
+        if self.endDate is not None and self.endDate < self.startDate:
+            raise ValueError("cadence.endDate must not be earlier than cadence.startDate")
+        return self
+
+
+class DailyCadence(RecurrenceCadenceBase):
+    type: Literal["daily"]
+
+
+class WeeklyCadence(RecurrenceCadenceBase):
+    type: Literal["weekly"]
+    weekday: Annotated[StrictInt, Field(ge=0, le=6)]
+
+
+class MonthlyCadence(RecurrenceCadenceBase):
+    type: Literal["monthly"]
+    monthDate: Annotated[StrictInt, Field(ge=1, le=31)]
+    limitToWeekdays: StrictBool = False
+
+
+class NPerWeekCadence(RecurrenceCadenceBase):
+    type: Literal["n per week"]
+    weekdays: Annotated[list[Annotated[StrictInt, Field(ge=0, le=6)]], Field(min_length=1)]
+
+    @field_validator("weekdays")
+    @classmethod
+    def validate_weekdays(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("cadence.weekdays must contain unique weekday numbers")
+        return value
+
+
+class RepeatCadence(RecurrenceCadenceBase):
+    type: Literal["repeat", "repeat week", "repeat month", "repeat year"]
+    interval: Annotated[StrictInt, Field(ge=1, le=10_000)]
+    limitToWeekdays: StrictBool = False
+
+    @model_validator(mode="after")
+    def validate_weekday_limit(self) -> RepeatCadence:
+        if self.limitToWeekdays and self.type != "repeat month":
+            raise ValueError("cadence.limitToWeekdays is only valid for repeat month")
+        return self
+
+
+class EchoCadence(RecurrenceCadenceBase):
+    type: Literal["echo"]
+    daysAfterCompletion: Annotated[StrictInt, Field(ge=1, le=100_000)]
+
+
+class OnOffCadence(RecurrenceCadenceBase):
+    type: Literal["onOff"]
+    onDays: Annotated[StrictInt, Field(ge=1, le=100_000)]
+    offDays: Annotated[StrictInt, Field(ge=1, le=100_000)]
+
+
+class CustomCadence(RecurrenceCadenceBase):
+    type: Literal["custom"]
+    expression: StrictStr
+
+    @field_validator("expression")
+    @classmethod
+    def validate_expression(cls, value: str) -> str:
+        return _non_empty(value, "cadence.expression", maximum=2_000)
+
+
+RecurrenceCadence = Annotated[
+    DailyCadence
+    | WeeklyCadence
+    | MonthlyCadence
+    | NPerWeekCadence
+    | RepeatCadence
+    | EchoCadence
+    | OnOffCadence
+    | CustomCadence,
+    Field(discriminator="type"),
+]
+
+
 class TaskFields(ClosedModel):
     """Normal, allowlisted task fields; unset and explicit null remain distinguishable."""
 
@@ -280,10 +393,113 @@ class CreateTaskFields(TaskFields):
         return _non_empty(value, "title", maximum=1_000)
 
 
+class RecurringTaskFields(ClosedModel):
+    """Allowlisted fields stored on a recurring-task series template."""
+
+    title: StrictStr | None = None
+    parent: ParentRef | None = None
+    labels: list[LabelRef] | None = None
+    estimatedTimeDuration: StrictStr | None = None
+    note: StrictStr | None = None
+    subtasks: Annotated[list[RecurringSubtaskFields], Field(max_length=500)] | None = None
+    starPriority: Literal["yellow", "orange", "red"] | None = None
+    frogSize: Literal["normal", "baby", "monster"] | None = None
+    dueInDays: Annotated[StrictInt, Field(ge=0, le=100_000)] | None = None
+    cadence: RecurrenceCadence | None = None
+
+    @field_validator("cadence", mode="before")
+    @classmethod
+    def validate_cadence_not_null(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("cadence cannot be null; trash the series to stop it")
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str | None) -> str | None:
+        return None if value is None else _non_empty(value, "title", maximum=1_000)
+
+    @field_validator("note")
+    @classmethod
+    def validate_note(cls, value: str | None) -> str | None:
+        if value is not None and len(value) > 200_000:
+            raise ValueError("note must be at most 200000 characters")
+        return value
+
+    @field_validator("estimatedTimeDuration")
+    @classmethod
+    def validate_estimate(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                return normalize_duration(value)
+            except Exception as exc:
+                raise ValueError(str(exc)) from exc
+        return value
+
+    @field_validator("labels")
+    @classmethod
+    def validate_labels(cls, value: list[LabelRef] | None) -> list[LabelRef] | None:
+        if value is not None:
+            ids = [item.id for item in value]
+            if len(ids) != len(set(ids)):
+                raise ValueError("labels must contain unique IDs")
+        return value
+
+    @field_validator("subtasks")
+    @classmethod
+    def validate_subtasks(
+        cls, value: list[RecurringSubtaskFields] | None
+    ) -> list[RecurringSubtaskFields] | None:
+        if value is not None:
+            ids = [item.id for item in value]
+            if len(ids) != len(set(ids)):
+                raise ValueError("subtasks must contain unique IDs")
+        return value
+
+
+class CreateRecurringTaskFields(RecurringTaskFields):
+    title: StrictStr
+    cadence: RecurrenceCadence
+
+    @field_validator("title")
+    @classmethod
+    def validate_required_title(cls, value: str) -> str:
+        return _non_empty(value, "title", maximum=1_000)
+
+
+ItemFields = TaskFields | RecurringTaskFields
+CreateItemFields = CreateTaskFields | CreateRecurringTaskFields
+
+
+class RecurringOccurrenceRef(ClosedModel):
+    """Exact series/date identity required to mutate one generated occurrence."""
+
+    scope: Literal["occurrence"] = "occurrence"
+    seriesId: StrictStr
+    seriesTitle: StrictStr
+    scheduledDate: StrictStr
+
+    @field_validator("seriesId")
+    @classmethod
+    def validate_series_id(cls, value: str) -> str:
+        return _non_empty(value, "target.recurrence.seriesId", maximum=500)
+
+    @field_validator("seriesTitle")
+    @classmethod
+    def validate_series_title(cls, value: str) -> str:
+        return _non_empty(value, "target.recurrence.seriesTitle", maximum=1_000)
+
+    @field_validator("scheduledDate")
+    @classmethod
+    def validate_scheduled_date(cls, value: str) -> str:
+        return _iso_date(value, "target.recurrence.scheduledDate")
+
+
 class ExistingItemTarget(ClosedModel):
-    type: Literal["task", "project"]
+    type: Literal["task", "project", "recurringTask"]
     id: StrictStr
     title: StrictStr
+    recurrence: RecurringOccurrenceRef | None = None
 
     @field_validator("id")
     @classmethod
@@ -295,9 +511,15 @@ class ExistingItemTarget(ClosedModel):
     def validate_title(cls, value: str) -> str:
         return _non_empty(value, "target.title", maximum=1_000)
 
+    @model_validator(mode="after")
+    def validate_recurrence_target(self) -> ExistingItemTarget:
+        if self.recurrence is not None and self.type != "task":
+            raise ValueError("target.recurrence is only valid for a task occurrence")
+        return self
+
 
 class NewItemTarget(ClosedModel):
-    type: Literal["task", "project"]
+    type: Literal["task", "project", "recurringTask"]
     id: StrictStr
 
     @field_validator("id")
@@ -385,6 +607,7 @@ class OperationDisplay(ClosedModel):
     afterOrder: Annotated[StrictInt, Field(ge=-1_000_000, le=1_000_000)] | None = None
     beforeDaySection: DaySectionRef | None = None
     afterDaySection: DaySectionRef | None = None
+    existingCompletedAt: StrictStr | None = None
 
     @field_validator("beforeSection", "afterSection")
     @classmethod
@@ -406,6 +629,13 @@ class OperationDisplay(ClosedModel):
             field_name = getattr(info, "field_name", "path")
             raise ValueError(f"display.{field_name} must contain unique IDs")
         return value
+
+    @field_validator("existingCompletedAt")
+    @classmethod
+    def validate_existing_completed_at(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _rfc3339_with_offset(value, "display.existingCompletedAt")
 
 
 class BaseOperation(ClosedModel):
@@ -453,15 +683,15 @@ class BaseOperation(ClosedModel):
 class UpdateOperation(BaseOperation):
     action: Literal["update"]
     target: ExistingItemTarget
-    before: TaskFields
-    after: TaskFields
+    before: ItemFields
+    after: ItemFields
     expectedUpdatedAt: Annotated[StrictInt, Field(ge=0)] | None = None
 
 
 class CreateOperation(BaseOperation):
     action: Literal["create"]
     target: NewItemTarget
-    after: CreateTaskFields
+    after: CreateItemFields
 
 
 class TrashOperation(BaseOperation):

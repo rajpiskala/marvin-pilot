@@ -95,6 +95,14 @@ class InMemoryMarvin:
         self._maybe_timeout(item_id, apply)
         return {"ok": True}
 
+    def delete_doc(self, item_id: str) -> dict[str, bool]:
+        def apply() -> None:
+            self.documents.pop(item_id)
+            self.mutations.append(("delete", item_id))
+
+        self._maybe_timeout(item_id, apply)
+        return {"ok": True}
+
 
 @pytest.fixture
 def documents() -> dict[str, dict[str, Any]]:
@@ -221,6 +229,87 @@ def test_project_completion_apply_and_revert_restores_open_state(tmp_path: Path)
     assert client.documents[project_id]["doneDate"] is None
 
 
+def test_completed_task_reparent_apply_and_revert_preserve_completion(tmp_path: Path) -> None:
+    task_id = "completed-task-id"
+    done_at = 1_784_856_600_000
+    documents = {
+        task_id: {
+            "_id": task_id,
+            "_rev": "1-task",
+            "db": "Tasks",
+            "title": "Prepare release notes",
+            "parentId": "project-old",
+            "done": True,
+            "doneAt": done_at,
+            "updatedAt": 100,
+        },
+        "project-old": {
+            "_id": "project-old",
+            "db": "Categories",
+            "type": "project",
+            "title": "Project Alpha",
+            "parentId": "unassigned",
+        },
+        "project-new": {
+            "_id": "project-new",
+            "db": "Categories",
+            "type": "project",
+            "title": "Project Beta",
+            "parentId": "unassigned",
+        },
+    }
+    value = {
+        "schemaVersion": 1,
+        "planId": "1f7c28a6-6bbd-4629-93c3-73517834a169",
+        "createdAt": "2026-08-18T12:00:00-07:00",
+        "summary": "Reparent completed history without reopening it.",
+        "operations": [
+            {
+                "operationId": "move-completed-task",
+                "action": "update",
+                "target": {"type": "task", "id": task_id, "title": "Prepare release notes"},
+                "reason": "Group the completed work under its durable project.",
+                "expectedUpdatedAt": 100,
+                "before": {"parent": {"id": "project-old", "title": "Project Alpha"}},
+                "after": {"parent": {"id": "project-new", "title": "Project Beta"}},
+                "display": {
+                    "beforePath": [
+                        {"id": "project-old", "type": "project", "title": "Project Alpha"}
+                    ],
+                    "afterPath": [
+                        {"id": "project-new", "type": "project", "title": "Project Beta"}
+                    ],
+                    "existingCompletedAt": "2026-07-23T18:30:00-07:00",
+                },
+            }
+        ],
+    }
+    raw = json.dumps(value).encode()
+    client = InMemoryMarvin(documents)
+    clock = Clock()
+    source = execute_apply(
+        parse_plan_bytes(raw),
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _checked: True,
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+
+    assert client.documents[task_id]["parentId"] == "project-new"
+    assert client.documents[task_id]["done"] is True
+    assert client.documents[task_id]["doneAt"] == done_at
+    assert source.receipt.operations[0].beforeFields == {
+        "parentId": {"present": True, "value": "project-old"}
+    }
+
+    revert_fixture(tmp_path, client, source, clock)
+    assert client.documents[task_id]["parentId"] == "project-old"
+    assert client.documents[task_id]["done"] is True
+    assert client.documents[task_id]["doneAt"] == done_at
+
+
 def test_subtask_consolidation_apply_and_revert_restores_exact_embedded_map(
     tmp_path: Path,
 ) -> None:
@@ -313,11 +402,12 @@ def test_subtask_consolidation_apply_and_revert_restores_exact_embedded_map(
     assert [item["rank"] for item in applied.values()] == [1, 2, 3]
     assert applied["existing-pickup"]["nativeExtension"] == {"keep": "exactly"}
     assert applied["existing-pickup"]["doneAt"] == APPLY_MS
-    assert client.documents[source_id]["deletedAt"] == APPLY_MS
+    assert source_id not in client.documents
 
     revert_fixture(tmp_path, client, source, clock)
     assert client.documents[parent_id]["subtasks"] == original_subtasks
-    assert client.documents[source_id]["deletedAt"] is None
+    assert client.documents[source_id]["title"] == "Order food"
+    assert "deletedAt" not in client.documents[source_id]
 
 
 def test_full_revert_runs_in_reverse_apply_order_and_restores_values(
@@ -345,9 +435,89 @@ def test_full_revert_runs_in_reverse_apply_order_and_restores_values(
     ]
     assert client.documents["task-wash-dishes-id"]["day"] == "2026-08-08"
     assert client.documents["task-dinner-id"]["title"] == "Eat dinner with Jacob"
-    assert client.documents["duplicate-task-id"]["deletedAt"] is None
-    assert client.documents["duplicate-task-id"]["restoredAt"] == REVERT_MS
-    assert client.documents["40d06376-9125-4e9e-a6bd-631cb0e6dc55"]["deletedAt"] == REVERT_MS
+    assert client.documents["duplicate-task-id"]["title"] == "Study chapter 3"
+    assert client.documents["duplicate-task-id"]["_rev"] == "1-created"
+    assert "deletedAt" not in client.documents["duplicate-task-id"]
+    assert "restoredAt" not in client.documents["duplicate-task-id"]
+    assert "40d06376-9125-4e9e-a6bd-631cb0e6dc55" not in client.documents
+    restored = result.receipt.operations[0]
+    assert restored.request.endpoint == "doc/create"
+    assert restored.request.payload["_id"] == "duplicate-task-id"
+    assert "_rev" not in restored.request.payload
+
+
+def test_revert_refuses_to_delete_a_created_document_that_was_edited(
+    tmp_path: Path, documents: dict
+) -> None:
+    client = InMemoryMarvin(documents)
+    clock = Clock()
+    source = apply_fixture(tmp_path, client, clock)
+    created_id = "40d06376-9125-4e9e-a6bd-631cb0e6dc55"
+    client.documents[created_id]["note"] = "User edit after apply"
+    client.documents[created_id]["_rev"] = "2-user-edit"
+    client.mutations.clear()
+
+    with pytest.raises(LivePreconditionError, match="created document changed"):
+        revert_fixture(
+            tmp_path,
+            client,
+            source,
+            clock,
+            only=["create-email-follow-up"],
+        )
+
+    assert created_id in client.documents
+    assert client.mutations == []
+
+
+def test_legacy_trash_receipt_without_document_snapshot_is_not_restored(
+    tmp_path: Path, documents: dict
+) -> None:
+    client = InMemoryMarvin(documents)
+    clock = Clock()
+    source = apply_fixture(tmp_path, client, clock)
+    source.receipt.operations[-1].beforeDocument = None
+
+    with pytest.raises(PlanSemanticError, match="deletion snapshots"):
+        revert_fixture(
+            tmp_path,
+            client,
+            source,
+            clock,
+            only=["trash-duplicate-math-task"],
+        )
+
+
+@pytest.mark.parametrize(
+    ("operation_id", "target_id", "expected_endpoint"),
+    [
+        ("trash-duplicate-math-task", "duplicate-task-id", "doc/create"),
+        (
+            "create-email-follow-up",
+            "40d06376-9125-4e9e-a6bd-631cb0e6dc55",
+            "doc/delete",
+        ),
+    ],
+)
+def test_delete_and_recreate_reverts_reconcile_ambiguous_success(
+    tmp_path: Path,
+    documents: dict,
+    operation_id: str,
+    target_id: str,
+    expected_endpoint: str,
+) -> None:
+    client = InMemoryMarvin(documents)
+    clock = Clock()
+    source = apply_fixture(tmp_path, client, clock)
+    client.attempts.clear()
+    client.timeout_modes[target_id] = "apply-then-timeout"
+
+    result = revert_fixture(tmp_path, client, source, clock, only=[operation_id])
+
+    operation = result.receipt.operations[0]
+    assert operation.outcome == "reverted-after-reconciliation"
+    assert operation.request.endpoint == expected_endpoint
+    assert client.attempts[target_id] == 1
 
 
 def test_multiple_only_ids_are_reverted_in_reverse_apply_order(
@@ -374,7 +544,7 @@ def test_multiple_only_ids_are_reverted_in_reverse_apply_order(
         "task-dinner-id",
         "task-wash-dishes-id",
     ]
-    assert client.documents["duplicate-task-id"]["deletedAt"] == APPLY_MS
+    assert "duplicate-task-id" not in client.documents
 
 
 def test_touched_field_conflict_fails_whole_preflight_before_any_write(

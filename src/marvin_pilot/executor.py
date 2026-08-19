@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -42,6 +43,8 @@ class MutationClient(Protocol):
 
     def create_doc(self, document: dict[str, Any]) -> Any: ...
 
+    def delete_doc(self, item_id: str) -> Any: ...
+
 
 @dataclass(frozen=True, slots=True)
 class ApplyResult:
@@ -53,11 +56,51 @@ def unix_milliseconds() -> int:
     return int(datetime.now(UTC).timestamp() * 1_000)
 
 
-def _send_mutation(client: MutationClient, compiled: CompiledMutation) -> None:
-    if compiled.action == "create":
-        client.create_doc(compiled.payload)
-    else:
-        client.update_doc(compiled.target_id, compiled.payload["setters"])
+def _send_mutation(client: MutationClient, compiled: CompiledMutation) -> Any:
+    if compiled.endpoint == "doc/create":
+        return client.create_doc(compiled.payload)
+    if compiled.endpoint == "doc/delete":
+        return client.delete_doc(compiled.target_id)
+    return client.update_doc(compiled.target_id, compiled.payload["setters"])
+
+
+def _nested_value_matches(document: dict[str, Any], path: str, expected: Any) -> bool:
+    current: Any = document
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    return current == expected
+
+
+def compiled_mutation_matches(document: dict[str, Any] | None, compiled: CompiledMutation) -> bool:
+    """Verify every reviewed storage value, including nested metadata setters."""
+
+    if compiled.endpoint == "doc/delete":
+        return document is None
+    if document is None or not desired_fields_match(document, compiled.desired_fields):
+        return False
+    if compiled.endpoint == "doc/create":
+        return all(
+            _nested_value_matches(document, field, value)
+            for field, value in compiled.payload.items()
+        )
+    return all(
+        _nested_value_matches(document, setter["key"], setter["val"])
+        for setter in compiled.payload["setters"]
+    )
+
+
+def verified_mutation_response(response: Any, compiled: CompiledMutation) -> dict[str, Any] | None:
+    """Use Marvin's returned document only when it proves the reviewed state was stored."""
+
+    if (
+        not isinstance(response, dict)
+        or response.get("_id") != compiled.target_id
+        or not compiled_mutation_matches(response, compiled)
+    ):
+        return None
+    return response
 
 
 def _reconcile_or_retry(
@@ -71,7 +114,7 @@ def _reconcile_or_retry(
     last_error: AmbiguousMutationError | None = None
     for attempt in range(MAX_RECONCILED_MUTATION_RETRIES):
         current = client.get_doc(checked.compiled.target_id)
-        if desired_fields_match(current, checked.compiled.desired_fields):
+        if compiled_mutation_matches(current, checked.compiled):
             return (
                 "applied-after-reconciliation" if attempt == 0 else "applied-after-reconciled-retry"
             )
@@ -92,7 +135,7 @@ def _reconcile_or_retry(
             continue
         return "applied-after-safe-retry"
     current = client.get_doc(checked.compiled.target_id)
-    if desired_fields_match(current, checked.compiled.desired_fields):
+    if compiled_mutation_matches(current, checked.compiled):
         return "applied-after-reconciled-retry"
     assert last_error is not None
     raise last_error
@@ -130,6 +173,7 @@ def execute_apply(
     strict_concurrency: bool = True,
     now_ms: Callable[[], int] = unix_milliseconds,
     wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    preflight_progress: Callable[[int, int, str], None] | None = None,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> ApplyResult:
     """Preflight, approve, journal, apply, verify, and finalize one complete plan."""
@@ -148,6 +192,7 @@ def execute_apply(
         client,
         now_ms=now_ms(),
         strict_concurrency=strict_concurrency,
+        progress=preflight_progress,
     )
     if not approve(checked_plan):
         raise UserDeclinedError("apply declined; no Marvin changes were made")
@@ -164,18 +209,27 @@ def execute_apply(
 
     for index, checked in enumerate(checked_plan.operations):
         receipt_operation = handle.receipt.operations[index]
+        if progress is not None:
+            progress(completed_count, total, checked.operation.operationId)
         receipt_operation.status = "checking"
         receipt_operation.startedAt = rfc3339_utc(wall_clock())
         history.persist(handle)
         sending_started = False
         try:
-            recheck_operation(checked, client, strict_concurrency=strict_concurrency)
+            current_document = recheck_operation(
+                checked, client, strict_concurrency=strict_concurrency
+            )
+            if checked.compiled.endpoint == "doc/delete":
+                assert current_document is not None
+                receipt_operation.beforeDocument = deepcopy(current_document)
             receipt_operation.status = "sending"
             history.persist(handle)
             sending_started = True
             outcome = "applied"
+            resulting_document: dict[str, Any] | None = None
             try:
-                _send_mutation(client, checked.compiled)
+                response = _send_mutation(client, checked.compiled)
+                resulting_document = verified_mutation_response(response, checked.compiled)
             except AmbiguousMutationError:
                 outcome = _reconcile_or_retry(
                     client,
@@ -186,16 +240,21 @@ def execute_apply(
             receipt_operation.status = "verifying"
             receipt_operation.outcome = outcome
             history.persist(handle)
-            resulting_document = client.get_doc(checked.compiled.target_id)
-            if not desired_fields_match(resulting_document, checked.compiled.desired_fields):
+            if resulting_document is None:
+                resulting_document = client.get_doc(checked.compiled.target_id)
+            if not compiled_mutation_matches(resulting_document, checked.compiled):
                 raise RemoteError(
                     f"operation {checked.operation.operationId!r} did not verify after mutation"
                 )
-            assert resulting_document is not None
-            receipt_operation.afterFields = {
-                field: field_snapshot(resulting_document, field)
-                for field in checked.compiled.desired_fields
-            }
+            if resulting_document is None:
+                receipt_operation.afterFields = {}
+            else:
+                receipt_operation.afterFields = {
+                    field: field_snapshot(resulting_document, field)
+                    for field in checked.compiled.desired_fields
+                }
+                if checked.compiled.endpoint == "doc/create":
+                    receipt_operation.afterDocument = deepcopy(resulting_document)
             receipt_operation.status = "applied"
             receipt_operation.applyIndex = completed_count + 1
             receipt_operation.endedAt = rfc3339_utc(wall_clock())

@@ -116,21 +116,14 @@ def test_create_without_schedule_stays_unassigned() -> None:
     assert "firstScheduled" not in compiled.payload
 
 
-def test_trash_is_reversible_update_never_permanent_delete() -> None:
+def test_trash_compiles_to_receipt_recoverable_api_delete() -> None:
     operation = operations()[3]
     assert isinstance(operation, TrashOperation)
     compiled = compile_trash(operation, {"title": "Study chapter 3", "restoredAt": 123}, NOW_MS)
-    setters = setter_map(compiled.payload)
-    assert compiled.endpoint == "doc/update"
-    assert setters == {
-        "deletedAt": NOW_MS,
-        "fieldUpdates.deletedAt": NOW_MS,
-        "updatedAt": NOW_MS,
-    }
-    assert compiled.before_fields == {
-        "deletedAt": {"present": False},
-        "restoredAt": {"present": True, "value": 123},
-    }
+    assert compiled.endpoint == "doc/delete"
+    assert compiled.payload == {"itemId": "duplicate-task-id"}
+    assert compiled.desired_fields == {}
+    assert compiled.before_fields == {}
 
 
 def test_dispatch_and_affected_fields() -> None:

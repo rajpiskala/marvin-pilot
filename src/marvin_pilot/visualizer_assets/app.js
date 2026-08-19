@@ -213,11 +213,17 @@ function lineIcon(className, label) {
   return svg;
 }
 
-function objectIcon(type) {
+function objectIcon(type, completed = false) {
   if (type === "task" || type === "subtask") {
-    const task = node("span", `object-icon task-circle${type === "subtask" ? " subtask-circle" : ""}`);
+    const task = node(
+      "span",
+      `object-icon task-circle${type === "subtask" ? " subtask-circle" : ""}${completed ? " completed" : ""}`,
+    );
     task.setAttribute("role", "img");
-    task.setAttribute("aria-label", type === "subtask" ? "Subtask" : "Task");
+    task.setAttribute(
+      "aria-label",
+      completed ? "Completed task" : type === "subtask" ? "Subtask" : "Task",
+    );
     return task;
   }
   if (type === "project") {
@@ -230,6 +236,16 @@ function objectIcon(type) {
       svgElement("line", { x1: "4", y1: "22", x2: "4", y2: "15" }),
     );
     return flag;
+  }
+  if (type === "recurringTask") {
+    const recurring = lineIcon("recurring-series", "Recurring task series");
+    recurring.append(
+      svgElement("path", { d: "M20 7h-4V3" }),
+      svgElement("path", { d: "M4 17h4v4" }),
+      svgElement("path", { d: "M5.1 9A8 8 0 0 1 18.4 5.6L20 7" }),
+      svgElement("path", { d: "M18.9 15A8 8 0 0 1 5.6 18.4L4 17" }),
+    );
+    return recurring;
   }
   if (type === "category") {
     // Marvin's folder geometry, vendored as a local static SVG path.
@@ -257,6 +273,38 @@ function objectIcon(type) {
   return unknown;
 }
 
+function recurrenceMarker(scope, scheduledDate = null) {
+  const marker = node("span", `recurrence-marker scope-${scope}`);
+  const label = scope === "series"
+    ? "Recurring task definition"
+    : `Recurring task occurrence${scheduledDate ? ` scheduled for ${scheduledDate}` : ""}`;
+  marker.setAttribute("role", "img");
+  marker.setAttribute("aria-label", label);
+  marker.title = scope === "series"
+    ? "Recurring task definition — changes affect the template and future generated tasks."
+    : `Recurring task occurrence — this change affects only this generated task${scheduledDate ? ` (${scheduledDate})` : ""}.`;
+  const recurring = objectIcon("recurringTask");
+  recurring.removeAttribute("role");
+  recurring.removeAttribute("aria-label");
+  recurring.setAttribute("aria-hidden", "true");
+  marker.append(recurring);
+  return marker;
+}
+
+function formatCompletionTimestamp(value) {
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
 function appendTaskTitle(container, title) {
   const match = title.match(/^((?:[01]?\d|2[0-3])(?::[0-5]\d)?\s?(?:am|pm)?)(\s+)(.+)$/i);
   if (!match) {
@@ -280,16 +328,26 @@ function renderCard(
   sideName,
   targetType = "task",
   action = null,
-  { showObjectIcon = true, changeKinds = [], badgeTitle = "" } = {},
+  {
+    showObjectIcon = true,
+    changeKinds = [],
+    badgeTitle = "",
+    recurrenceScope = null,
+    recurrenceScheduledDate = null,
+    completedAt = null,
+  } = {},
 ) {
+  const showOccurrenceDate = recurrenceScope === "occurrence"
+    && Boolean(recurrenceScheduledDate)
+    && !card.items.some((item) => item.field === "scheduledDate" && !item.cleared);
   const article = node("article", `task-card item-type-${targetType}`);
   if (!showObjectIcon) {
     article.classList.add("hierarchy-card");
   }
   article.setAttribute("aria-description", card.sparse_label);
   const taskLine = node("div", "task-line");
-  if (showObjectIcon) {
-    taskLine.append(objectIcon(targetType));
+  if (showObjectIcon && targetType !== "recurringTask") {
+    taskLine.append(objectIcon(targetType, Boolean(completedAt)));
   }
   const title = node("div", "task-title");
   appendTaskTitle(title, card.title);
@@ -302,9 +360,12 @@ function renderCard(
     }
     taskLine.append(badge);
   }
+  if (recurrenceScope) {
+    taskLine.append(recurrenceMarker(recurrenceScope, recurrenceScheduledDate));
+  }
   article.append(taskLine);
 
-  if (card.items.length > 0 || card.note_state === "clear") {
+  if (card.items.length > 0 || card.note_state === "clear" || completedAt || showOccurrenceDate) {
     const items = node("div", "task-items");
     card.items.forEach((item) => {
       const isTag = ["parent", "labels"].includes(item.kind);
@@ -337,6 +398,25 @@ function renderCard(
     });
     if (card.note_state === "clear") {
       items.append(node("span", "task-item cleared", "Note: Cleared"));
+    }
+    if (showOccurrenceDate) {
+      const occurrenceDate = node(
+        "time",
+        "task-item occurrence-date",
+        `Scheduled ${recurrenceScheduledDate}`,
+      );
+      occurrenceDate.dateTime = recurrenceScheduledDate;
+      occurrenceDate.title = (
+        `This generated recurring-task occurrence is scheduled for ${recurrenceScheduledDate}.`
+      );
+      items.append(occurrenceDate);
+    }
+    if (completedAt) {
+      const completed = node("time", "task-item completion-time");
+      completed.dateTime = completedAt;
+      completed.textContent = `Done ${formatCompletionTimestamp(completedAt)}`;
+      completed.title = `Marked done at ${completedAt}; displayed in your browser's local time format.`;
+      items.append(completed);
     }
     article.append(items);
   }
@@ -378,6 +458,15 @@ function renderCard(
     article.append(subtaskDetails);
   }
   return article;
+}
+
+function completionTimestamp(operation, sideName) {
+  if (operation.existing_completed_at) {
+    return operation.existing_completed_at;
+  }
+  return operation.action === "complete" && sideName === "after"
+    ? operation.completed_at
+    : null;
 }
 
 function renderDiffValue(value) {
@@ -495,8 +584,30 @@ function renderOperationDetails(operation) {
     ),
   );
   identity.append(document.createElement("br"));
-  identity.append(node("strong", "", `${operation.target_type[0].toUpperCase()}${operation.target_type.slice(1)} ID: `));
+  const targetLabel = operation.target_type === "recurringTask"
+    ? "Recurring series"
+    : `${operation.target_type[0].toUpperCase()}${operation.target_type.slice(1)}`;
+  identity.append(node("strong", "", `${targetLabel} ID: `));
   identity.append(document.createTextNode(operation.target_id));
+  if (operation.recurrence_scope) {
+    identity.append(document.createElement("br"));
+    identity.append(node("strong", "", "Recurrence scope: "));
+    identity.append(
+      document.createTextNode(
+        operation.recurrence_scope === "series" ? "Entire series" : "This occurrence only",
+      ),
+    );
+    if (operation.recurrence_series_title) {
+      identity.append(
+        document.createTextNode(` · Series: ${operation.recurrence_series_title}`),
+      );
+    }
+    if (operation.recurrence_scheduled_date) {
+      identity.append(
+        document.createTextNode(` · Occurrence date: ${operation.recurrence_scheduled_date}`),
+      );
+    }
+  }
   if (operation.depends_on_operations.length > 0) {
     identity.append(document.createTextNode(" · Depends on operations: "));
     identity.append(document.createTextNode(operation.depends_on_operations.join(", ")));
@@ -588,6 +699,9 @@ function renderStateOperation(operation, sideName) {
     renderLocationBreadcrumb(operation, sideName),
     renderCard(card, sideName, operation.target_type, operation.action, {
       changeKinds: operation.change_kinds,
+      recurrenceScope: operation.recurrence_scope,
+      recurrenceScheduledDate: operation.recurrence_scheduled_date,
+      completedAt: completionTimestamp(operation, sideName),
     }),
     renderOperationDetails(operation),
   );
@@ -602,6 +716,9 @@ function renderDiffCell(operation, sideName) {
       renderLocationBreadcrumb(operation, sideName),
       renderCard(card, sideName, operation.target_type, operation.action, {
         changeKinds: operation.change_kinds,
+        recurrenceScope: operation.recurrence_scope,
+        recurrenceScheduledDate: operation.recurrence_scheduled_date,
+        completedAt: completionTimestamp(operation, sideName),
       }),
     );
   } else {
@@ -636,7 +753,7 @@ function operationGrouping(operation) {
     sideName = selectedView === "before" ? "before" : "after";
   }
   if (!operation[sideName]) {
-    const title = sideName === "before" ? "Created by this plan" : "Marvin Trash";
+    const title = sideName === "before" ? "Created by this plan" : "Pilot-managed Trash";
     return {
       key: `terminal:${sideName}`,
       kind: "terminal",
@@ -897,8 +1014,11 @@ function renderHierarchyNode(item, sideName, operations, depth = 0) {
     row.append(node("span", "tree-toggle-spacer"));
   }
 
+  const completedAt = ownVisible ? completionTimestamp(operation, sideName) : null;
   const iconSlot = node("span", "hierarchy-icon-slot");
-  iconSlot.append(objectIcon(item.type));
+  if (item.type !== "recurringTask") {
+    iconSlot.append(objectIcon(item.type, Boolean(completedAt)));
+  }
   row.append(iconSlot);
 
   if (ownVisible) {
@@ -915,6 +1035,9 @@ function renderHierarchyNode(item, sideName, operations, depth = 0) {
         showObjectIcon: false,
         changeKinds: operation.change_kinds,
         badgeTitle,
+        recurrenceScope: operation.recurrence_scope,
+        recurrenceScheduledDate: operation.recurrence_scheduled_date,
+        completedAt,
       }),
       renderOperationDetails(operation),
     );
@@ -1067,6 +1190,9 @@ function renderComparisonSide(operation, sideName) {
     side.append(
       renderCard(card, sideName, operation.target_type, operation.action, {
         changeKinds: operation.change_kinds,
+        recurrenceScope: operation.recurrence_scope,
+        recurrenceScheduledDate: operation.recurrence_scheduled_date,
+        completedAt: completionTimestamp(operation, sideName),
       }),
     );
   } else {
@@ -1257,7 +1383,7 @@ function renderPlan(plan) {
   movedOnly = false;
   searchQuery = "";
   selectedOperationId = null;
-  elements.movedFilter.setAttribute("aria-pressed", "false");
+  syncActionFilterButtons();
   elements.changesSearch.value = "";
   showDaySections = Boolean(plan.previews?.show_day_sections_by_default);
   syncDaySectionToggle();
@@ -1383,7 +1509,9 @@ elements.changesSearch.addEventListener("input", () => {
 });
 elements.movedFilter.addEventListener("click", () => {
   movedOnly = !movedOnly;
-  elements.movedFilter.setAttribute("aria-pressed", String(movedOnly));
+  visibleActions.clear();
+  ACTIONS.forEach((action) => visibleActions.add(action));
+  syncActionFilterButtons();
   if (currentPlan) {
     renderSections();
   }
@@ -1416,14 +1544,19 @@ const actionFilterButtons = [...document.querySelectorAll("[data-action-filter]"
 
 function syncActionFilterButtons() {
   actionFilterButtons.forEach((button) => {
-    button.setAttribute("aria-pressed", String(visibleActions.has(button.dataset.actionFilter)));
+    button.setAttribute(
+      "aria-pressed",
+      String(!movedOnly && visibleActions.has(button.dataset.actionFilter)),
+    );
   });
+  elements.movedFilter.setAttribute("aria-pressed", String(movedOnly));
 }
 
 actionFilterButtons.forEach((button) => {
   button.addEventListener("click", () => {
     const action = button.dataset.actionFilter;
-    const resetToAll = visibleActions.size === 1 && visibleActions.has(action);
+    const resetToAll = !movedOnly && visibleActions.size === 1 && visibleActions.has(action);
+    movedOnly = false;
     visibleActions.clear();
     if (resetToAll) {
       ACTIONS.forEach((value) => visibleActions.add(value));

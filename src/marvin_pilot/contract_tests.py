@@ -297,7 +297,7 @@ def generate_contract_suite(
             ),
             "apply succeeds; retain receipt for final cleanup",
             ("C02", "C06", "E10", "G02", "G03"),
-            "Run first. Revert this receipt last to move every remaining fixture to Trash.",
+            "Run first. Revert this receipt last to delete every remaining created fixture.",
         )
     )
 
@@ -766,13 +766,13 @@ def generate_contract_suite(
                 run_id,
                 created_at,
                 "trash",
-                "Move the isolated Trash fixture into Marvin's reversible UI Trash.",
+                "Delete the isolated fixture after journaling its Pilot recovery snapshot.",
                 [
                     {
                         "operationId": "trash-fixture",
                         "action": "trash",
                         "target": {"type": "task", "id": trash_id, "title": trash_title},
-                        "reason": "Verify client-side Trash setters without permanent deletion.",
+                        "reason": "Verify receipt-backed API deletion and same-ID recovery.",
                     }
                 ],
             ),
@@ -979,7 +979,7 @@ def generate_contract_suite(
                     )
                 ],
             ),
-            "apply succeeds; revert moves created task to UI Trash",
+            "apply succeeds; revert deletes the unchanged created task",
             ("C03", "C04", "C07", "F09", "G12"),
             "Verify firstScheduled in API/browser state, then revert the apply receipt.",
         )
@@ -1091,7 +1091,7 @@ def generate_contract_suite(
             "Run 07/08 conflict and 09/10 unrelated-field workflows exactly as their notes say.",
             "Apply 11, assert 12/13 fail, then revert 11 to verify restore.",
             "Run and clean up 14-18; use repeated --only IDs for the selective-revert case.",
-            "Finally revert receipt 01 so all remaining base fixtures move to Marvin Trash.",
+            "Finally revert receipt 01 so all remaining base fixtures are deleted.",
         ],
     }
     return ContractSuite(manifest=manifest, cases=tuple(cases))

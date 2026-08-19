@@ -14,6 +14,7 @@ from marvin_pilot.models.plan_v1 import (
     CreateOperation,
     DaySectionRef,
     HierarchyPathNode,
+    RecurringTaskFields,
     TaskFields,
     TrashOperation,
     UpdateOperation,
@@ -22,12 +23,12 @@ from marvin_pilot.plan_io import SUPPORTED_SCHEMA_VERSIONS, plan_digest
 from marvin_pilot.visualizer_fields import presentation_for, short_value
 
 Action = Literal["create", "update", "complete", "trash"]
-NodeType = Literal["inbox", "category", "project", "task", "unknown"]
+NodeType = Literal["inbox", "category", "project", "task", "recurringTask", "unknown"]
 PathState = Literal["path", "root", "legacy", "unknown"]
 ACTION_ORDER: dict[Action, int] = {"create": 0, "update": 1, "complete": 2, "trash": 3}
 UNSECTIONED = "Unsectioned changes"
 CREATED_PLACEHOLDERS = "Created by this plan"
-TRASHED_PLACEHOLDERS = "Moved to Trash by this plan"
+TRASHED_PLACEHOLDERS = "Pilot-managed Trash"
 LEADING_TIME = re.compile(
     r"^\s*(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>am|pm)?(?=\s)",
     re.IGNORECASE,
@@ -104,7 +105,13 @@ class OperationView:
     original_index: int
     operation_id: str
     action: Action
-    target_type: Literal["task", "project"]
+    target_type: Literal["task", "project", "recurringTask"]
+    recurrence_scope: Literal["occurrence", "series"] | None
+    recurrence_series_id: str | None
+    recurrence_series_title: str | None
+    recurrence_scheduled_date: str | None
+    completed_at: str | None
+    existing_completed_at: str | None
     reason: str
     target_id: str
     target_title: str
@@ -238,7 +245,9 @@ def _ordered_fields(names: set[str]) -> list[str]:
     return sorted(names, key=lambda field: (presentation_for(field).order, field))
 
 
-def _task_card(fields: TaskFields, fallback_title: str, sparse_label: str) -> TaskCardView:
+def _task_card(
+    fields: TaskFields | RecurringTaskFields, fallback_title: str, sparse_label: str
+) -> TaskCardView:
     values = fields.model_dump(exclude_unset=True, mode="json")
     title_value = values.get("title")
     title = title_value if isinstance(title_value, str) else fallback_title
@@ -339,19 +348,23 @@ def _field_diffs(
     return tuple(result)
 
 
-def _parent_title(fields: TaskFields | None) -> str | None:
+def _parent_title(fields: TaskFields | RecurringTaskFields | None) -> str | None:
     if fields is None or "parent" not in fields.model_fields_set or fields.parent is None:
         return None
     return fields.parent.title
 
 
-def _fallback_section(fields: TaskFields | None) -> str:
+def _fallback_section(fields: TaskFields | RecurringTaskFields | None) -> str:
     if fields is None:
         return UNSECTIONED
     parent_title = _parent_title(fields)
     if parent_title:
         return parent_title
-    if "dailySection" in fields.model_fields_set and fields.dailySection:
+    if (
+        isinstance(fields, TaskFields)
+        and "dailySection" in fields.model_fields_set
+        and fields.dailySection
+    ):
         return fields.dailySection
     return UNSECTIONED
 
@@ -485,7 +498,13 @@ def _change_kinds(
     )
     if before.get("parent") != after.get("parent") or path_moved:
         kinds.append("moved")
-    schedule_fields = {"scheduledDate", "scheduledTime", "plannedWeek", "plannedMonth"}
+    schedule_fields = {
+        "scheduledDate",
+        "scheduledTime",
+        "plannedWeek",
+        "plannedMonth",
+        "cadence",
+    }
     if any(field in after and before.get(field) != after.get(field) for field in schedule_fields):
         kinds.append("rescheduled")
     handled = {"title", "parent", *schedule_fields}
@@ -514,11 +533,59 @@ def _operation_view(
 ) -> OperationView:
     before_path_state, before_path = _side_path(operation, "before")
     after_path_state, after_path = _side_path(operation, "after")
+    if (
+        isinstance(operation, CompleteOperation)
+        and after_path_state == "unknown"
+        and (operation.display is None or "afterPath" not in operation.display.model_fields_set)
+    ):
+        after_path_state, after_path = before_path_state, before_path
+    before_order = _display_order(operation, "before", index)
+    after_order = _display_order(operation, "after", index)
+    if isinstance(operation, CompleteOperation) and (
+        operation.display is None or "afterOrder" not in operation.display.model_fields_set
+    ):
+        after_order = before_order
     common = {
         "original_index": index,
         "operation_id": operation.operationId,
         "action": operation.action,
         "target_type": operation.target.type,
+        "recurrence_scope": (
+            "series"
+            if operation.target.type == "recurringTask"
+            else (
+                "occurrence" if getattr(operation.target, "recurrence", None) is not None else None
+            )
+        ),
+        "recurrence_series_id": (
+            operation.target.id
+            if operation.target.type == "recurringTask"
+            else (
+                operation.target.recurrence.seriesId
+                if getattr(operation.target, "recurrence", None) is not None
+                else None
+            )
+        ),
+        "recurrence_series_title": (
+            getattr(operation.target, "title", None)
+            if operation.target.type == "recurringTask"
+            else (
+                operation.target.recurrence.seriesTitle
+                if getattr(operation.target, "recurrence", None) is not None
+                else None
+            )
+        ),
+        "recurrence_scheduled_date": (
+            operation.target.recurrence.scheduledDate
+            if getattr(operation.target, "recurrence", None) is not None
+            else None
+        ),
+        "completed_at": (
+            operation.completedAt if isinstance(operation, CompleteOperation) else None
+        ),
+        "existing_completed_at": (
+            operation.display.existingCompletedAt if operation.display is not None else None
+        ),
         "reason": operation.reason,
         "target_id": operation.target.id,
         "target_title": getattr(operation.target, "title", f"New {operation.target.type}"),
@@ -535,8 +602,8 @@ def _operation_view(
         "after_path_state": after_path_state,
         "before_path": before_path,
         "after_path": after_path,
-        "before_order": _display_order(operation, "before", index),
-        "after_order": _display_order(operation, "after", index),
+        "before_order": before_order,
+        "after_order": after_order,
         "before_day_section": _day_section_placement(operation, "before"),
         "after_day_section": _day_section_placement(operation, "after"),
     }
@@ -609,13 +676,13 @@ def _operation_view(
             ),
         )
     lifecycle_before = FieldValueView("value", "Active", '"active"')
-    lifecycle_after = FieldValueView("value", "Moved to Marvin Trash", '"trash"')
+    lifecycle_after = FieldValueView("value", "Deleted with Pilot recovery", '"trash"')
     return OperationView(
         **common,
         before=_target_only_card(operation.target.title),
         after=None,
         before_empty_label=None,
-        after_empty_label="No active after state — moved to Marvin Trash",
+        after_empty_label="No active after state — deleted with Pilot recovery",
         diffs=(
             FieldDiffView(
                 "lifecycle",

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 import webbrowser
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -13,9 +12,19 @@ from uuid import UUID, uuid4
 
 import typer
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
 from marvin_pilot import __version__
 from marvin_pilot.approval import confirm_apply, confirm_revert
+from marvin_pilot.backup_context import project_context_json
 from marvin_pilot.config import (
     AppConfig,
     default_config_path,
@@ -80,12 +89,55 @@ history_app = typer.Typer(help="Inspect and verify durable apply/revert receipts
 contract_tests_app = typer.Typer(
     help="Generate and verify reusable, isolated contract-test plan suites."
 )
+context_app = typer.Typer(help="Build compact, read-only AI context from Marvin data.")
 app.add_typer(help_app, name="help")
 app.add_typer(config_app, name="config")
 app.add_typer(history_app, name="history")
 app.add_typer(contract_tests_app, name="contract-tests")
+app.add_typer(context_app, name="context")
 console = Console(stderr=False)
 error_console = Console(stderr=True)
+
+
+class _OperationProgress:
+    """One compact terminal line for a network-heavy operation phase."""
+
+    def __init__(self, phase: str, total: int) -> None:
+        self._progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            TextColumn("{task.fields[operation]}", markup=False),
+            console=error_console,
+            transient=False,
+        )
+        self._task_id = self._progress.add_task(
+            phase,
+            total=total,
+            operation="Waiting for Marvin…",
+        )
+        self._started = False
+
+    def start(self) -> None:
+        if not self._started:
+            self._progress.start()
+            self._started = True
+
+    def update(self, current: int, _total: int, operation_id: str) -> None:
+        self._progress.update(
+            self._task_id,
+            completed=current,
+            operation=operation_id,
+            refresh=True,
+        )
+
+    def stop(self) -> None:
+        if self._started:
+            self._progress.stop()
+            self._started = False
 
 
 def _version_callback(value: bool) -> None:
@@ -135,6 +187,44 @@ def _write_or_print(content: str, output: Path | None) -> None:
     except OSError as exc:
         _fail(PlanSyntaxError(f"could not write {output}: {exc}"))
     typer.echo(str(output))
+
+
+@context_app.command("project")
+def context_project_command(
+    project: Annotated[
+        str,
+        typer.Argument(help="Exact category/project title or Marvin document ID."),
+    ],
+    backup: Annotated[
+        Path,
+        typer.Option(
+            "--backup",
+            help="Marvin .json or .json.lzma backup; read locally without API access.",
+        ),
+    ],
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Create this private JSON file instead of writing context to stdout.",
+        ),
+    ] = None,
+    include_trash: Annotated[
+        bool,
+        typer.Option(
+            "--include-trash",
+            help="Include descendants currently in Marvin Trash; excluded by default.",
+        ),
+    ] = False,
+) -> None:
+    """Return every open and completed descendant of one category/project."""
+
+    try:
+        content = project_context_json(backup, project, include_trash=include_trash)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    _write_or_print(content, output)
 
 
 def _load_config_or_fail() -> AppConfig:
@@ -238,16 +328,20 @@ def describe_command(
         return
     config = _load_config_or_fail()
     client = _client_from_config(config, full_access_key_file)
+    preflight_display = _OperationProgress("Preflight", len(plan.operations))
+    preflight_display.start()
     try:
         result = preflight_plan(
             plan,
             client,
             now_ms=unix_milliseconds(),
             strict_concurrency=config.strict_concurrency,
+            progress=preflight_display.update,
         )
     except MarvinPilotError as exc:
         _fail(exc)
     finally:
+        preflight_display.stop()
         client.close()
     typer.echo(render_live_preflight(result), nl=False)
 
@@ -312,25 +406,38 @@ def apply_command(
             )
         )
     client = _client_from_config(config, full_access_key_file)
-    started = time.monotonic()
+    preflight_display = _OperationProgress("Preflight", len(plan.operations))
+    apply_display: _OperationProgress | None = None
+    preflight_display.start()
 
     def approve(result) -> bool:
+        nonlocal apply_display
+        preflight_display.stop()
         typer.echo(render_live_preflight(result), nl=False)
-        if len(result.operations) >= config.large_plan_warning_operations:
+        typer.echo(
+            "Apply network path: live recheck → mutation/response verification "
+            f"(minimum {config.minimum_request_interval_ms} ms between requests)."
+        )
+        if any(operation.operation.action == "trash" for operation in result.operations):
             typer.echo(
-                f"Large plan: {len(result.operations)} operations will run sequentially at "
-                f"a minimum {config.minimum_request_interval_ms} ms request interval."
+                "Trash recovery: Pilot will delete each document through Marvin's API after "
+                "durably storing its full recovery snapshot. It will not appear in Marvin's "
+                "native Trash; keep the receipt to revert it."
             )
-        return confirm_apply(len(result.operations))
+        if len(result.operations) >= config.large_plan_warning_operations:
+            typer.echo(f"Large plan: {len(result.operations)} operations will run sequentially.")
+        approved = confirm_apply(len(result.operations))
+        if approved:
+            apply_display = _OperationProgress("Apply", len(result.operations))
+            apply_display.start()
+        return approved
+
+    def preflight_progress(current: int, total: int, operation_id: str) -> None:
+        preflight_display.update(current, total, operation_id)
 
     def progress(current: int, total: int, operation_id: str) -> None:
-        elapsed = time.monotonic() - started
-        remaining = (elapsed / current) * (total - current) if current else 0
-        typer.echo(
-            f"Operation {current}/{total} applied [{operation_id}] "
-            f"(elapsed {elapsed:.1f}s, ETA {remaining:.1f}s)",
-            err=True,
-        )
+        if apply_display is not None:
+            apply_display.update(current, total, operation_id)
 
     try:
         result = execute_apply(
@@ -340,11 +447,15 @@ def apply_command(
             history=_history_store(config),
             approve=approve,
             strict_concurrency=config.strict_concurrency,
+            preflight_progress=preflight_progress,
             progress=progress,
         )
     except MarvinPilotError as exc:
         _fail(exc)
     finally:
+        preflight_display.stop()
+        if apply_display is not None:
+            apply_display.stop()
         client.close()
     typer.echo(f"Applied {len(result.receipt.operations)} operation(s).")
     typer.echo(f"Receipt: {result.receipt_path}")
@@ -390,25 +501,32 @@ def revert_command(
             )
         )
     client = _client_from_config(config, full_access_key_file)
-    started = time.monotonic()
+    preflight_display = _OperationProgress("Revert preflight", selected_count)
+    revert_display: _OperationProgress | None = None
+    preflight_display.start()
 
     def approve(result) -> bool:
+        nonlocal revert_display
+        preflight_display.stop()
         typer.echo(render_revert_preflight(result), nl=False)
+        typer.echo(
+            "Revert network path: live recheck → mutation/response verification "
+            f"(minimum {config.minimum_request_interval_ms} ms between requests)."
+        )
         if len(result.operations) >= config.large_plan_warning_operations:
-            typer.echo(
-                f"Large revert: {len(result.operations)} operations will run sequentially at "
-                f"a minimum {config.minimum_request_interval_ms} ms request interval."
-            )
-        return confirm_revert(len(result.operations))
+            typer.echo(f"Large revert: {len(result.operations)} operations will run sequentially.")
+        approved = confirm_revert(len(result.operations))
+        if approved:
+            revert_display = _OperationProgress("Revert", len(result.operations))
+            revert_display.start()
+        return approved
+
+    def preflight_progress(current: int, total: int, operation_id: str) -> None:
+        preflight_display.update(current, total, operation_id)
 
     def progress(current: int, total: int, operation_id: str) -> None:
-        elapsed = time.monotonic() - started
-        remaining = (elapsed / current) * (total - current) if current else 0
-        typer.echo(
-            f"Operation {current}/{total} reverted [{operation_id}] "
-            f"(elapsed {elapsed:.1f}s, ETA {remaining:.1f}s)",
-            err=True,
-        )
+        if revert_display is not None:
+            revert_display.update(current, total, operation_id)
 
     try:
         result = execute_revert(
@@ -419,11 +537,15 @@ def revert_command(
             history=history,
             approve=approve,
             strict_concurrency=config.strict_concurrency,
+            preflight_progress=preflight_progress,
             progress=progress,
         )
     except MarvinPilotError as exc:
         _fail(exc)
     finally:
+        preflight_display.stop()
+        if revert_display is not None:
+            revert_display.stop()
         client.close()
     typer.echo(f"Reverted {len(result.receipt.operations)} operation(s).")
     typer.echo(f"Receipt: {result.receipt_path}")
@@ -573,10 +695,10 @@ The root is an object with schemaVersion 1, a UUID planId, an RFC 3339 createdAt
 with an explicit offset, a non-empty summary, and one or more operations.
 
 Actions:
-  update    Existing task or project. before/after use identical allowlisted field sets.
-  create    New task or project. target.id is a caller-generated UUID; after.title is required.
-  complete  Existing task or project. completedAt is the historical RFC 3339 completion time.
-  trash     Existing task or project. Reversible UI-style Trash; permanent deletion is unsupported.
+  update    Existing task, project, recurrence series, or explicit generated occurrence.
+  create    New task, project, or recurrence series using a caller-generated UUID.
+  complete  Existing task/project or explicit occurrence; a series itself cannot be completed.
+  trash     Delete an existing item, occurrence, or series after journaling its recovery snapshot.
 
 Every operation requires a unique lowercase-hyphen operationId, a typed target, and a reason.
 Use operationId—not the task/project ID—for selective revert. A single revert may repeat --only:
@@ -589,11 +711,16 @@ Optional review-only Preview metadata:
   display.beforeDaySection                 visible Today section {{key,title,order}}
   display.afterDaySection                  visible Today section {{key,title,order}}
   display.beforeSection / afterSection     legacy untyped context fallback
+  display.existingCompletedAt              original completion time for a done task update/Trash
 Path nodes use {{id,type,title}} with type inbox, category, project, or task; optional emoji,
 #RRGGBB color, and integer order are display-only. Paths contain ancestors only, never the target
 itself. An empty path means a known root; omitted/null paths render as location not supplied.
+For complete, an omitted afterPath inherits a known beforePath because completion does not move
+the item; explicit afterPath: null remains unknown. The same rule applies to omitted afterOrder.
 Day sections are Today-view grouping, not category ancestry, and may have custom titles. The
 closed review objects are included in the plan digest but never compile to Marvin setters.
+Updating an already-completed task requires its exact RFC 3339 display.existingCompletedAt.
+Live preflight compares it with Marvin's doneAt, and the update preserves done/doneAt unchanged.
 
 Conventions:
   dates                   YYYY-MM-DD
@@ -606,8 +733,9 @@ Conventions:
 
 Normal task start times are generally written into task titles. A task is not a calendar time
 block. JSON comments, trailing commas, locale dates, the string "none", raw setters, credentials,
-API URLs, raw completion fields, recurrence, reminders, calendar sync, and permanent
-deletion are rejected.
+API URLs, raw completion fields, implicit recurrence scope, reminders, and calendar sync are
+rejected. The trash action uses Marvin's deletion endpoint only after Pilot durably journals the
+full original document; recovery is through `marvin-pilot revert`, not Marvin's native Trash UI.
 
 Allowlisted task/project fields:
   title                       non-empty item title
@@ -634,6 +762,33 @@ Allowlisted task/project fields:
   permanentSnoozeUntil        HH:mm or null
   dependencies                array of task/project IDs or null; tasks only
 
+Recurrence targets and fields:
+  - An entire recurring-task series uses target.type "recurringTask". Create requires after.title
+    and an explicit after.cadence. Series updates may use title, parent, labels,
+    estimatedTimeDuration, note, ordered subtasks {{id,title}}, starPriority, frogSize,
+    dueInDays, and cadence. JSON null clears every supported series field except cadence.
+  - One generated occurrence remains target.type "task" and must add:
+      "recurrence": {{"scope":"occurrence","seriesId":"...","seriesTitle":"...",
+                       "scheduledDate":"YYYY-MM-DD"}}
+    Preflight verifies recurring=true, recurringTaskId, the current occurrence day, and the live
+    RecurringTasks template before allowing update, complete, or Trash.
+  - A series edit changes the template used for future generation. Already-generated occurrences
+    are separate Tasks; include an explicit operation for each one that must also change.
+  - Series subtasks compile to Marvin's ordered subtaskList and are copied into newly generated
+    occurrences. Generated occurrences use normal ordered task subtasks.
+  - Individual echo/repeat-after-completion occurrences remain blocked because completing or
+    deleting one generates another task. Echo series templates can still be reviewed explicitly.
+
+Cadence forms (every form requires startDate and accepts endDate: YYYY-MM-DD or null):
+  daily         {{"type":"daily","startDate":"YYYY-MM-DD"}}
+  weekly        add weekday (0=Sunday ... 6=Saturday)
+  monthly       add monthDate (1..31), optional limitToWeekdays
+  n per week    add unique weekdays array
+  repeat        type repeat/repeat week/repeat month/repeat year; add interval >= 1
+  echo          add daysAfterCompletion >= 1
+  onOff         add onDays and offDays >= 1
+  custom        add non-empty human-readable expression
+
 Subtask notes:
   - Array order is Marvin subtask order. IDs are stable subtask identities; omission removes a
     prior subtask, and null clears the checklist. Title and done support rename/reopen/complete.
@@ -651,9 +806,12 @@ Project notes:
     parent create operation first and list its operationId in dependsOnOperations.
   - Project moves are rejected if the proposed ancestry would create or inherit a parent cycle.
   - complete.completedAt may not be later than the plan's createdAt. Pilot writes a task's
-    historical doneAt or the local YYYY-MM-DD doneDate required by a project.
-  - Revert restores the prior open/completed fields. Create and Trash remain reversible Marvin
-    Trash transitions; Marvin's permanent /doc/delete endpoint is never used.
+    historical doneAt or the local YYYY-MM-DD doneDate required by a project, plus Marvin's
+    matching historical completion field-update timestamps. updatedAt remains the actual apply
+    time so concurrency checks stay truthful.
+  - Revert restores prior open/completed fields. Reverting create deletes the created document;
+    reverting trash recreates the exact ID from Pilot's full-document recovery snapshot. These
+    deleted documents do not appear in Marvin's native Trash UI, so retain private receipts.
   - Marvin's server-maintained /doneItems history does not index backdated /doc/update task
     completions. Audit those completion dates through full-document reads and Pilot receipts.
 

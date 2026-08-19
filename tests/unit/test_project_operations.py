@@ -126,9 +126,9 @@ def test_complete_compiles_historical_dates_for_tasks_and_projects() -> None:
     expected_completed_ms = 1_784_856_600_000
     assert project_setters == {
         "done": True,
-        "fieldUpdates.done": NOW_MS,
+        "fieldUpdates.done": expected_completed_ms,
         "doneDate": "2026-07-23",
-        "fieldUpdates.doneDate": NOW_MS,
+        "fieldUpdates.doneDate": expected_completed_ms,
         "updatedAt": NOW_MS,
     }
     assert project_compiled.desired_fields == {"done": True, "doneDate": "2026-07-23"}
@@ -138,9 +138,9 @@ def test_complete_compiles_historical_dates_for_tasks_and_projects() -> None:
     task = parse_plan_bytes(encode_plan([task_value])).operations[0]
     task_compiled = compile_complete(task, {"done": False}, NOW_MS)
     task_setters = {setter["key"]: setter["val"] for setter in task_compiled.payload["setters"]}
-    assert task_setters["fieldUpdates.done"] == NOW_MS
+    assert task_setters["fieldUpdates.done"] == expected_completed_ms
     assert task_setters["doneAt"] == expected_completed_ms
-    assert task_setters["fieldUpdates.doneAt"] == NOW_MS
+    assert task_setters["fieldUpdates.doneAt"] == expected_completed_ms
     assert "doneDate" not in task_setters
     assert task_compiled.desired_fields == {"done": True, "doneAt": expected_completed_ms}
 
@@ -231,7 +231,8 @@ def test_project_rename_move_and_trash_compile_through_preflight() -> None:
     trash_result = preflight_plan(
         parse_plan_bytes(encode_plan([trash])), FakeReader(live), now_ms=NOW_MS
     )
-    assert trash_result.operations[0].compiled.desired_fields == {"deletedAt": NOW_MS}
+    assert trash_result.operations[0].compiled.endpoint == "doc/delete"
+    assert trash_result.operations[0].compiled.payload == {"itemId": "project-existing"}
 
 
 def test_project_move_rejects_self_and_descendant_parent_cycles() -> None:

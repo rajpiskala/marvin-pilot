@@ -28,6 +28,9 @@ FIELD_LABELS = {
     "labels": "labels",
     "estimatedTimeDuration": "estimated time duration",
     "note": "note",
+    "subtasks": "subtasks",
+    "cadence": "recurrence cadence",
+    "dueInDays": "generated due in days",
     "dayRank": "day rank",
     "masterRank": "master rank",
     "dailySection": "daily section",
@@ -86,6 +89,13 @@ def render_plan_description(plan: ChangePlanV1) -> str:
             f"[{operation.operationId}]"
         )
         lines.append(f"   target type: {operation.target.type}")
+        if operation.target.type == "recurringTask":
+            lines.append("   recurrence scope: entire series")
+        elif getattr(operation.target, "recurrence", None) is not None:
+            recurrence = operation.target.recurrence
+            lines.append("   recurrence scope: this occurrence only")
+            lines.append(f"   series: {recurrence.seriesTitle} [{recurrence.seriesId}]")
+            lines.append(f"   occurrence date: {recurrence.scheduledDate}")
 
         if isinstance(operation, UpdateOperation):
             before = operation.before.model_dump(exclude_unset=True, mode="json")
@@ -140,7 +150,9 @@ def render_live_preflight(result: PreflightResult) -> str:
         if operation.action == "complete":
             compiler_fields.append("done state and historical completion timestamp")
         if operation.action == "trash":
-            compiler_fields.append("deletedAt and field update timestamps")
+            compiler_fields.append(
+                "API deletion with a full Pilot recovery snapshot journaled before send"
+            )
         if compiler_fields:
             lines.append(
                 f"Compiler-managed [{operation.operationId}]: {', '.join(compiler_fields)}"
@@ -161,17 +173,19 @@ def render_revert_preflight(result: RevertPreflight) -> str:
     ]
     for index, checked in enumerate(result.operations, start=1):
         source = checked.source_operation
-        title = checked.live_document.get("title") or source.targetTitle or source.targetId
+        title = (
+            (checked.live_document.get("title") if checked.live_document is not None else None)
+            or source.targetTitle
+            or source.targetId
+        )
         lines.append(
             f'{index}. REVERT {source.action.upper()} "{title}" '
             f"({source.targetId}) [{source.operationId}]"
         )
         if source.action == "create":
-            lines.append(
-                f"   move the {source.targetType} created by this operation to Marvin Trash"
-            )
+            lines.append(f"   delete the {source.targetType} created by this operation")
         elif source.action == "trash":
-            lines.append(f"   restore the {source.targetType} from Marvin Trash")
+            lines.append(f"   recreate the {source.targetType} from the Pilot recovery snapshot")
         for field, desired in checked.compiled.desired_fields.items():
             before = checked.compiled.before_fields[field]
             old_value = before.get("value") if before["present"] else "<absent>"

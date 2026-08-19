@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from marvin_pilot.field_registry import FIELD_SPECS, compile_plan_field, field_snapshot
+from marvin_pilot.field_registry import (
+    FIELD_SPECS,
+    compile_fields_for_target,
+    compile_plan_field,
+    compile_recurring_task_field,
+    field_snapshot,
+)
 from marvin_pilot.models.plan_v1 import (
     CompleteOperation,
     CreateOperation,
@@ -36,19 +42,26 @@ def _setters_for_fields(
     setters: list[dict[str, Any]] = []
     desired: dict[str, Any] = {}
     for plan_field, plan_value in fields.items():
-        marvin_field, marvin_value = compile_plan_field(plan_field, plan_value)
-        if plan_field == "subtasks":
+        if target_type == "recurringTask":
+            compiled_fields = compile_recurring_task_field(plan_field, plan_value)
+        else:
+            marvin_field, marvin_value = compile_plan_field(plan_field, plan_value)
+            compiled_fields = {marvin_field: marvin_value}
+        if plan_field == "subtasks" and target_type != "recurringTask":
             live_subtasks = live_document.get("subtasks") if live_document is not None else None
-            marvin_value = _merge_subtasks(plan_value, live_subtasks, now_ms=now_ms)
+            compiled_fields = {
+                "subtasks": _merge_subtasks(plan_value, live_subtasks, now_ms=now_ms)
+            }
         if target_type == "project" and plan_field == "scheduledDate" and plan_value is None:
-            marvin_value = None
-        setters.extend(
-            [
-                {"key": marvin_field, "val": marvin_value},
-                {"key": f"fieldUpdates.{marvin_field}", "val": now_ms},
-            ]
-        )
-        desired[marvin_field] = marvin_value
+            compiled_fields = {"day": None}
+        for marvin_field, marvin_value in compiled_fields.items():
+            setters.extend(
+                [
+                    {"key": marvin_field, "val": marvin_value},
+                    {"key": f"fieldUpdates.{marvin_field}", "val": now_ms},
+                ]
+            )
+            desired[marvin_field] = marvin_value
     return setters, desired
 
 
@@ -128,6 +141,56 @@ def compile_create(operation: CreateOperation, now_ms: int) -> CompiledMutation:
     """Compile a complete minimal task or project document with a caller-generated UUID."""
 
     after = operation.after.model_dump(exclude_unset=True, mode="json")
+    if operation.target.type == "recurringTask":
+        document: dict[str, Any] = {
+            "_id": operation.target.id,
+            "db": "RecurringTasks",
+            "recurringType": "task",
+            "parentId": "unassigned",
+            "type": "daily",
+            "day": 0,
+            "date": 1,
+            "weekDays": [0],
+            "repeat": 1,
+            "repeatStart": after["cadence"]["startDate"],
+            "limitToWeekdays": False,
+            "subtaskList": [],
+            "sectionId": None,
+            "timeEstimate": 0,
+            "labelIds": [],
+            "dueIn": None,
+            "echoDays": 1,
+            "onCount": 7,
+            "offCount": 7,
+            "customRecurrence": "",
+            "endDate": None,
+            "rank": 0,
+            "note": "",
+            "isStarred": False,
+            "isFrogged": False,
+            "isReward": False,
+            "rewardPoints": 0,
+            "createdAt": now_ms,
+            "updatedAt": now_ms,
+        }
+        compiled_after = compile_fields_for_target("recurringTask", after)
+        document.update(compiled_after)
+        document["fieldUpdates"] = dict.fromkeys(compiled_after, now_ms)
+        desired = {
+            key: value
+            for key, value in document.items()
+            if key not in {"fieldUpdates", "updatedAt"}
+        }
+        return CompiledMutation(
+            operation_id=operation.operationId,
+            action="create",
+            target_id=operation.target.id,
+            endpoint="doc/create",
+            payload=document,
+            desired_fields=desired,
+            before_fields={},
+        )
+
     is_project = operation.target.type == "project"
     document: dict[str, Any] = {
         "_id": operation.target.id,
@@ -182,7 +245,7 @@ def compile_complete(
     desired: dict[str, Any] = {"done": True}
     setters = [
         {"key": "done", "val": True},
-        {"key": "fieldUpdates.done", "val": now_ms},
+        {"key": "fieldUpdates.done", "val": completed_ms},
     ]
     touched_fields = ["done"]
     if operation.target.type == "project":
@@ -191,7 +254,7 @@ def compile_complete(
         setters.extend(
             [
                 {"key": "doneDate", "val": done_date},
-                {"key": "fieldUpdates.doneDate", "val": now_ms},
+                {"key": "fieldUpdates.doneDate", "val": completed_ms},
             ]
         )
         touched_fields.append("doneDate")
@@ -200,7 +263,7 @@ def compile_complete(
         setters.extend(
             [
                 {"key": "doneAt", "val": completed_ms},
-                {"key": "fieldUpdates.doneAt", "val": now_ms},
+                {"key": "fieldUpdates.doneAt", "val": completed_ms},
             ]
         )
         touched_fields.append("doneAt")
@@ -219,23 +282,16 @@ def compile_complete(
 def compile_trash(
     operation: TrashOperation, live_document: dict[str, Any], now_ms: int
 ) -> CompiledMutation:
-    """Compile the documented portion of Marvin's reversible Trash transition."""
+    """Compile a Pilot-managed deletion recovered from the durable apply receipt."""
 
-    desired = {"deletedAt": now_ms}
-    setters = [
-        {"key": "deletedAt", "val": now_ms},
-        {"key": "fieldUpdates.deletedAt", "val": now_ms},
-        {"key": "updatedAt", "val": now_ms},
-    ]
-    before = {field: field_snapshot(live_document, field) for field in ("deletedAt", "restoredAt")}
     return CompiledMutation(
         operation_id=operation.operationId,
         action="trash",
         target_id=operation.target.id,
-        endpoint="doc/update",
-        payload={"itemId": operation.target.id, "setters": setters},
-        desired_fields=desired,
-        before_fields=before,
+        endpoint="doc/delete",
+        payload={"itemId": operation.target.id},
+        desired_fields={},
+        before_fields={},
     )
 
 
@@ -260,6 +316,12 @@ def compile_operation(
 def affected_marvin_fields(operation: UpdateOperation) -> list[str]:
     """Return the normal top-level Marvin fields selected by an update."""
 
+    if operation.target.type == "recurringTask":
+        result = []
+        after = operation.after.model_dump(exclude_unset=True, mode="json")
+        for field in operation.after.model_fields_set:
+            result.extend(compile_recurring_task_field(field, after[field]))
+        return result
     return [
         spec.marvin_name
         for field, spec in FIELD_SPECS.items()

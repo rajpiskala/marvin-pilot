@@ -6,7 +6,7 @@ from uuid import UUID
 
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.field_registry import FIELD_SPECS
-from marvin_pilot.models.plan_v1 import TaskFields
+from marvin_pilot.models.plan_v1 import RecurringTaskFields, TaskFields
 from marvin_pilot.plan_io import parse_plan_bytes
 from marvin_pilot.visualizer import build_plan_view
 from marvin_pilot.visualizer_fields import FIELD_PRESENTATIONS, presentation_for
@@ -99,7 +99,7 @@ def _hierarchy_plan() -> dict:
 def test_presentation_registry_covers_schema_and_compiler() -> None:
     fields = set(TaskFields.model_fields)
     assert set(FIELD_SPECS) == fields
-    assert set(FIELD_PRESENTATIONS) == fields
+    assert set(FIELD_PRESENTATIONS) == fields | set(RecurringTaskFields.model_fields)
     assert all(presentation_for(field).label for field in fields)
     assert presentation_for("futureMarvinField").kind == "generic"
 
@@ -158,6 +158,55 @@ def test_missing_paths_are_grouped_as_incomplete_instead_of_rendered_as_roots() 
     )
     assert incomplete.type == "unknown"
     assert [child.operation_id for child in incomplete.children] == ["rename-monitoring"]
+
+
+def test_completion_inherits_known_ancestry_but_respects_explicit_unknown_after_path() -> None:
+    category = {"id": "category-sandbox", "type": "category", "title": "Sandbox"}
+    value = {
+        "schemaVersion": 1,
+        "planId": "77777777-7777-4777-8777-777777777777",
+        "createdAt": "2026-08-16T09:00:00-07:00",
+        "summary": "Preview one historical completion.",
+        "operations": [
+            {
+                "operationId": "complete-fixture",
+                "action": "complete",
+                "target": {"type": "task", "id": "task-fixture", "title": "Fixture task"},
+                "reason": "Record the completed fixture.",
+                "completedAt": "2026-08-15T18:30:00-07:00",
+                "display": {"beforePath": [category], "beforeOrder": 42},
+            }
+        ],
+    }
+    view = _view(value)
+    operation = view.operations[0]
+    assert operation.completed_at == "2026-08-15T18:30:00-07:00"
+    assert operation.after_path_state == "path"
+    assert operation.after_path == operation.before_path
+    assert operation.after_order == operation.before_order == 42
+    assert view.previews.before.incomplete_operation_ids == ()
+    assert view.previews.after.incomplete_operation_ids == ()
+    assert view.previews.after.roots[0].children[0].operation_id == "complete-fixture"
+
+    value["operations"][0]["display"]["afterPath"] = None
+    explicit_unknown = _view(value)
+    assert explicit_unknown.operations[0].after_path_state == "unknown"
+    assert explicit_unknown.previews.after.incomplete_operation_ids == ("complete-fixture",)
+
+
+def test_completed_task_update_preserves_completion_in_both_preview_states() -> None:
+    completed_at = "2026-07-23T18:30:00-07:00"
+    value = _hierarchy_plan()
+    operation = value["operations"][2]
+    operation["display"]["existingCompletedAt"] = completed_at
+    view = _view(value)
+
+    rendered = view.operations[2]
+    assert rendered.existing_completed_at == completed_at
+    assert rendered.completed_at is None
+    assert rendered.change_kinds == ("moved",)
+    assert rendered.before is not None
+    assert rendered.after is not None
 
 
 def test_display_order_sorts_siblings_without_changing_operation_order() -> None:
@@ -253,7 +302,7 @@ def test_single_pane_layouts_account_for_create_and_trash() -> None:
     before = {section.title: section.operation_ids for section in view.layouts.before}
     after = {section.title: section.operation_ids for section in view.layouts.after}
     assert before["Created by this plan"] == ("create-email-follow-up",)
-    assert after["Moved to Trash by this plan"] == ("trash-duplicate-math-task",)
+    assert after["Pilot-managed Trash"] == ("trash-duplicate-math-task",)
     assert before["Inbox"] == ("improve-dinner-task",)
     assert after["People"] == ("improve-dinner-task",)
     assert sum(len(section.operation_ids) for section in view.layouts.before) == 4
@@ -283,7 +332,7 @@ def test_sparse_cards_distinguish_fallback_clear_and_absent() -> None:
     assert create.before is None
     assert create.before_empty_label == "No before state — created by this plan"
     assert trash.after is None
-    assert trash.after_empty_label == "No active after state — moved to Marvin Trash"
+    assert trash.after_empty_label == "No active after state — deleted with Pilot recovery"
 
 
 def test_section_fallbacks_and_display_parent_warning() -> None:

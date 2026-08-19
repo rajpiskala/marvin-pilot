@@ -21,6 +21,8 @@ FIELD_PRESENTATIONS: dict[str, FieldPresentationSpec] = {
     "parent": FieldPresentationSpec("Parent", "parent", 10),
     "labels": FieldPresentationSpec("Labels", "labels", 20),
     "estimatedTimeDuration": FieldPresentationSpec("Estimated time duration", "estimate", 30),
+    "cadence": FieldPresentationSpec("Recurrence cadence", "recurrence", 35),
+    "dueInDays": FieldPresentationSpec("Generated due in", "date", 36),
     "scheduledDate": FieldPresentationSpec("Scheduled date", "date", 40),
     "dueDate": FieldPresentationSpec("Due date", "date", 41),
     "startDate": FieldPresentationSpec("Start date", "date", 42),
@@ -71,6 +73,10 @@ def short_value(field: str, value: Any) -> str:
     if field == "subtasks":
         count = len(value)
         return f"{count} subtask{'s' if count != 1 else ''}"
+    if field == "cadence":
+        cadence_type = value.get("type", "recurrence")
+        start = value.get("startDate")
+        return f"{cadence_type} from {start}" if start else str(cadence_type)
     if isinstance(value, bool):
         return "On" if value else "Off"
     if isinstance(value, list):

@@ -522,6 +522,30 @@ a:focus-visible {
   font-weight: 700;
 }
 
+.recurrence-marker {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: var(--muted-ink);
+}
+
+.recurrence-marker .recurring-series {
+  width: 17px;
+  height: 17px;
+  color: inherit;
+}
+
+.recurrence-marker.scope-series {
+  color: var(--accent);
+}
+
+.recurrence-marker:hover {
+  background: var(--chip-background);
+}
+
 .count-chip {
   padding: 5px 10px;
 }
@@ -2401,7 +2425,24 @@ footer {
   border-radius: 50%;
 }
 
+.task-circle.completed {
+  border-color: var(--complete);
+  background: var(--complete);
+  box-shadow: inset 0 0 0 2px var(--card-background);
+}
+
+.task-circle.completed::after {
+  content: "";
+  width: 5px;
+  height: 3px;
+  border-left: 1.5px solid var(--card-background);
+  border-bottom: 1.5px solid var(--card-background);
+  transform: translate(3px, 3px) rotate(-45deg);
+  display: block;
+}
+
 .project-flag,
+.recurring-series,
 .category-folder,
 .inbox-tray {
   color: var(--node-color, #bf9c78);
@@ -2421,6 +2462,23 @@ footer {
 .task-line > .action-badge {
   flex: 0 0 auto;
   margin-left: auto;
+}
+
+.task-line > .action-badge + .recurrence-marker {
+  margin-left: 2px;
+}
+
+.task-line:has(.recurrence-marker) {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.task-line:has(.recurrence-marker) > .task-title {
+  flex: 1 1 260px;
+}
+
+.task-line:has(.recurrence-marker) > .action-badge {
+  margin-left: 0;
 }
 
 .location-details {
@@ -2610,13 +2668,21 @@ footer {
   padding-left: 0;
 }
 
-.hierarchy-card:has(.task-item:nth-child(2)) {
+.hierarchy-card:has(.task-item:nth-child(2)),
+.hierarchy-card:has(.recurrence-marker) {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.hierarchy-card:has(.task-item:nth-child(2)) .task-items {
+.hierarchy-card:has(.task-item:nth-child(2)) .task-items,
+.hierarchy-card:has(.recurrence-marker) .task-items {
   grid-column: 1;
   justify-content: flex-start;
+}
+
+.task-item.completion-time {
+  background: var(--complete-soft);
+  color: var(--complete);
+  font-weight: 650;
 }
 
 .hierarchy-preview-before .hierarchy-operation-content,
@@ -2630,10 +2696,6 @@ footer {
   border-left: 0;
   border-radius: 0 9px 9px 0;
   box-shadow: inset 7px 0 var(--update-edge), var(--card-shadow);
-}
-
-.terminal-complete > .task-card {
-  opacity: 0.68;
 }
 
 .terminal-complete > .task-card .task-title {

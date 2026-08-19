@@ -11,11 +11,15 @@ from typing import Any
 from pydantic import ValidationError
 
 from marvin_pilot.errors import PlanSemanticError, PlanSyntaxError
-from marvin_pilot.field_registry import compile_plan_field
+from marvin_pilot.field_registry import compile_fields_for_target
 from marvin_pilot.models.plan_v1 import (
     ChangePlanV1,
     CompleteOperation,
     CreateOperation,
+    CreateRecurringTaskFields,
+    CreateTaskFields,
+    RecurringTaskFields,
+    TaskFields,
     TrashOperation,
     UpdateOperation,
 )
@@ -109,6 +113,8 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
     display_parents: dict[tuple[str, str], str | None] = {}
     display_orders: dict[tuple[str, str], int | None] = {}
     day_sections: dict[tuple[str, str], tuple[str, int]] = {}
+    task_fields = set(TaskFields.model_fields)
+    recurring_task_fields = set(RecurringTaskFields.model_fields)
 
     for operation in plan.operations:
         if operation.operationId in operation_ids:
@@ -123,6 +129,22 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
         target_ids.add(operation.target.id)
 
         if operation.display is not None:
+            if "existingCompletedAt" in operation.display.model_fields_set:
+                if operation.display.existingCompletedAt is None:
+                    raise PlanSemanticError(
+                        f"operation {operation.operationId!r} has a null "
+                        "display.existingCompletedAt; omit it when the completion is unknown"
+                    )
+                if not isinstance(operation, (UpdateOperation, TrashOperation)):
+                    raise PlanSemanticError(
+                        f"operation {operation.operationId!r} may use "
+                        "display.existingCompletedAt only for update or trash"
+                    )
+                if operation.target.type != "task":
+                    raise PlanSemanticError(
+                        f"operation {operation.operationId!r} may use "
+                        "display.existingCompletedAt only for an existing task"
+                    )
             if isinstance(operation, CreateOperation):
                 invalid = operation.display.model_fields_set & {
                     "beforePath",
@@ -240,6 +262,31 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
         if isinstance(operation, UpdateOperation):
             before_keys = operation.before.model_fields_set
             after_keys = operation.after.model_fields_set
+            allowed_fields = (
+                recurring_task_fields if operation.target.type == "recurringTask" else task_fields
+            )
+            unsupported_target_fields = sorted((before_keys | after_keys) - allowed_fields)
+            if unsupported_target_fields:
+                if operation.target.type == "recurringTask":
+                    detail = "non-series recurringTask field(s)"
+                else:
+                    detail = "recurrence-series field(s)"
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} uses {detail} on a "
+                    f"{operation.target.type}: " + ", ".join(unsupported_target_fields)
+                )
+            expected_model = (
+                RecurringTaskFields if operation.target.type == "recurringTask" else TaskFields
+            )
+            for side, value in (("before", operation.before), ("after", operation.after)):
+                try:
+                    expected_model.model_validate(value.model_dump(exclude_unset=True, mode="json"))
+                except ValidationError as exc:
+                    location = ".".join(str(part) for part in exc.errors()[0]["loc"])
+                    raise PlanSemanticError(
+                        f"operation {operation.operationId!r} has invalid {side} fields for "
+                        f"target type {operation.target.type!r} at {location}"
+                    ) from exc
             if before_keys != after_keys:
                 missing_before = sorted(after_keys - before_keys)
                 missing_after = sorted(before_keys - after_keys)
@@ -265,18 +312,17 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                 )
             before = operation.before.model_dump(exclude_unset=True, mode="json")
             after = operation.after.model_dump(exclude_unset=True, mode="json")
-            semantic_before = dict(
-                compile_plan_field(field, value) for field, value in before.items()
-            )
-            semantic_after = dict(
-                compile_plan_field(field, value) for field, value in after.items()
-            )
+            semantic_before = compile_fields_for_target(operation.target.type, before)
+            semantic_after = compile_fields_for_target(operation.target.type, after)
             if semantic_before == semantic_after:
                 raise PlanSemanticError(
                     f"update operation {operation.operationId!r} does not change any values"
                 )
 
-        if isinstance(operation, (UpdateOperation, CreateOperation)):
+        if (
+            isinstance(operation, (UpdateOperation, CreateOperation))
+            and operation.target.type != "recurringTask"
+        ):
             after_subtasks = (
                 operation.after.subtasks
                 if "subtasks" in operation.after.model_fields_set
@@ -342,6 +388,60 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                         f"trash operation {source_trash.operationId!r} must depend on "
                         f"{operation.operationId!r} before converting source task {source.id!r}"
                     )
+
+        if operation.target.type == "recurringTask":
+            if isinstance(operation, CompleteOperation):
+                raise PlanSemanticError(
+                    f"complete operation {operation.operationId!r} targets a recurrence series; "
+                    "complete an explicit generated occurrence instead"
+                )
+            if isinstance(operation, (UpdateOperation, CreateOperation)):
+                fields = operation.after.model_fields_set
+                if isinstance(operation, UpdateOperation):
+                    fields |= operation.before.model_fields_set
+                unsupported = sorted(fields - recurring_task_fields)
+                if unsupported:
+                    raise PlanSemanticError(
+                        f"operation {operation.operationId!r} uses non-series recurringTask "
+                        "field(s): " + ", ".join(unsupported)
+                    )
+                if isinstance(operation, CreateOperation) and "cadence" not in fields:
+                    raise PlanSemanticError(
+                        f"create operation {operation.operationId!r} for recurringTask requires "
+                        "an explicit cadence"
+                    )
+                if isinstance(operation, CreateOperation):
+                    try:
+                        CreateRecurringTaskFields.model_validate(
+                            operation.after.model_dump(exclude_unset=True, mode="json")
+                        )
+                    except ValidationError as exc:
+                        location = ".".join(str(part) for part in exc.errors()[0]["loc"])
+                        raise PlanSemanticError(
+                            f"create operation {operation.operationId!r} has invalid "
+                            f"recurringTask fields at {location}"
+                        ) from exc
+        elif isinstance(operation, (UpdateOperation, CreateOperation)):
+            fields = operation.after.model_fields_set
+            if isinstance(operation, UpdateOperation):
+                fields |= operation.before.model_fields_set
+            unsupported = sorted(fields - task_fields)
+            if unsupported:
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} uses recurrence-series field(s) on "
+                    f"a {operation.target.type}: " + ", ".join(unsupported)
+                )
+            if isinstance(operation, CreateOperation):
+                try:
+                    CreateTaskFields.model_validate(
+                        operation.after.model_dump(exclude_unset=True, mode="json")
+                    )
+                except ValidationError as exc:
+                    location = ".".join(str(part) for part in exc.errors()[0]["loc"])
+                    raise PlanSemanticError(
+                        f"create operation {operation.operationId!r} has invalid "
+                        f"{operation.target.type} fields at {location}"
+                    ) from exc
 
         if operation.target.type == "project" and isinstance(
             operation, (UpdateOperation, CreateOperation)

@@ -45,6 +45,8 @@ class InMemoryMarvin:
         self.timeout_modes: dict[str, str] = {}
         self.attempts: dict[str, int] = {}
         self.before_send = None
+        self.return_documents = False
+        self.ignore_field_update_setters = False
 
     def get_doc(self, item_id: str) -> dict[str, Any] | None:
         self.reads.append(item_id)
@@ -70,12 +72,14 @@ class InMemoryMarvin:
             return
         apply()
 
-    def update_doc(self, item_id: str, setters: list[dict[str, Any]]) -> dict[str, bool]:
+    def update_doc(self, item_id: str, setters: list[dict[str, Any]]) -> dict[str, Any]:
         def apply() -> None:
             document = self.documents[item_id]
             for setter in setters:
                 key = setter["key"]
                 if key.startswith("fieldUpdates."):
+                    if self.ignore_field_update_setters:
+                        continue
                     subkey = key.split(".", 1)[1]
                     document.setdefault("fieldUpdates", {})[subkey] = setter["val"]
                 else:
@@ -84,9 +88,11 @@ class InMemoryMarvin:
             self.mutations.append(("update", item_id))
 
         self._maybe_fail(item_id, apply)
+        if self.return_documents:
+            return copy.deepcopy(self.documents[item_id])
         return {"ok": True}
 
-    def create_doc(self, document: dict[str, Any]) -> dict[str, bool]:
+    def create_doc(self, document: dict[str, Any]) -> dict[str, Any]:
         item_id = document["_id"]
 
         def apply() -> None:
@@ -94,6 +100,16 @@ class InMemoryMarvin:
             created["_rev"] = "1-created"
             self.documents[item_id] = created
             self.mutations.append(("create", item_id))
+
+        self._maybe_fail(item_id, apply)
+        if self.return_documents:
+            return copy.deepcopy(self.documents[item_id])
+        return {"ok": True}
+
+    def delete_doc(self, item_id: str) -> dict[str, bool]:
+        def apply() -> None:
+            self.documents.pop(item_id)
+            self.mutations.append(("delete", item_id))
 
         self._maybe_fail(item_id, apply)
         return {"ok": True}
@@ -139,6 +155,13 @@ def plan_and_raw():
     return parse_plan_bytes(raw), raw
 
 
+def trash_plan_and_raw():
+    value = copy.deepcopy(EXAMPLE_PLAN)
+    value["operations"] = [value["operations"][-1]]
+    raw = json.dumps(value, indent=2).encode()
+    return parse_plan_bytes(raw), raw
+
+
 def run_apply(
     tmp_path: Path,
     client: InMemoryMarvin,
@@ -157,6 +180,20 @@ def run_apply(
         now_ms=lambda: NOW_MS,
         wall_clock=clock,
         progress=progress,
+    )
+
+
+def run_trash_apply(tmp_path: Path, client: InMemoryMarvin):
+    plan, raw = trash_plan_and_raw()
+    clock = Clock()
+    return execute_apply(
+        plan,
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _preflight: True,
+        now_ms=lambda: NOW_MS,
+        wall_clock=clock,
     )
 
 
@@ -188,9 +225,45 @@ def test_apply_is_preflighted_journaled_verified_and_completed(
     assert [operation.applyIndex for operation in result.receipt.operations] == [1, 2, 3, 4]
     assert client.documents["task-wash-dishes-id"]["day"] == "2026-08-09"
     assert client.documents["task-dinner-id"]["timeEstimate"] == 16_200_000
-    assert client.documents["duplicate-task-id"]["deletedAt"] == NOW_MS
+    assert "duplicate-task-id" not in client.documents
     assert "40d06376-9125-4e9e-a6bd-631cb0e6dc55" in client.documents
+    trash_receipt = result.receipt.operations[-1]
+    assert trash_receipt.request.endpoint == "doc/delete"
+    assert trash_receipt.beforeDocument["title"] == "Study chapter 3"
+    assert trash_receipt.afterDocument is None
+    assert progress[0] == (0, 4, "reschedule-wash-dishes")
     assert progress[-1] == (4, 4, "trash-duplicate-math-task")
+
+
+def test_verified_marvin_response_skips_the_redundant_readback(
+    tmp_path: Path, documents: dict
+) -> None:
+    client = InMemoryMarvin(documents)
+    client.return_documents = True
+
+    run_apply(tmp_path, client)
+
+    for target_id in (
+        "task-wash-dishes-id",
+        "task-dinner-id",
+        "40d06376-9125-4e9e-a6bd-631cb0e6dc55",
+    ):
+        assert client.reads.count(target_id) == 2
+    assert client.reads.count("duplicate-task-id") == 3
+
+
+def test_apply_rejects_a_write_that_omits_nested_field_update_metadata(
+    tmp_path: Path, documents: dict
+) -> None:
+    client = InMemoryMarvin(documents)
+    client.return_documents = True
+    client.ignore_field_update_setters = True
+
+    with pytest.raises(PartialMutationError, match="did not verify"):
+        run_apply(tmp_path, client)
+
+    receipt = HistoryStore(tmp_path).load(next(tmp_path.glob("partial-*.json")))
+    assert receipt.operations[0].status == "unknown"
 
 
 def test_pending_receipt_is_durable_before_first_send(tmp_path: Path, documents: dict) -> None:
@@ -206,6 +279,53 @@ def test_pending_receipt_is_durable_before_first_send(tmp_path: Path, documents:
 
     client.before_send = before_send
     run_apply(tmp_path, client)
+
+
+def test_trash_snapshot_is_durable_and_current_immediately_before_delete(
+    tmp_path: Path, documents: dict
+) -> None:
+    client = InMemoryMarvin(documents)
+
+    def before_send(item_id: str) -> None:
+        assert item_id == "duplicate-task-id"
+        path = next(tmp_path.glob("pending-*.json"))
+        value = json.loads(path.read_text(encoding="utf-8"))
+        operation = value["operations"][0]
+        assert operation["status"] == "sending"
+        assert operation["request"] == {
+            "endpoint": "doc/delete",
+            "payload": {"itemId": "duplicate-task-id"},
+        }
+        assert operation["beforeDocument"] == documents["duplicate-task-id"]
+        client.before_send = None
+
+    client.before_send = before_send
+    run_trash_apply(tmp_path, client)
+    assert "duplicate-task-id" not in client.documents
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_outcome", "expected_attempts"),
+    [
+        ("apply-then-timeout", "applied-after-reconciliation", 1),
+        ("timeout-then-succeed", "applied-after-safe-retry", 2),
+    ],
+)
+def test_trash_reconciles_ambiguous_delete_without_duplicate_loss(
+    tmp_path: Path,
+    documents: dict,
+    mode: str,
+    expected_outcome: str,
+    expected_attempts: int,
+) -> None:
+    client = InMemoryMarvin(documents)
+    client.timeout_modes["duplicate-task-id"] = mode
+
+    result = run_trash_apply(tmp_path, client)
+
+    assert result.receipt.operations[0].outcome == expected_outcome
+    assert client.attempts["duplicate-task-id"] == expected_attempts
+    assert "duplicate-task-id" not in client.documents
 
 
 def test_decline_makes_no_receipt_and_no_writes(tmp_path: Path, documents: dict) -> None:

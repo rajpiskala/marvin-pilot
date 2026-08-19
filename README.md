@@ -17,7 +17,7 @@ Amazing Marvin MCP       AI             You              Marvin Pilot
 Marvin Pilot validates the plan against live state, asks for confirmation, applies operations one at a time, verifies the result, and writes an integrity-checked receipt that can be fully or selectively reverted.
 
 > [!WARNING]
-> **Marvin Pilot is pre-alpha.** The task lifecycle and a 200-operation scale run were verified on 2026-08-08, project CRUD plus historical completion on 2026-08-11, and ordered subtask CRUD/consolidation/revert on 2026-08-14, against a dedicated development account. The client has not yet seen enough real-world account shapes and upstream conditions for production use. Back up Marvin and evaluate it with non-critical data first.
+> **Marvin Pilot is pre-alpha.** The task lifecycle and a 200-operation scale run were verified on 2026-08-08, project CRUD plus historical completion on 2026-08-11, ordered subtask CRUD/consolidation/revert on 2026-08-14, and recurrence-series plus explicit-occurrence CRUD/revert on 2026-08-15, against a dedicated development account. The client has not yet seen enough real-world account shapes and upstream conditions for production use. Back up Marvin and evaluate it with non-critical data first.
 
 ## Why Marvin Pilot?
 
@@ -181,7 +181,16 @@ When the plan looks correct:
 marvin-pilot apply plans/first-plan.json
 ```
 
-Marvin Pilot performs a live preflight, shows the operations, and asks once for confirmation before making changes.
+Marvin Pilot shows a compact preflight progress bar with the current operation ID, presents the
+reviewed operations, and asks once for confirmation before making changes. Apply and revert use a
+separate progress bar, so their elapsed time and ETA cover only that phase instead of including the
+preflight wait.
+
+The default client starts requests at least 750 ms apart. A normal operation needs one live
+concurrency recheck plus one mutation whose returned document is verified directly. If Marvin
+returns a partial or unexpected response, Pilot safely falls back to a separate read-back. Large
+plans therefore remain sequential and rate-aware without paying for an unconditional third request
+per operation.
 
 It then prints the path to an audit receipt.
 
@@ -201,10 +210,44 @@ marvin-pilot revert path/to/applied-receipt.json \
 
 For large reorganizations, prefer reviewed batches over one enormous plan.
 
+## Historical project context from a backup
+
+The limited Marvin API can return open project children, but it has no efficient endpoint for every
+completed descendant of a project. For audits and historical reclustering, export a current Marvin
+backup and let Pilot build compact context locally:
+
+```console
+marvin-pilot context project "Project Atlas" \
+  --backup MarvinBackup.json.lzma \
+  --output dev/project-atlas-context.json
+```
+
+The positional value may be an exact category/project title or document ID. When a title appears
+more than once, Pilot reports each hierarchy path and asks for the exact ID. Both uncompressed
+`.json` and Marvin's compressed `.json.lzma` exports are supported, including Marvin's CESU-8 emoji
+encoding.
+
+The context includes every nested category, project, ordinary task, generated recurring occurrence,
+and recurrence definition beneath the selected root. Completed items, original completion dates,
+notes, ordering, recurrence identity, and ordered subtasks are retained; `updatedAt` remains numeric
+so a later plan builder can establish exact live locks. Trash subtrees are omitted unless
+`--include-trash` is supplied. The command performs no Marvin API calls and needs no credential.
+
+> [!CAUTION]
+> A backup and its derived context contain private task data. Keep both outside Git or under the
+> ignored `dev/`/`plans/` directories. Pilot never embeds the backup filename or path in context,
+> but the resulting JSON intentionally contains the selected tasks and notes. A backup is a
+> snapshot, not current authority; `validate --live`/`apply` must still fetch each selected target
+> and reject stale titles, parents, completion timestamps, or `updatedAt` values before writing.
+
+This deliberately avoids a persistent cache and invalidation service. For a fresh historical audit,
+provide a fresh backup; Pilot parses it directly and leaves no expanded copy behind.
+
 ## Core commands
 
 | Command                               | What it does                               |
 | ------------------------------------- | ------------------------------------------ |
+| `marvin-pilot context project …`      | Extract full project history from a backup |
 | `marvin-pilot validate PLAN`          | Strictly validate a plan offline           |
 | `marvin-pilot describe PLAN`          | Print a human-readable description         |
 | `marvin-pilot visualize PLAN`         | Open the local visual diff                 |
@@ -225,7 +268,7 @@ For large reorganizations, prefer reviewed batches over one enormous plan.
 marvin-pilot visualize plan.json
 ```
 
-The default **Preview** renders Marvin-like **Now** and **After (preview)** hierarchies. Inbox, categories, projects, tasks, and subtasks have distinct icons; projects visibly support create, rename, move, schedule, complete, and Trash transitions. Moved items render under their truthful parent on each side and cross-highlight their counterpart, while shared hierarchy disclosure stays synchronized. Click any row to pin its two states in a sticky comparison tray; moved-item Previous/Next and Jump controls avoid hunting for a far-away destination. Deep hierarchies scroll horizontally within each pane, and single-state views provide the full content width.
+The default **Preview** renders Marvin-like **Now** and **After (preview)** hierarchies. Inbox, categories, projects, tasks, recurrence definitions, occurrences, and subtasks have distinct Marvin-like visual treatment; projects visibly support create, rename, move, schedule, complete, and Trash transitions. A generated occurrence keeps its task circle and shows a compact recurrence-loop icon on the right, while a recurrence definition omits the task circle and uses the loop icon as its type marker. Tooltips and item details spell out whether a change affects one generated occurrence or the series template. Completed After cards show the exact marked-done timestamp using the reviewer's browser locale, time zone, and 12/24-hour convention. Moved items render under their truthful parent on each side and cross-highlight their counterpart, while shared hierarchy disclosure stays synchronized. Click any row to pin its two states in a sticky comparison tray; moved-item Previous/Next and Jump controls avoid hunting for a far-away destination. Deep hierarchies scroll horizontally within each pane, and single-state views provide the full content width.
 
 Use **Day sections: Show/Hide** to layer explicit Today-list groupings over the hierarchy. Day sections such as Waiting or Main are visually distinct from categories and projects. Switch to **Changes** for an aligned operation diff grouped by typed After location, Now location, plan order, or supplied Today section. Search and the Moved filter keep large cleanups navigable. Action totals filter either mode, and item details expose the reason, identifiers, exact field diff, hierarchy path, supplied day-section context, and structured subtask changes.
 
@@ -233,7 +276,9 @@ It does not load a Marvin credential, call the Marvin API, persist task data in 
 
 Press `Ctrl+C` in the launching terminal to stop it.
 
-Typed `display.beforePath` and `display.afterPath` metadata supplies offline ancestry without affecting apply. Empty paths mean a known Marvin root; omitted paths render under **Location not supplied** instead of being guessed. Optional path-node and target order values reproduce sibling ordering, while legacy `beforeSection`/`afterSection` values remain a visibly inferred fallback.
+Typed `display.beforePath` and `display.afterPath` metadata supplies offline ancestry without affecting apply. Empty paths mean a known Marvin root; omitted paths render under **Location not supplied** instead of being guessed. Completion is the safe exception: when a known `beforePath` is present and `afterPath` is omitted, the completed After state inherits that unchanged ancestry. Explicit `afterPath: null` remains unknown. Optional path-node and target order values reproduce sibling ordering, while legacy `beforeSection`/`afterSection` values remain a visibly inferred fallback.
+
+An update or Trash operation on an already-completed task may provide its original RFC 3339 timestamp as `display.existingCompletedAt`. Preview then renders the task as completed, with the localized completion timestamp, in every state where it exists. Live preflight requires this exact metadata before updating a completed task and verifies it against Marvin's `doneAt`; the review-only field never becomes a setter. Reparenting therefore changes only `parentId` and preserves both `done` and `doneAt` through apply and revert.
 
 The browser suite includes synthetic hierarchy, lifecycle, movement, and subtask cases. Maintainers
 can point `MARVIN_PILOT_PRIVATE_PLAN_DIR` at an ignored local regression corpus containing
@@ -241,7 +286,7 @@ can point `MARVIN_PILOT_PRIVATE_PLAN_DIR` at an ignored local regression corpus 
 
 ## Plans and recovery
 
-Plans are versioned, closed-schema JSON documents containing stable `operationId` values and typed `create`, `update`, `complete`, or `trash` operations. Every action accepts a task or project target.
+Plans are versioned, closed-schema JSON documents containing stable `operationId` values and typed `create`, `update`, `complete`, or `trash` operations. Targets can be tasks, projects, entire recurring-task series, or explicitly identified generated occurrences. A recurrence series cannot itself be completed; complete one generated occurrence or Trash the series instead.
 
 Generate the authoritative schema and example directly from the installed CLI:
 
@@ -255,15 +300,52 @@ V1 supports common task and project fields including titles, parents/categories,
 
 Each subtask has a stable `id`, exact `title`, and `done` state; array order becomes native Marvin rank. Retained subtask records are merged by ID so unknown native metadata survives. Omission removes a prior subtask and `null` clears the checklist. A new subtask may include review-only `sourceTask: {id, title}` when consolidating a loose task, but only with a later dependent `trash` operation. Live preflight refuses stale, coupled, completed, or metadata-rich sources that cannot be represented losslessly, and receipts restore the original embedded map exactly.
 
-Project creates write native `Categories` documents with `type: "project"`; updates can rename, move, or edit allowlisted fields; completion records an explicit historical RFC 3339 timestamp; and Trash uses the same reversible transition as tasks. Planned project ancestry is checked before writes, including parents created earlier in the same plan and cycle prevention.
+Project creates write native `Categories` documents with `type: "project"`; updates can rename, move, or edit allowlisted fields; completion records an explicit historical RFC 3339 timestamp; and Trash uses the same receipt-backed deletion as tasks. Planned project ancestry is checked before writes, including parents created earlier in the same plan and cycle prevention.
+
+Task completion backdates both Marvin's `doneAt` value and the completion field-update timestamps
+that Marvin uses to place the item in completion-day views. Project completion similarly backdates
+`doneDate` and its completion field-update timestamps. `updatedAt` still records the actual apply
+time, preserving an honest concurrency lock. This prevents an item marked done for an earlier date
+from appearing under **Completed Today** merely because the plan was applied today.
+
+Completed tasks remain ordinary task documents addressable by exact ID. Pilot can rename or reparent them without reopening them, but the plan must include the verified `display.existingCompletedAt` timestamp so the historical state is visible during review. This supports backup-assisted historical reorganization while retaining a fresh live-state and concurrency check before every write.
+
+### Recurring tasks
+
+Use `target.type: "recurringTask"` to create, update, or Trash an entire recurring-task series. Series creates require an explicit `cadence`; supported cadence types are `daily`, `weekly`, `monthly`, `n per week`, `repeat`, `repeat week`, `repeat month`, `repeat year`, `echo`, `onOff`, and `custom`. The cadence includes an explicit `startDate` and may include `endDate`. Series fields also include title, parent, labels, estimate, note, ordered subtask templates, star/frog markers, and relative due-in days. Updating a series changes the template used for future generated occurrences; it does not silently rewrite already-generated tasks.
+
+Marvin, rather than Pilot, generates task occurrences from that template. A live remote-create check confirmed that a newly written same-day template synced into the browser but did not immediately backfill a generated occurrence during reload. Do not assume a same-day occurrence exists until Marvin has generated it; Pilot does not synthesize one as a hidden side effect.
+
+An operation aimed at one generated occurrence remains `target.type: "task"` and must include:
+
+```json
+{
+  "recurrence": {
+    "scope": "occurrence",
+    "seriesId": "the-series-id",
+    "seriesTitle": "Expected series title",
+    "scheduledDate": "2026-08-15"
+  }
+}
+```
+
+Live preflight verifies all four facts against both the occurrence and its current series before allowing an update, completion, or Trash. It rejects a generated recurring task when this declaration is missing, preventing a plan from accidentally treating one occurrence as an ordinary task or an entire series. Completion-coupled `echo` occurrences remain blocked because completing or deleting one creates the next occurrence as a side effect.
+
+Deleting an explicit generated occurrence tombstones that exact task document. Pilot deliberately does not edit the series template's `deletedDates`: the explicit occurrence ID is already deletion-protected by its CouchDB tombstone, while changing the template can suppress a different retained occurrence when an old task has rolled forward to today's `day`. Deleting an entire series removes only its recurrence-template document; already-generated task occurrences remain separate documents unless the plan explicitly includes them.
+
+Series subtasks preserve declared order and are copied by Marvin into future occurrences. Generated occurrences use the ordinary task-subtask model, including stable IDs and done state. Receipts record recurrence scope, and conflict-aware revert supports both series edits and explicit occurrence edits.
 
 One upstream distinction matters for audits: a task completed through the full-access document path receives native completion fields, but live testing found that the limited `/doneItems` endpoint does not index that backdated mutation. Project completion dates remain directly readable as `doneDate`. Use the receipt or full document rather than `/doneItems` as the sole oracle for Pilot-applied historical completion.
 
-Permanent deletion is intentionally not implemented. `trash` uses Marvin's reversible Trash behavior.
+### Pilot-managed Trash and recovery
 
-Every live apply writes audit state before the first mutation and records field-scoped before/after data and per-operation outcomes.
+Marvin's native Trash is client-side: the app saves a copy in browser-local storage and then deletes the synced document. The public API cannot add an item to that local Trash. Pilot's `trash` action therefore uses `/doc/delete`, but only after a pending receipt containing the complete original document has been durably written. Successful post-write verification requires the exact document ID to be absent. This fixes the former `deletedAt`-only behavior, which left pseudo-trashed tasks live and visible in Today.
 
-Revert is conflict-aware: it restores only fields changed by the original apply, preserves unrelated later edits, and refuses to overwrite a touched field that has changed since.
+Pilot recovery is receipt-backed rather than Marvin-native. `marvin-pilot revert RECEIPT.json` recreates the same ID from the stored document after removing stale CouchDB `_rev`/`_deleted` fields. Reverting a Pilot `create` likewise deletes the created document instead of leaving a hidden live record. Neither deletion appears in Marvin's native Trash UI.
+
+Every live apply writes audit state before the first mutation and records field-scoped before/after data and per-operation outcomes. Trash receipts include the full original task, project, or recurrence-template document—including notes and other personal content—because that snapshot is the recovery source. Keep the history directory private and do not commit or share receipts casually.
+
+Revert is conflict-aware: updates and completions restore only fields changed by the original apply and preserve unrelated later edits. A trashed document is restored only while its ID remains absent. A created document is deleted on revert only when its complete post-create snapshot is unchanged.
 
 Receipts include a SHA-256 integrity hash to detect accidental modification. The hash is **not** a cryptographic signature and does not make history tamper-proof.
 
@@ -308,7 +390,7 @@ python -m playwright install chromium
 MARVIN_PILOT_BROWSER_TESTS=1 python -m pytest -m browser tests/browser
 ```
 
-Live contract testing has covered the v1 task and project field set, project CRUD, historical completion, ordered subtask create/read/update/delete/reorder/complete/reopen/consolidation, create/update/schedule/unschedule/Trash/restore/revert workflows, and a 200-operation scale run against a dedicated development account.
+Live contract testing has covered the v1 task and project field set, project CRUD, historical completion (including Marvin's completion-index timestamps), ordered subtask create/read/update/delete/reorder/complete/reopen/consolidation, recurrence-series create/read/update/Trash/restore/revert, explicit generated-occurrence update/complete/Trash/revert, create/update/schedule/unschedule/Trash/restore/revert workflows, and a 200-operation scale run against a dedicated development account. Recurrence scope also has unit, in-memory integration, and browser-visualizer coverage; its disposable live-account contract is described in `contract-tests/README.md`.
 
 See [`contract-tests/README.md`](contract-tests/README.md) before running live contract cases.
 

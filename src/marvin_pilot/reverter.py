@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,18 +22,20 @@ from marvin_pilot.errors import (
 from marvin_pilot.executor import (
     MAX_RECONCILED_MUTATION_RETRIES,
     MutationClient,
+    compiled_mutation_matches,
     unix_milliseconds,
+    verified_mutation_response,
 )
 from marvin_pilot.field_registry import field_snapshot
 from marvin_pilot.history import HistoryStore, ReceiptHandle, rfc3339_utc
 from marvin_pilot.models.receipt_v1 import ReceiptOperationV1, ReceiptV1, RequestRecord
-from marvin_pilot.preflight import coupled_task_reasons, desired_fields_match
+from marvin_pilot.preflight import coupled_task_reasons
 
 
 @dataclass(frozen=True, slots=True)
 class RevertOperation:
     source_operation: ReceiptOperationV1
-    live_document: dict[str, Any]
+    live_document: dict[str, Any] | None
     compiled: CompiledMutation
     live_revision: dict[str, dict[str, Any]]
 
@@ -60,6 +63,15 @@ def _revision_snapshot(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {field: field_snapshot(document, field) for field in ("_rev", "updatedAt")}
 
 
+def _restorable_document(document: dict[str, Any]) -> dict[str, Any]:
+    """Return a full document suitable for recreating a deleted CouchDB record."""
+
+    restored = deepcopy(document)
+    restored.pop("_rev", None)
+    restored.pop("_deleted", None)
+    return restored
+
+
 def _absent_restore_value(field: str) -> Any:
     if field in {"day", "parentId", "firstScheduled"}:
         return "unassigned"
@@ -69,6 +81,8 @@ def _absent_restore_value(field: str) -> Any:
         return {}
     if field == "subtasks":
         return {}
+    if field == "subtaskList":
+        return []
     if field == "title":
         raise LivePreconditionError("cannot safely restore a structurally absent task title")
     return None
@@ -100,31 +114,50 @@ def _update_payload(
 
 def _compile_inverse(
     source: ReceiptOperationV1,
-    live: dict[str, Any],
+    live: dict[str, Any] | None,
     *,
     now_ms: int,
 ) -> CompiledMutation:
     if source.action in {"update", "complete"}:
+        assert live is not None
         desired = {
             field: _snapshot_restore_value(field, snapshot)
             for field, snapshot in source.beforeFields.items()
         }
-    elif source.action == "create":
-        desired = {"deletedAt": now_ms}
-    else:
-        deleted_at = source.beforeFields.get("deletedAt", {"present": False})
-        desired = {
-            "deletedAt": _snapshot_restore_value("deletedAt", deleted_at),
-            "restoredAt": now_ms,
-        }
+        return CompiledMutation(
+            operation_id=source.operationId,
+            action=f"revert-{source.action}",
+            target_id=source.targetId,
+            endpoint="doc/update",
+            payload=_update_payload(source.targetId, desired, now_ms=now_ms),
+            desired_fields=desired,
+            before_fields={field: field_snapshot(live, field) for field in desired},
+        )
+    if source.action == "create":
+        assert live is not None
+        return CompiledMutation(
+            operation_id=source.operationId,
+            action="revert-create",
+            target_id=source.targetId,
+            endpoint="doc/delete",
+            payload={"itemId": source.targetId},
+            desired_fields={},
+            before_fields={},
+        )
+    if source.beforeDocument is None:
+        raise PlanSemanticError(
+            f"operation {source.operationId!r} was recorded before Pilot-managed deletion "
+            "snapshots and cannot be safely restored"
+        )
+    restored = _restorable_document(source.beforeDocument)
     return CompiledMutation(
         operation_id=source.operationId,
-        action=f"revert-{source.action}",
+        action="revert-trash",
         target_id=source.targetId,
-        endpoint="doc/update",
-        payload=_update_payload(source.targetId, desired, now_ms=now_ms),
-        desired_fields=desired,
-        before_fields={field: field_snapshot(live, field) for field in desired},
+        endpoint="doc/create",
+        payload=restored,
+        desired_fields={},
+        before_fields={},
     )
 
 
@@ -193,6 +226,7 @@ def preflight_revert(
     history: HistoryStore,
     now_ms: int,
     strict_concurrency: bool = True,
+    progress: Callable[[int, int, str], None] | None = None,
 ) -> RevertPreflight:
     """Resolve a selection and verify every inverse before any write or approval."""
 
@@ -212,44 +246,113 @@ def preflight_revert(
         raise PlanSemanticError(f"operation(s) already reverted or claimed: {details}")
 
     checked: list[RevertOperation] = []
-    for source_operation in selected:
+    total = len(selected)
+    for index, source_operation in enumerate(selected, start=1):
+        if progress is not None:
+            progress(index - 1, total, source_operation.operationId)
         live = client.get_doc(source_operation.targetId)
-        if live is None:
+        identity_document = live
+        if source_operation.action == "trash":
+            if source_operation.beforeDocument is None:
+                raise PlanSemanticError(
+                    f"operation {source_operation.operationId!r} was recorded before "
+                    "Pilot-managed deletion snapshots and cannot be safely restored"
+                )
+            if live is not None:
+                raise LivePreconditionError(
+                    f"operation {source_operation.operationId!r} target is no longer deleted"
+                )
+            identity_document = source_operation.beforeDocument
+        elif live is None:
             raise LivePreconditionError(
                 f"operation {source_operation.operationId!r} target item no longer exists"
             )
-        expected_db = "Tasks" if source_operation.targetType == "task" else "Categories"
-        if live.get("db") != expected_db or (
-            source_operation.targetType == "project" and live.get("type") != "project"
+        assert identity_document is not None
+        expected_db = {
+            "task": "Tasks",
+            "project": "Categories",
+            "recurringTask": "RecurringTasks",
+        }[source_operation.targetType]
+        if (
+            identity_document.get("db") != expected_db
+            or (
+                source_operation.targetType == "project"
+                and identity_document.get("type") != "project"
+            )
+            or (
+                source_operation.targetType == "recurringTask"
+                and identity_document.get("recurringType") != "task"
+            )
         ):
             raise LivePreconditionError(
                 f"operation {source_operation.operationId!r} target is not a live "
                 f"{source_operation.targetType} document"
             )
-        reasons = coupled_task_reasons(live)
-        if reasons:
-            raise LivePreconditionError(
-                f"operation {source_operation.operationId!r} is blocked by coupled behavior: "
-                + ", ".join(reasons)
+        if source_operation.recurrence is not None:
+            recurrence = source_operation.recurrence
+            if (
+                identity_document.get("recurring") is not True
+                or identity_document.get("recurringTaskId") != recurrence.seriesId
+                or identity_document.get("day") != recurrence.scheduledDate
+            ):
+                raise LivePreconditionError(
+                    f"operation {source_operation.operationId!r} recurring occurrence identity "
+                    "changed after apply"
+                )
+            template = client.get_doc(recurrence.seriesId)
+            if (
+                template is None
+                or template.get("db") != "RecurringTasks"
+                or template.get("recurringType") != "task"
+            ):
+                raise LivePreconditionError(
+                    f"operation {source_operation.operationId!r} recurrence series identity "
+                    "changed after apply"
+                )
+        if live is not None:
+            reasons = coupled_task_reasons(
+                live,
+                allow_explicit_recurrence=(
+                    source_operation.recurrence is not None
+                    or source_operation.targetType == "recurringTask"
+                ),
             )
-        if source_operation.action != "trash" and live.get("deletedAt") not in {None, ""}:
-            raise LivePreconditionError(
-                f"operation {source_operation.operationId!r} target is already in Trash"
-            )
-        if not _snapshot_matches(live, source_operation.afterFields):
-            raise LivePreconditionError(
-                f"operation {source_operation.operationId!r} cannot be reverted because "
-                f"applied field(s) changed: {_conflict_details(source_operation, live)}"
-            )
+            if reasons:
+                raise LivePreconditionError(
+                    f"operation {source_operation.operationId!r} is blocked by coupled "
+                    "behavior: " + ", ".join(reasons)
+                )
+            if live.get("deletedAt") not in {None, ""}:
+                raise LivePreconditionError(
+                    f"operation {source_operation.operationId!r} target is already in Trash"
+                )
+            if source_operation.action == "create":
+                if source_operation.afterDocument is None:
+                    raise PlanSemanticError(
+                        f"operation {source_operation.operationId!r} was recorded before exact "
+                        "create snapshots and cannot be safely deleted"
+                    )
+                if live != source_operation.afterDocument:
+                    raise LivePreconditionError(
+                        f"operation {source_operation.operationId!r} cannot be reverted because "
+                        "the created document changed after apply"
+                    )
+            elif not _snapshot_matches(live, source_operation.afterFields):
+                raise LivePreconditionError(
+                    f"operation {source_operation.operationId!r} cannot be reverted because "
+                    f"applied field(s) changed: {_conflict_details(source_operation, live)}"
+                )
         compiled = _compile_inverse(source_operation, live, now_ms=now_ms)
         checked.append(
             RevertOperation(
                 source_operation=source_operation,
                 live_document=live,
                 compiled=compiled,
-                live_revision=_revision_snapshot(live),
+                live_revision=_revision_snapshot(live) if live is not None else {},
             )
         )
+        if progress is not None:
+            progress(index, total, source_operation.operationId)
     return RevertPreflight(
         source_receipt=source,
         source_receipt_path=source_path,
@@ -264,13 +367,26 @@ def recheck_revert_operation(
     client: MutationClient,
     *,
     strict_concurrency: bool,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     current = client.get_doc(checked.compiled.target_id)
+    if checked.source_operation.action == "trash":
+        if current is not None:
+            raise LivePreconditionError(
+                f"operation {checked.source_operation.operationId!r} target was recreated "
+                "after preflight"
+            )
+        return None
     if current is None:
         raise LivePreconditionError(
             f"operation {checked.source_operation.operationId!r} target disappeared after preflight"
         )
-    if not _snapshot_matches(current, checked.source_operation.afterFields):
+    if checked.source_operation.action == "create":
+        if current != checked.source_operation.afterDocument:
+            raise LivePreconditionError(
+                f"operation {checked.source_operation.operationId!r} created document changed "
+                "after preflight"
+            )
+    elif not _snapshot_matches(current, checked.source_operation.afterFields):
         raise LivePreconditionError(
             f"operation {checked.source_operation.operationId!r} applied fields changed after "
             f"preflight: {_conflict_details(checked.source_operation, current)}"
@@ -302,7 +418,16 @@ def _receipt_operations(preflight: RevertPreflight) -> list[ReceiptOperationV1]:
                 action=source.action,
                 targetId=source.targetId,
                 targetType=source.targetType,
-                targetTitle=checked.live_document.get("title"),
+                targetTitle=(
+                    checked.live_document.get("title")
+                    if checked.live_document is not None
+                    else source.targetTitle
+                ),
+                recurrence=(
+                    source.recurrence.model_dump(mode="json")
+                    if source.recurrence is not None
+                    else None
+                ),
                 plannedBefore=planned_before,
                 plannedAfter=planned_after,
                 beforeFields=checked.compiled.before_fields,
@@ -316,8 +441,12 @@ def _receipt_operations(preflight: RevertPreflight) -> list[ReceiptOperationV1]:
     return result
 
 
-def _send_inverse(client: MutationClient, compiled: CompiledMutation) -> None:
-    client.update_doc(compiled.target_id, compiled.payload["setters"])
+def _send_inverse(client: MutationClient, compiled: CompiledMutation) -> Any:
+    if compiled.endpoint == "doc/create":
+        return client.create_doc(compiled.payload)
+    if compiled.endpoint == "doc/delete":
+        return client.delete_doc(compiled.target_id)
+    return client.update_doc(compiled.target_id, compiled.payload["setters"])
 
 
 def _reconcile_or_retry(
@@ -329,7 +458,7 @@ def _reconcile_or_retry(
     last_error: AmbiguousMutationError | None = None
     for attempt in range(MAX_RECONCILED_MUTATION_RETRIES):
         current = client.get_doc(checked.compiled.target_id)
-        if desired_fields_match(current, checked.compiled.desired_fields):
+        if compiled_mutation_matches(current, checked.compiled):
             return (
                 "reverted-after-reconciliation"
                 if attempt == 0
@@ -352,7 +481,7 @@ def _reconcile_or_retry(
             continue
         return "reverted-after-safe-retry"
     current = client.get_doc(checked.compiled.target_id)
-    if desired_fields_match(current, checked.compiled.desired_fields):
+    if compiled_mutation_matches(current, checked.compiled):
         return "reverted-after-reconciled-retry"
     assert last_error is not None
     raise last_error
@@ -391,6 +520,7 @@ def execute_revert(
     strict_concurrency: bool = True,
     now_ms: Callable[[], int] = unix_milliseconds,
     wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    preflight_progress: Callable[[int, int, str], None] | None = None,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> RevertResult:
     """Preflight, approve, journal, reverse-order revert, verify, and finalize."""
@@ -404,6 +534,7 @@ def execute_revert(
         history=history,
         now_ms=now_ms(),
         strict_concurrency=strict_concurrency,
+        progress=preflight_progress,
     )
     if not approve(checked):
         raise UserDeclinedError("revert declined; no Marvin changes were made")
@@ -420,6 +551,8 @@ def execute_revert(
 
     for index, checked_operation in enumerate(checked.operations):
         receipt_operation = handle.receipt.operations[index]
+        if progress is not None:
+            progress(completed_count, total, receipt_operation.operationId)
         receipt_operation.status = "checking"
         receipt_operation.startedAt = rfc3339_utc(wall_clock())
         history.persist(handle)
@@ -434,8 +567,12 @@ def execute_revert(
             history.persist(handle)
             sending_started = True
             outcome = "reverted"
+            resulting_document: dict[str, Any] | None = None
             try:
-                _send_inverse(client, checked_operation.compiled)
+                response = _send_inverse(client, checked_operation.compiled)
+                resulting_document = verified_mutation_response(
+                    response, checked_operation.compiled
+                )
             except AmbiguousMutationError:
                 outcome = _reconcile_or_retry(
                     client,
@@ -445,19 +582,21 @@ def execute_revert(
             receipt_operation.status = "verifying"
             receipt_operation.outcome = outcome
             history.persist(handle)
-            resulting_document = client.get_doc(checked_operation.compiled.target_id)
-            if not desired_fields_match(
-                resulting_document,
-                checked_operation.compiled.desired_fields,
-            ):
+            if resulting_document is None:
+                resulting_document = client.get_doc(checked_operation.compiled.target_id)
+            if not compiled_mutation_matches(resulting_document, checked_operation.compiled):
                 raise RemoteError(
                     f"operation {receipt_operation.operationId!r} did not verify after revert"
                 )
-            assert resulting_document is not None
-            receipt_operation.afterFields = {
-                field: field_snapshot(resulting_document, field)
-                for field in checked_operation.compiled.desired_fields
-            }
+            if resulting_document is None:
+                receipt_operation.afterFields = {}
+            else:
+                receipt_operation.afterFields = {
+                    field: field_snapshot(resulting_document, field)
+                    for field in checked_operation.compiled.desired_fields
+                }
+                if checked_operation.compiled.endpoint == "doc/create":
+                    receipt_operation.afterDocument = deepcopy(resulting_document)
             receipt_operation.status = "reverted"
             receipt_operation.applyIndex = completed_count + 1
             receipt_operation.endedAt = rfc3339_utc(wall_clock())

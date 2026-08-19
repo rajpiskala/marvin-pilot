@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 from marvin_pilot.compiler import CompiledMutation, compile_operation
 from marvin_pilot.errors import LivePreconditionError
-from marvin_pilot.field_registry import FIELD_SPECS, live_field_matches
+from marvin_pilot.field_registry import (
+    FIELD_SPECS,
+    RECURRING_TASK_FIELD_SPECS,
+    live_field_matches,
+    recurring_task_field_matches,
+)
 from marvin_pilot.models.plan_v1 import (
     ChangePlanV1,
     CompleteOperation,
@@ -44,12 +51,16 @@ def _meaningful(value: Any) -> bool:
     return value is not None and value is not False and value != "" and value != [] and value != {}
 
 
-def coupled_task_reasons(document: dict[str, Any]) -> list[str]:
+def coupled_task_reasons(
+    document: dict[str, Any], *, allow_explicit_recurrence: bool = False
+) -> list[str]:
     """Return coupled behaviors that make a simple document mutation unsafe in v1."""
 
     reasons: list[str] = []
-    if any(_meaningful(document.get(field)) for field in ("recurring", "echo")):
+    if _meaningful(document.get("echo")):
         reasons.append("recurrence/echo")
+    elif _meaningful(document.get("recurring")) and not allow_explicit_recurrence:
+        reasons.append("recurrence")
     if _meaningful(document.get("isPinned")) or _meaningful(document.get("pinId")):
         reasons.append("pinned-task copying")
     if _meaningful(document.get("isReward")) or _meaningful(document.get("rewardId")):
@@ -78,15 +89,30 @@ def _revision_snapshot(document: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _rfc3339_milliseconds(value: str) -> int:
+    candidate = value[:-1] + "+00:00" if value.endswith("Z") else value
+    return int(datetime.fromisoformat(candidate).timestamp() * 1_000)
+
+
 def _check_existing_preconditions(
     operation: UpdateOperation | TrashOperation | CompleteOperation,
     document: dict[str, Any],
 ) -> None:
-    expected_db = "Tasks" if operation.target.type == "task" else "Categories"
-    if document.get("db") != expected_db or (
-        operation.target.type == "project" and document.get("type") != "project"
+    expected_db = {
+        "task": "Tasks",
+        "project": "Categories",
+        "recurringTask": "RecurringTasks",
+    }[operation.target.type]
+    if (
+        document.get("db") != expected_db
+        or (operation.target.type == "project" and document.get("type") != "project")
+        or (operation.target.type == "recurringTask" and document.get("recurringType") != "task")
     ):
-        document_kind = "a non-Task" if operation.target.type == "task" else "not a live project"
+        document_kind = {
+            "task": "a non-Task",
+            "project": "not a live project",
+            "recurringTask": "not a live recurring-task series",
+        }[operation.target.type]
         raise LivePreconditionError(
             f"operation {operation.operationId!r} target is {document_kind} document"
         )
@@ -103,7 +129,13 @@ def _check_existing_preconditions(
             f"operation {operation.operationId!r} updatedAt is stale: expected "
             f"{operation.expectedUpdatedAt}, found {document.get('updatedAt')!r}"
         )
-    reasons = coupled_task_reasons(document)
+    explicit_occurrence = (
+        operation.target.type == "task" and operation.target.recurrence is not None
+    )
+    reasons = coupled_task_reasons(
+        document,
+        allow_explicit_recurrence=explicit_occurrence or operation.target.type == "recurringTask",
+    )
     if reasons:
         raise LivePreconditionError(
             f"operation {operation.operationId!r} is blocked by coupled behavior: "
@@ -121,12 +153,49 @@ def _check_existing_preconditions(
         raise LivePreconditionError(
             f"operation {operation.operationId!r} targets an item already completed"
         )
+    existing_completed_at = (
+        operation.display.existingCompletedAt if operation.display is not None else None
+    )
+    if (
+        isinstance(operation, UpdateOperation)
+        and operation.target.type == "task"
+        and document.get("done") is True
+        and existing_completed_at is None
+    ):
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} targets a completed task; add its exact "
+            "display.existingCompletedAt so review shows that the task stays completed"
+        )
+    if existing_completed_at is not None:
+        if document.get("done") is not True:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} declares an existing completion, but the "
+                "live task is open"
+            )
+        live_done_at = document.get("doneAt")
+        if isinstance(live_done_at, bool) or not isinstance(live_done_at, (int, float)):
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} declares an existing completion, but the "
+                "live task has no exact doneAt timestamp"
+            )
+        expected_done_at = _rfc3339_milliseconds(existing_completed_at)
+        if int(live_done_at) != expected_done_at:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} completion timestamp is stale: expected "
+                f"{expected_done_at}, found {live_done_at!r}"
+            )
     if isinstance(operation, UpdateOperation):
         mismatches = []
         before = operation.before.model_dump(exclude_unset=True, mode="json")
         for field, expected in before.items():
-            if not live_field_matches(field, expected, document):
+            if operation.target.type == "recurringTask":
+                matches = recurring_task_field_matches(field, expected, document)
+                spec = RECURRING_TASK_FIELD_SPECS[field]
+                marvin_field = spec.marvin_name or "recurrence cadence"
+            else:
+                matches = live_field_matches(field, expected, document)
                 marvin_field = FIELD_SPECS[field].marvin_name
+            if not matches:
                 mismatches.append(
                     f"{field} expected {expected!r}, live {document.get(marvin_field)!r}"
                 )
@@ -134,6 +203,65 @@ def _check_existing_preconditions(
             raise LivePreconditionError(
                 f"operation {operation.operationId!r} has stale fields: " + "; ".join(mismatches)
             )
+
+
+def _verify_recurrence_identity(
+    operation: Operation,
+    document: dict[str, Any] | None,
+    reader: DocumentReader,
+    cache: dict[str, dict[str, Any] | None],
+) -> None:
+    """Require explicit series/date identity for every generated occurrence mutation."""
+
+    if isinstance(operation, CreateOperation) or operation.target.type != "task":
+        return
+    recurrence = operation.target.recurrence
+    is_recurring = document is not None and (
+        document.get("recurring") is True or _meaningful(document.get("recurringTaskId"))
+    )
+    if is_recurring and recurrence is None:
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} targets a generated recurring occurrence; "
+            "add target.recurrence with the exact series and scheduled date"
+        )
+    if not is_recurring and recurrence is not None:
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} declares an occurrence target, but the live "
+            "task is not recurring"
+        )
+    if recurrence is None or document is None:
+        return
+    if document.get("recurring") is not True:
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} occurrence is missing recurring=true"
+        )
+    if document.get("recurringTaskId") != recurrence.seriesId:
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} recurring series ID is stale: expected "
+            f"{recurrence.seriesId!r}, found {document.get('recurringTaskId')!r}"
+        )
+    if document.get("day") != recurrence.scheduledDate:
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} occurrence date is stale: expected "
+            f"{recurrence.scheduledDate!r}, found {document.get('day')!r}"
+        )
+    if recurrence.seriesId not in cache:
+        cache[recurrence.seriesId] = reader.get_doc(recurrence.seriesId)
+    template = cache[recurrence.seriesId]
+    if (
+        template is None
+        or template.get("db") != "RecurringTasks"
+        or template.get("recurringType") != "task"
+    ):
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} references a missing or non-task recurrence "
+            f"series {recurrence.seriesId!r}"
+        )
+    if template.get("title") != recurrence.seriesTitle:
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} recurrence series title is stale: expected "
+            f"{recurrence.seriesTitle!r}, found {template.get('title')!r}"
+        )
 
 
 def _reference_hints(
@@ -279,7 +407,10 @@ def _verify_subtask_sources(
     cache: dict[str, dict[str, Any] | None],
     planned_creates: dict[str, CreateOperation],
 ) -> None:
-    if not isinstance(operation, (UpdateOperation, CreateOperation)):
+    if (
+        not isinstance(operation, (UpdateOperation, CreateOperation))
+        or operation.target.type == "recurringTask"
+    ):
         return
     if "subtasks" not in operation.after.model_fields_set or operation.after.subtasks is None:
         return
@@ -383,6 +514,7 @@ def preflight_plan(
     *,
     now_ms: int,
     strict_concurrency: bool = True,
+    progress: Callable[[int, int, str], None] | None = None,
 ) -> PreflightResult:
     """Read and validate every target/reference, then compile every operation."""
 
@@ -394,7 +526,10 @@ def preflight_plan(
         if isinstance(operation, CreateOperation)
     }
     checked: list[PreflightOperation] = []
-    for operation in plan.operations:
+    total = len(plan.operations)
+    for index, operation in enumerate(plan.operations, start=1):
+        if progress is not None:
+            progress(index - 1, total, operation.operationId)
         target_id = operation.target.id
         if target_id not in cache:
             cache[target_id] = reader.get_doc(target_id)
@@ -410,8 +545,11 @@ def preflight_plan(
                 raise LivePreconditionError(
                     f"operation {operation.operationId!r} target item does not exist"
                 )
+            _verify_recurrence_identity(operation, live, reader, cache)
             _check_existing_preconditions(operation, live)
             revision = _revision_snapshot(live)
+        if isinstance(operation, CreateOperation):
+            _verify_recurrence_identity(operation, live, reader, cache)
         _verify_references(operation, reader, cache, metadata_cache, planned_creates)
         _verify_subtask_sources(operation, reader, cache, planned_creates)
         _verify_project_parent_hierarchy(operation, reader, cache, planned_creates)
@@ -423,6 +561,8 @@ def preflight_plan(
                 live_revision=revision,
             )
         )
+        if progress is not None:
+            progress(index, total, operation.operationId)
     return PreflightResult(
         plan=plan,
         operations=tuple(checked),

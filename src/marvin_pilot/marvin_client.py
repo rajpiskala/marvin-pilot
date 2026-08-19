@@ -235,7 +235,10 @@ class MarvinClient:
         if response.status_code == 404:
             return None
         document = self._json_value(response, required_object=True)
-        if document.get("error") == "not_found" and document.get("reason") == "missing":
+        if document.get("error") == "not_found" and document.get("reason") in {
+            "missing",
+            "deleted",
+        }:
             return None
         if "error" in document:
             error = str(document.get("error", "unknown"))[:100]
@@ -266,7 +269,18 @@ class MarvinClient:
         return self._json_value(response, required_object=False)
 
     def create_doc(self, document: dict[str, Any]) -> Any:
-        """Create exactly one reviewed task or project document."""
+        """Create exactly one reviewed task, project, or recurrence-template document."""
 
         response = self._request("POST", "doc/create", payload=document, mutation=True)
+        return self._json_value(response, required_object=False)
+
+    def delete_doc(self, item_id: str) -> Any:
+        """Delete one document through Marvin's API-level deletion endpoint."""
+
+        response = self._request(
+            "POST",
+            "doc/delete",
+            payload={"itemId": item_id},
+            mutation=True,
+        )
         return self._json_value(response, required_object=False)

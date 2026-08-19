@@ -145,6 +145,29 @@ def test_display_metadata_cannot_describe_an_absent_lifecycle_side(
         parse_plan_bytes(encode(example_plan_dict))
 
 
+def test_existing_completion_display_metadata_is_typed_and_scoped(
+    example_plan_dict: dict,
+) -> None:
+    operation = example_plan_dict["operations"][0]
+    operation["display"]["existingCompletedAt"] = "2026-07-23T18:30:00-07:00"
+    plan = parse_plan_bytes(encode(example_plan_dict))
+    assert plan.operations[0].display.existingCompletedAt == "2026-07-23T18:30:00-07:00"
+
+    operation["display"]["existingCompletedAt"] = None
+    with pytest.raises(PlanSemanticError, match=r"has a null display\.existingCompletedAt"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+    operation["display"]["existingCompletedAt"] = "2026-07-23"
+    with pytest.raises(PlanSyntaxError, match="must include an explicit UTC offset"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+    create = example_plan_dict["operations"][2]
+    create["display"]["existingCompletedAt"] = "2026-07-23T18:30:00-07:00"
+    operation["display"].pop("existingCompletedAt")
+    with pytest.raises(PlanSemanticError, match="only for update or trash"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
 def test_canonical_digest_is_independent_of_json_key_order() -> None:
     forward = parse_plan_bytes(encode(EXAMPLE_PLAN))
     reversed_top_level = dict(reversed(list(EXAMPLE_PLAN.items())))

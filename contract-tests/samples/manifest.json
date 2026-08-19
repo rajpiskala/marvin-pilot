@@ -17,7 +17,7 @@
   "schemas": {
     "changePlan": {
       "file": "change-plan-v1.schema.json",
-      "sha256": "ca5ca685d59a25b8f97316b6e90be50eff8da47a5cd41235a3227adb9e8dd179"
+      "sha256": "5ed4cd61f166024fe4218db927926be92a0f228c46ffc5278107e201b9909d13"
     },
     "accountConfig": {
       "file": "account-config-v1.schema.json",
@@ -38,7 +38,7 @@
         "G02",
         "G03"
       ],
-      "notes": "Run first. Revert this receipt last to move every remaining fixture to Trash."
+      "notes": "Run first. Revert this receipt last to delete every remaining created fixture."
     },
     {
       "caseId": "negative-wrong-title",
@@ -247,7 +247,7 @@
     {
       "caseId": "trash",
       "file": "11-trash.json",
-      "sha256": "db017655ffaf6c82050d12e07cea2a644473b16fd87a15b4e105b1e52c9c659e",
+      "sha256": "a7eaa67cc0b27eb233976c9015eec119e2166b9600f0f8e43509052398146020",
       "expectedOfflineValidation": "valid",
       "expectedLiveResult": "apply succeeds; browser shows Trash; revert restores",
       "matrix": [
@@ -323,7 +323,7 @@
       "file": "17-scheduled-rich-create.json",
       "sha256": "184a5985cac3cd39dc88ea5c3b4515ed790d76dfd0ae3b991079b98b54b56fe3",
       "expectedOfflineValidation": "valid",
-      "expectedLiveResult": "apply succeeds; revert moves created task to UI Trash",
+      "expectedLiveResult": "apply succeeds; revert deletes the unchanged created task",
       "matrix": [
         "C03",
         "C04",
@@ -354,6 +354,6 @@
     "Run 07/08 conflict and 09/10 unrelated-field workflows exactly as their notes say.",
     "Apply 11, assert 12/13 fail, then revert 11 to verify restore.",
     "Run and clean up 14-18; use repeated --only IDs for the selective-revert case.",
-    "Finally revert receipt 01 so all remaining base fixtures move to Marvin Trash."
+    "Finally revert receipt 01 so all remaining base fixtures are deleted."
   ]
 }
