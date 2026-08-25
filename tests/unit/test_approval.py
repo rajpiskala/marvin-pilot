@@ -5,7 +5,11 @@ from io import StringIO
 import pytest
 
 import marvin_pilot.approval as approval
-from marvin_pilot.approval import confirm_apply, confirm_revert
+from marvin_pilot.approval import (
+    confirm_apply,
+    confirm_revert,
+    require_controlling_terminal,
+)
 from marvin_pilot.errors import PlanSyntaxError
 
 
@@ -39,3 +43,38 @@ def test_revert_uses_an_explicit_revert_prompt() -> None:
     output = StringIO()
     assert confirm_revert(2, input_stream=StringIO("yes\n"), output_stream=output)
     assert output.getvalue() == "Revert these 2 operations? [y/N] "
+
+
+def test_terminal_requirement_accepts_standard_input_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Tty:
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr(approval.sys, "stdin", Tty())
+    monkeypatch.setattr(
+        approval,
+        "_open_controlling_terminal",
+        lambda _stack: pytest.fail("a TTY stdin should be sufficient"),
+    )
+    require_controlling_terminal()
+
+
+def test_terminal_requirement_checks_platform_terminal_for_redirected_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NonTty:
+        def isatty(self) -> bool:
+            return False
+
+    checked: list[bool] = []
+
+    def open_terminal(_stack):
+        checked.append(True)
+        return StringIO(), StringIO()
+
+    monkeypatch.setattr(approval.sys, "stdin", NonTty())
+    monkeypatch.setattr(approval, "_open_controlling_terminal", open_terminal)
+    require_controlling_terminal()
+    assert checked == [True]

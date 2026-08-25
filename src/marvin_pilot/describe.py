@@ -52,7 +52,7 @@ def _format_ref(value: dict[str, Any]) -> str:
     return f"{title} [{value['id']}]" if title else f"[{value['id']}]"
 
 
-def _format_value(field: str, value: Any) -> str:
+def format_plan_value(field: str, value: Any) -> str:
     if value is None:
         return "none"
     if field == "parent":
@@ -102,13 +102,13 @@ def render_plan_description(plan: ChangePlanV1) -> str:
             after = operation.after.model_dump(exclude_unset=True, mode="json")
             for field, new_value in after.items():
                 lines.append(
-                    f"   {FIELD_LABELS[field]}: {_format_value(field, before[field])} -> "
-                    f"{_format_value(field, new_value)}"
+                    f"   {FIELD_LABELS[field]}: {format_plan_value(field, before[field])} -> "
+                    f"{format_plan_value(field, new_value)}"
                 )
         elif isinstance(operation, CreateOperation):
             after = operation.after.model_dump(exclude_unset=True, mode="json")
             for field, new_value in after.items():
-                lines.append(f"   {FIELD_LABELS[field]}: {_format_value(field, new_value)}")
+                lines.append(f"   {FIELD_LABELS[field]}: {format_plan_value(field, new_value)}")
         elif isinstance(operation, CompleteOperation):
             lines.append(f"   completed at: {operation.completedAt}")
 

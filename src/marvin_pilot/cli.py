@@ -29,7 +29,11 @@ from rich.table import Table
 from rich.text import Text
 
 from marvin_pilot import __version__
-from marvin_pilot.approval import confirm_apply, confirm_revert
+from marvin_pilot.approval import (
+    confirm_apply,
+    confirm_revert,
+    require_controlling_terminal,
+)
 from marvin_pilot.backup_context import project_context_json
 from marvin_pilot.config import (
     AppConfig,
@@ -70,6 +74,7 @@ from marvin_pilot.plan_io import MAX_PLAN_BYTES, load_plan, parse_plan_bytes, pl
 from marvin_pilot.preflight import preflight_plan
 from marvin_pilot.reverter import execute_revert
 from marvin_pilot.schema import plan_schema_json
+from marvin_pilot.terminal_review import render_live_preflight_terminal
 from marvin_pilot.visualizer_server import VisualizerServer
 
 SAFETY_CONTRACT = """This CLI separates AI-authored proposals from human-authorized
@@ -550,10 +555,26 @@ def apply_command(
             help="Read the secret from this file; the token itself is never a CLI argument.",
         ),
     ] = None,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            "-y",
+            help=(
+                "Skip the final [y/N] prompt after successful preflight; an interactive "
+                "controlling terminal is still required."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Human-review, apply, verify, and durably journal a complete plan."""
 
     plan, raw = _read_plan_argument_with_bytes(plan_path)
+    if yes:
+        try:
+            require_controlling_terminal()
+        except MarvinPilotError as exc:
+            _fail(exc)
     config = _load_config_or_fail()
     if len(plan.operations) > config.max_operations:
         _fail(
@@ -570,20 +591,41 @@ def apply_command(
     def approve(result) -> bool:
         nonlocal apply_display
         preflight_display.stop()
-        typer.echo(render_live_preflight(result), nl=False)
-        typer.echo(
-            "Apply network path: live recheck → mutation/response verification "
-            f"(minimum {config.minimum_request_interval_ms} ms between requests)."
+        console.print(render_live_preflight_terminal(result, encoding=console.encoding or "utf-8"))
+        execution_notes = Text()
+        execution_notes.append("Network path  ", style="bold bright_cyan")
+        execution_notes.append(
+            "live recheck -> mutation/response verification "
+            f"(minimum {config.minimum_request_interval_ms} ms between requests)"
         )
-        if any(operation.operation.action == "trash" for operation in result.operations):
-            typer.echo(
+        has_trash = any(operation.operation.action == "trash" for operation in result.operations)
+        if has_trash:
+            execution_notes.append("\nTRASH safety  ", style="bold bright_red")
+            execution_notes.append(
                 "Trash recovery: Pilot will delete each document through Marvin's API after "
                 "durably storing its full recovery snapshot. It will not appear in Marvin's "
                 "native Trash; keep the receipt to revert it."
             )
         if len(result.operations) >= config.large_plan_warning_operations:
-            typer.echo(f"Large plan: {len(result.operations)} operations will run sequentially.")
-        approved = confirm_apply(len(result.operations))
+            execution_notes.append("\nLarge plan  ", style="bold bright_yellow")
+            execution_notes.append(f"{len(result.operations)} operations will run sequentially.")
+        console.print(
+            Panel(
+                execution_notes,
+                title="EXECUTION DETAILS",
+                border_style="bright_yellow",
+                box=box.ASCII,
+                padding=(1, 2),
+            )
+        )
+        if yes:
+            console.print(
+                "[bold bright_yellow]PROMPT SKIPPED[/] "
+                "Explicit --yes/-y supplied in an interactive terminal."
+            )
+            approved = True
+        else:
+            approved = confirm_apply(len(result.operations))
         if approved:
             apply_display = _OperationProgress("Apply", len(result.operations))
             apply_display.start()
@@ -614,8 +656,14 @@ def apply_command(
         if apply_display is not None:
             apply_display.stop()
         client.close()
-    typer.echo(f"Applied {len(result.receipt.operations)} operation(s).")
-    typer.echo(f"Receipt: {result.receipt_path}")
+    applied_text = Text()
+    applied_text.append("Applied:", style="bold bright_green")
+    applied_text.append(f" {len(result.receipt.operations)} operation(s)")
+    console.print(applied_text)
+    receipt_text = Text()
+    receipt_text.append("Receipt:", style="bold bright_cyan")
+    receipt_text.append(f" {result.receipt_path}")
+    console.print(receipt_text, soft_wrap=True)
 
 
 @app.command("revert")

@@ -681,7 +681,7 @@ def test_apply_enforces_configured_operation_limit_before_credentials(
     assert "configured maximum is 1" in result.stderr
 
 
-def test_apply_has_no_inline_token_or_noninteractive_bypass(
+def test_apply_rejects_inline_token_and_documents_reviewed_yes(
     isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = isolated_app_dirs / "plan.json"
@@ -692,12 +692,73 @@ def test_apply_has_no_inline_token_or_noninteractive_bypass(
         lambda *_args: pytest.fail("invalid options must fail before credentials"),
     )
     inline = runner.invoke(app, ["apply", str(path), "--full-access-key", "secret"])
-    bypass = runner.invoke(app, ["apply", str(path), "--yes"])
     help_result = runner.invoke(app, ["apply", "--help"])
     assert inline.exit_code == 2
-    assert bypass.exit_code == 2
     assert "--full-access-key-file" in help_result.stdout
-    assert "--yes" not in help_result.stdout
+    assert "--yes" in help_result.stdout
+    assert "-y" in help_result.stdout
+    assert "interactive controlling terminal" in " ".join(help_result.stdout.split())
+
+
+def test_apply_yes_skips_prompt_after_terminal_and_preflight_checks(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, one_operation_plan())
+    client = CliMarvinClient(
+        {
+            "_id": "task-wash-dishes-id",
+            "_rev": "1-task",
+            "db": "Tasks",
+            "title": "Wash the dishes",
+            "day": "2026-08-08",
+            "firstScheduled": "2026-01-01",
+            "updatedAt": 1,
+        }
+    )
+    terminal_checks: list[bool] = []
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    monkeypatch.setattr(
+        cli_module,
+        "require_controlling_terminal",
+        lambda: terminal_checks.append(True),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "confirm_apply",
+        lambda _count: pytest.fail("--yes must skip the approval question"),
+    )
+
+    result = runner.invoke(app, ["apply", str(path), "--yes"])
+
+    assert result.exit_code == 0
+    assert terminal_checks == [True]
+    assert "PROMPT SKIPPED" in result.stdout
+    assert "Explicit --yes/-y supplied" in result.stdout
+    assert client.document["day"] == "2026-08-09"
+    assert client.mutations == 1
+
+
+def test_apply_yes_rejects_missing_controlling_terminal_before_credentials(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, one_operation_plan())
+
+    def reject_terminal() -> None:
+        raise cli_module.PlanSyntaxError(
+            "apply/revert requires an interactive controlling terminal"
+        )
+
+    monkeypatch.setattr(cli_module, "require_controlling_terminal", reject_terminal)
+    monkeypatch.setattr(
+        cli_module,
+        "_client_from_config",
+        lambda *_args: pytest.fail("terminal check must fail before credentials"),
+    )
+    result = runner.invoke(app, ["apply", str(path), "-y"])
+    assert result.exit_code == 2
+    assert "requires an interactive controlling terminal" in result.stderr
 
 
 def test_revert_accepts_repeated_only_and_has_no_unsafe_bypasses(

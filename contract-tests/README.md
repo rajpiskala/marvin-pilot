@@ -107,8 +107,9 @@ marvin-pilot revert path/to/applied-14-receipt.json \
   --only ordered-create-3
 ```
 
-Never automate answers to the approval prompt in a public test runner. The prompt is part of the
-contract being tested.
+Never automate answers to the approval prompt or add `apply --yes` to a public test runner. The
+human terminal boundary is part of the contract being tested; `--yes` is only a convenience after
+a person has reviewed that specific plan.
 
 ### Recurrence contract extension
 

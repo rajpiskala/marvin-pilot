@@ -23,10 +23,17 @@ def _open_controlling_terminal(stack: ExitStack) -> tuple[TextIO, TextIO]:
                 open("/dev/tty", "w", encoding="utf-8")  # noqa: SIM115
             )
     except OSError as exc:
-        raise PlanSyntaxError(
-            "apply/revert requires an interactive controlling terminal; no --yes mode exists"
-        ) from exc
+        raise PlanSyntaxError("apply/revert requires an interactive controlling terminal") from exc
     return input_stream, output_stream
+
+
+def require_controlling_terminal() -> None:
+    """Require a human-owned terminal without asking an approval question."""
+
+    if sys.stdin.isatty():
+        return
+    with ExitStack() as stack:
+        _open_controlling_terminal(stack)
 
 
 def _confirm(

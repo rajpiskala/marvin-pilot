@@ -164,7 +164,10 @@ marvin-pilot config
 * `prompt` — enter the token at every live command
 * `file` — read it from a carefully permissioned local file
 
-Marvin Pilot intentionally provides no token environment variable, `--full-access-key VALUE`, `--yes`, or non-interactive mutation mode.
+Marvin Pilot intentionally provides no token environment variable, `--full-access-key VALUE`, or
+fully non-interactive mutation mode. `apply --yes` is a reviewed power-user shortcut: it skips only
+the final approval question, after live preflight, and still refuses to run without an interactive
+controlling terminal.
 
 ## Your first plan
 
@@ -190,9 +193,27 @@ When the plan looks correct:
 marvin-pilot apply plans/first-plan.json
 ```
 
-Marvin Pilot shows a compact preflight progress bar with the current operation ID, presents the
-reviewed operations, and asks once for confirmation before making changes. Apply and revert use a
-separate progress bar, so their elapsed time and ETA cover only that phase instead of including the
+Marvin Pilot shows a compact preflight progress bar with the current operation ID, then presents a
+color-enhanced terminal review. Every operation has a textual `CREATE`, `UPDATE`, `COMPLETE`, or
+`TRASH` label; a distinct task, project, recurring-series, or occurrence marker; target and
+operation IDs; Marvin hierarchy; and an exact Now/After field table. Marvin emoji and `#RRGGBB`
+metadata are used when supplied by the plan or live document. Color chips automatically choose
+black or white text for WCAG contrast, and textual labels plus encoding-safe fallbacks keep all
+meaning available in monochrome, redirected, and legacy Windows terminals.
+
+By default, `apply` asks once for confirmation before making changes. If you have already reviewed
+the complete plan and want the faster daily workflow, use:
+
+```console
+marvin-pilot apply plans/first-plan.json --yes
+# short form
+marvin-pilot apply plans/first-plan.json -y
+```
+
+`--yes` never skips parsing, limits, live preflight, concurrency checks, receipt journaling, API
+verification, or the interactive-terminal requirement. It only skips the final `[y/N]` keystroke.
+`revert` deliberately continues to require its explicit prompt. Apply and revert use a separate
+progress bar, so their elapsed time and ETA cover only that phase instead of including the
 preflight wait.
 
 The default client starts requests at least 750 ms apart. A normal operation needs one live
@@ -367,7 +388,9 @@ The intended boundary is simple:
 
 **Human:** review plans, run `apply`, run `revert`.
 
-`apply` and `revert` require an interactive controlling terminal and default to **No**.
+`apply` and `revert` require an interactive controlling terminal and default to **No**. A human may
+opt into `apply --yes` after reviewing a plan; it skips the final keystroke but not the terminal
+requirement or any safety check. Revert has no equivalent bypass.
 
 The full-access credential is retrieved only when a live command needs it and is never written into plans or receipts.
 
