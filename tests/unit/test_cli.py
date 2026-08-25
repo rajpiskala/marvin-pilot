@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
 import marvin_pilot.cli as cli_module
@@ -13,12 +15,14 @@ from marvin_pilot.cli import app
 from marvin_pilot.errors import CredentialError, RemoteError
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.field_registry import FIELD_SPECS
+from marvin_pilot.marvin_client import ConnectionCheck
 
 runner = CliRunner()
 
 
 class CliMarvinClient:
     api_base_host = "https://marvin.test"
+    api_base_url = "https://marvin.test/api"
 
     def __init__(self, document: dict) -> None:
         self.document = copy.deepcopy(document)
@@ -26,8 +30,16 @@ class CliMarvinClient:
         self.mutations = 0
         self.connection_checks = 0
 
-    def check_connection(self) -> None:
+    def check_connection(self) -> ConnectionCheck:
         self.connection_checks += 1
+        return ConnectionCheck(
+            account_email="pilot@example.com",
+            account_user_id="123456",
+            method="GET",
+            request_url="https://marvin.test/api/me",
+            status_code=200,
+            reason_phrase="OK",
+        )
 
     def get_doc(self, item_id: str):
         if self.document.get("_id") == item_id:
@@ -234,17 +246,22 @@ def test_doctor_checks_full_access_credential_without_mutation(
         seen["key_file"] = supplied_key_file
         return client
 
-    monkeypatch.setattr(cli_module, "_client_from_config", client_from_config)
+    monkeypatch.setattr(cli_module, "_build_client", client_from_config)
     result = runner.invoke(
         app,
         ["doctor", "--full-access-key-file", str(key_file)],
     )
 
     assert result.exit_code == 0
-    assert "Marvin Pilot doctor" in result.stdout
-    assert "Configuration loaded (credential mode: keyring)" in result.stdout
-    assert "Full-access credential loaded" in result.stdout
-    assert "Amazing Marvin accepted the credential at https://marvin.test" in result.stdout
+    assert "Marvin Pilot Doctor" in result.stdout
+    assert "Configuration" in result.stdout
+    assert "keyring credential mode" in result.stdout
+    assert "Full-access token loaded securely" in result.stdout
+    assert "pilot@example.com" in result.stdout
+    assert "123456" in result.stdout
+    assert "GET https://marvin.test/api/me" in result.stdout
+    assert "200 OK" in result.stdout
+    assert "All checks passed" in result.stdout
     assert "no Marvin data was changed" in result.stdout
     assert seen == {"mode": "keyring", "key_file": key_file}
     assert client.connection_checks == 1
@@ -253,17 +270,35 @@ def test_doctor_checks_full_access_credential_without_mutation(
 
 
 @pytest.mark.parametrize(
-    ("error", "exit_code", "message"),
+    ("error", "exit_code", "http_description", "message"),
     [
         (
-            CredentialError("Amazing Marvin rejected the full-access credential (HTTP 401)"),
+            CredentialError(
+                "Amazing Marvin rejected the full-access credential (HTTP 401)",
+                http_status_code=401,
+            ),
             4,
-            "Amazing Marvin rejected the full-access credential (HTTP 401)",
+            "401 Unauthorized",
+            "Amazing Marvin rejected",
         ),
         (
             RemoteError("GET doc timed out"),
             8,
+            "No HTTP response",
             "GET doc timed out",
+        ),
+        (RemoteError("missing", http_status_code=404), 8, "404 Not Found", "missing"),
+        (
+            RemoteError("rate limited", http_status_code=429),
+            8,
+            "429 Too Many Requests",
+            "rate limited",
+        ),
+        (
+            RemoteError("server failed", http_status_code=500),
+            8,
+            "500 Internal Server Error",
+            "server failed",
         ),
     ],
 )
@@ -272,21 +307,62 @@ def test_doctor_reports_connection_failure_and_closes_client(
     monkeypatch: pytest.MonkeyPatch,
     error: Exception,
     exit_code: int,
+    http_description: str,
     message: str,
 ) -> None:
     class RejectingClient(CliMarvinClient):
-        def check_connection(self) -> None:
+        def check_connection(self) -> ConnectionCheck:
             raise error
 
     client = RejectingClient({})
-    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    monkeypatch.setattr(cli_module, "_build_client", lambda *_args: client)
     result = runner.invoke(app, ["doctor"])
 
     assert result.exit_code == exit_code
-    assert "[failed] Amazing Marvin connection check" in result.stderr
+    assert "Doctor found a problem" in result.stderr
+    assert http_description in result.stderr
     assert message in result.stderr
+    assert "no Marvin data was changed" in result.stderr
     assert client.mutations == 0
     assert client.closed is True
+
+
+def test_doctor_report_uses_terminal_colors() -> None:
+    output = io.StringIO()
+    color_console = Console(
+        file=output,
+        force_terminal=True,
+        color_system="standard",
+        width=100,
+    )
+    cli_module._render_doctor_report(
+        [("ok", "HTTP status", "200 OK"), ("warn", "Retry", "429 Too Many Requests")],
+        success=True,
+        target_console=color_console,
+    )
+
+    rendered = output.getvalue()
+    assert "\x1b[" in rendered
+    assert "200 OK" in rendered
+    assert "429 Too Many Requests" in rendered
+
+
+def test_doctor_report_is_cp1252_safe_for_legacy_windows() -> None:
+    output = io.BytesIO()
+    text_output = io.TextIOWrapper(output, encoding="cp1252", errors="strict")
+    legacy_console = Console(file=text_output, force_terminal=False, width=100)
+
+    cli_module._render_doctor_report(
+        [("ok", "Account", "pilot@example.com"), ("fail", "HTTP status", "500 Error")],
+        success=False,
+        target_console=legacy_console,
+    )
+    text_output.flush()
+
+    rendered = output.getvalue().decode("cp1252")
+    assert "PASS" in rendered
+    assert "FAIL" in rendered
+    assert "Marvin Pilot Doctor" in rendered
 
 
 def test_schema_command_outputs_json() -> None:

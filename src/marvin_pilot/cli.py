@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import webbrowser
 from datetime import UTC, date, datetime
+from http import HTTPStatus
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID, uuid4
 
 import typer
+from rich import box
 from rich.console import Console
+from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -21,6 +25,8 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
+from rich.table import Table
+from rich.text import Text
 
 from marvin_pilot import __version__
 from marvin_pilot.approval import confirm_apply, confirm_revert
@@ -248,19 +254,23 @@ def _credential_warning(message: str) -> None:
     error_console.print(f"Warning: {message}", markup=False)
 
 
+def _build_client(config: AppConfig, key_file: Path | None) -> MarvinClient:
+    token = load_full_access_token(
+        config,
+        key_file_override=key_file,
+        warn=_credential_warning,
+    )
+    return MarvinClient(
+        token,
+        api_base_url=config.api_base_url,
+        timeout_seconds=float(config.request_timeout_seconds),
+        minimum_request_interval_ms=config.minimum_request_interval_ms,
+    )
+
+
 def _client_from_config(config: AppConfig, key_file: Path | None) -> MarvinClient:
     try:
-        token = load_full_access_token(
-            config,
-            key_file_override=key_file,
-            warn=_credential_warning,
-        )
-        return MarvinClient(
-            token,
-            api_base_url=config.api_base_url,
-            timeout_seconds=float(config.request_timeout_seconds),
-            minimum_request_interval_ms=config.minimum_request_interval_ms,
-        )
+        return _build_client(config, key_file)
     except MarvinPilotError as exc:
         _fail(exc)
 
@@ -292,6 +302,72 @@ def _resolve_revert_source(store: HistoryStore, path: Path):
     return matches[0]
 
 
+def _doctor_http_description(status_code: int | None, reason_phrase: str = "") -> str:
+    if status_code is None:
+        return "No HTTP response"
+    if not reason_phrase:
+        try:
+            reason_phrase = HTTPStatus(status_code).phrase
+        except ValueError:
+            reason_phrase = "Unknown status"
+    return f"{status_code} {reason_phrase}"
+
+
+def _doctor_http_state(status_code: int | None) -> str:
+    if status_code is not None and 200 <= status_code < 300:
+        return "ok"
+    if status_code == 429 or (status_code is not None and 300 <= status_code < 400):
+        return "warn"
+    return "fail"
+
+
+def _doctor_elapsed(seconds: float) -> str:
+    if seconds < 1:
+        return f"{seconds * 1_000:.0f} ms"
+    return f"{seconds:.2f} s"
+
+
+def _render_doctor_report(
+    rows: list[tuple[str, str, str]],
+    *,
+    success: bool,
+    target_console: Console,
+) -> None:
+    styles = {
+        "ok": ("PASS", "bold green"),
+        "warn": ("WARN", "bold yellow"),
+        "fail": ("FAIL", "bold red"),
+        "info": ("INFO", "cyan"),
+    }
+    table = Table.grid(padding=(0, 2))
+    table.add_column(width=4)
+    table.add_column(style="bold")
+    table.add_column()
+    for state, label, detail in rows:
+        symbol, style = styles[state]
+        table.add_row(
+            Text(symbol, style=style),
+            Text(label),
+            Text(detail, style=style),
+        )
+    result_style = "bold green" if success else "bold red"
+    result = "All checks passed" if success else "Doctor found a problem"
+    table.add_row(
+        Text("PASS" if success else "FAIL", style=result_style),
+        Text("Result"),
+        Text(result, style=result_style),
+    )
+    target_console.print(
+        Panel.fit(
+            table,
+            title=Text("Marvin Pilot Doctor", style="bold cyan"),
+            border_style="green" if success else "red",
+            box=box.ASCII,
+            padding=(1, 2),
+        )
+    )
+
+
 @app.command("doctor")
 def doctor_command(
     full_access_key_file: Annotated[
@@ -302,22 +378,75 @@ def doctor_command(
         ),
     ] = None,
 ) -> None:
-    """Check configuration, full-access authentication, and API connectivity without writes."""
+    """Show account identity, HTTP status, and full-access API health without writes."""
 
-    typer.echo("Marvin Pilot doctor")
-    config = _load_config_or_fail()
-    typer.echo(f"[ok] Configuration loaded (credential mode: {config.credential_mode})")
-    client = _client_from_config(config, full_access_key_file)
-    typer.echo("[ok] Full-access credential loaded")
+    rows: list[tuple[str, str, str]] = []
     try:
-        client.check_connection()
+        config = load_config()
     except MarvinPilotError as exc:
-        error_console.print("[failed] Amazing Marvin connection check", markup=False)
-        _fail(exc)
+        rows.extend(
+            [
+                ("fail", "Configuration", str(exc)),
+                ("ok", "Safety", "No Marvin data was changed"),
+            ]
+        )
+        _render_doctor_report(rows, success=False, target_console=error_console)
+        raise typer.Exit(exc.exit_code) from exc
+
+    rows.append(("ok", "Configuration", f"{config.credential_mode} credential mode"))
+    try:
+        client = _build_client(config, full_access_key_file)
+    except MarvinPilotError as exc:
+        rows.extend(
+            [
+                ("fail", "Credential", str(exc)),
+                ("ok", "Safety", "No Marvin data was changed"),
+            ]
+        )
+        _render_doctor_report(rows, success=False, target_console=error_console)
+        raise typer.Exit(exc.exit_code) from exc
+
+    rows.append(("ok", "Credential", "Full-access token loaded securely"))
+    started = time.perf_counter()
+    try:
+        with console.status("[cyan]Contacting Amazing Marvin…[/cyan]", spinner="dots"):
+            check = client.check_connection()
+    except MarvinPilotError as exc:
+        elapsed = time.perf_counter() - started
+        rows.extend(
+            [
+                ("fail", "Request", f"GET {client.api_base_url}/me"),
+                (
+                    _doctor_http_state(exc.http_status_code),
+                    "HTTP status",
+                    _doctor_http_description(exc.http_status_code),
+                ),
+                ("info", "Response time", _doctor_elapsed(elapsed)),
+                ("fail", "Diagnosis", str(exc)),
+                ("ok", "Safety", "Read-only check; no Marvin data was changed"),
+            ]
+        )
+        _render_doctor_report(rows, success=False, target_console=error_console)
+        raise typer.Exit(exc.exit_code) from exc
     finally:
         client.close()
-    typer.echo(f"[ok] Amazing Marvin accepted the credential at {client.api_base_host}")
-    typer.echo("[ok] Read-only check complete; no Marvin data was changed")
+
+    elapsed = time.perf_counter() - started
+    rows.extend(
+        [
+            ("ok", "Account", check.account_email),
+            ("ok", "User ID", check.account_user_id),
+            ("ok", "Request", f"{check.method} {check.request_url}"),
+            (
+                _doctor_http_state(check.status_code),
+                "HTTP status",
+                _doctor_http_description(check.status_code, check.reason_phrase),
+            ),
+            ("info", "Response time", _doctor_elapsed(elapsed)),
+            ("ok", "Safety", "Read-only check; no Marvin data was changed"),
+        ]
+    )
+    _render_doctor_report(rows, success=True, target_console=console)
 
 
 @app.command("validate")

@@ -8,6 +8,10 @@ class MarvinPilotError(Exception):
 
     exit_code = 1
 
+    def __init__(self, message: str, *, http_status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.http_status_code = http_status_code
+
 
 class PlanSyntaxError(MarvinPilotError):
     """The input is not valid strict JSON or does not match the plan schema."""

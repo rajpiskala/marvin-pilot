@@ -12,11 +12,7 @@ from marvin_pilot.errors import (
     CredentialError,
     RemoteError,
 )
-from marvin_pilot.marvin_client import (
-    DOCTOR_SENTINEL_DOCUMENT_ID,
-    MarvinClient,
-    RequestPacer,
-)
+from marvin_pilot.marvin_client import MarvinClient, RequestPacer
 
 
 class FakeTime:
@@ -100,24 +96,52 @@ def test_get_doc_rejects_other_200_error_documents() -> None:
         client.get_doc("task")
 
 
-def test_connection_check_uses_read_only_full_access_sentinel_lookup() -> None:
+@pytest.mark.parametrize(("status", "reason"), [(200, "OK"), (201, "Created")])
+def test_connection_check_returns_account_and_http_metadata_from_read_only_me(
+    status: int, reason: str
+) -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        return json_response(200, {"error": "not_found", "reason": "missing"})
+        return json_response(status, {"email": "pilot@example.com", "userId": "123456"})
 
     with client_for(handler) as client:
-        assert client.check_connection() is None
+        check = client.check_connection()
 
     assert len(seen) == 1
     request = seen[0]
     assert request.method == "GET"
-    assert request.url.path == "/api/doc"
-    assert request.url.params["id"] == DOCTOR_SENTINEL_DOCUMENT_ID
+    assert request.url.path == "/api/me"
+    assert not request.url.params
     assert request.content == b""
     assert request.headers["X-Full-Access-Token"] == "full-secret-token"
     assert "X-API-Token" not in request.headers
+    assert check.account_email == "pilot@example.com"
+    assert check.account_user_id == "123456"
+    assert check.method == "GET"
+    assert check.request_url == "https://marvin.test/api/me"
+    assert check.status_code == status
+    assert check.reason_phrase == reason
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        [],
+        {"userId": "123456"},
+        {"email": "pilot@example.com"},
+        {"email": "bad\nemail", "userId": "123456"},
+        {"email": "pilot@example.com", "userId": "not-numeric"},
+    ],
+)
+def test_connection_check_rejects_malformed_account_identity(value: object) -> None:
+    with (
+        client_for(lambda _request: json_response(200, value)) as client,
+        pytest.raises(RemoteError) as error,
+    ):
+        client.check_connection()
+    assert error.value.http_status_code == 200
 
 
 def test_get_labels_uses_full_access_header_and_validates_metadata() -> None:
@@ -272,9 +296,10 @@ def test_logical_rate_limit_stops_after_bounded_attempts() -> None:
 
     with (
         client_for(handler, pacer=pacer) as client,
-        pytest.raises(RemoteError, match="rate limited after 6 attempts"),
+        pytest.raises(RemoteError, match="rate limited after 6 attempts") as error,
     ):
         client.get_doc("task-a")
+    assert error.value.http_status_code == 200
     assert calls == 6
     assert fake.sleeps == [1.0, 2.0, 4.0, 8.0, 16.0]
 
@@ -318,9 +343,10 @@ def test_mutation_retries_explicit_429_but_reconciles_503() -> None:
 def test_auth_failures_have_stable_credential_error(status: int) -> None:
     with (
         client_for(lambda _request: httpx.Response(status, text="no")) as client,
-        pytest.raises(CredentialError, match=f"HTTP {status}"),
+        pytest.raises(CredentialError, match=f"HTTP {status}") as error,
     ):
         client.get_doc("task")
+    assert error.value.http_status_code == status
 
 
 def test_server_error_redacts_token_and_flattens_response() -> None:
@@ -333,6 +359,7 @@ def test_server_error_redacts_token_and_flattens_response() -> None:
         client.get_doc("task")
     assert token not in str(error.value)
     assert "[REDACTED] second line" in str(error.value)
+    assert error.value.http_status_code == 500
 
 
 def test_oversized_and_malformed_responses_are_rejected() -> None:

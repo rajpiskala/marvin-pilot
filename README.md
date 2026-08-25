@@ -147,10 +147,13 @@ Enter `FULL_ACCESS_TOKEN` at the hidden prompt.
 
 `config show` deliberately never prints the credential.
 
-`doctor` makes one read-only full-access document lookup to verify that the credential can be
-loaded, Marvin is reachable, and Marvin accepts the token. It does not read a real task, write a
-receipt, or change any Marvin data. Authentication failures and network failures use distinct exit
-codes and actionable messages without printing the token.
+`doctor` makes one read-only full-access `/api/me` request to verify that the credential can be
+loaded, Marvin is reachable, and Marvin accepts the token. Its colored report shows the connected
+account email and user ID, request URL, exact HTTP status and reason, response time, and safety
+result. A redirected or captured non-color terminal gets the same report as plain text. It does not
+read a task, write a receipt, or change any Marvin data. Authentication failures and network/API
+failures use distinct exit codes and actionable messages without printing the token; responses such
+as 404, 429, and 500 retain their exact HTTP status in the failure report.
 
 Two stricter modes are also available:
 
@@ -253,7 +256,7 @@ provide a fresh backup; Pilot parses it directly and leaves no expanded copy beh
 
 | Command                               | What it does                               |
 | ------------------------------------- | ------------------------------------------ |
-| `marvin-pilot doctor`                 | Test full-token authentication, read-only  |
+| `marvin-pilot doctor`                 | Show account, HTTP, and full-token health  |
 | `marvin-pilot context project …`      | Extract full project history from a backup |
 | `marvin-pilot validate PLAN`          | Strictly validate a plan offline           |
 | `marvin-pilot describe PLAN`          | Print a human-readable description         |

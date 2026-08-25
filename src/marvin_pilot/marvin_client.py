@@ -7,6 +7,7 @@ import json
 import random
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -25,7 +26,18 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_SAFE_ERROR_CHARS = 500
 MAX_TRANSIENT_ATTEMPTS = 4
 MAX_RATE_LIMIT_ATTEMPTS = 6
-DOCTOR_SENTINEL_DOCUMENT_ID = "marvin-pilot-doctor-credential-check-do-not-create"
+
+
+@dataclass(frozen=True)
+class ConnectionCheck:
+    """Sanitized account and HTTP metadata returned by the read-only doctor probe."""
+
+    account_email: str
+    account_user_id: str
+    method: str
+    request_url: str
+    status_code: int
+    reason_phrase: str
 
 
 class RequestPacer:
@@ -100,6 +112,12 @@ class MarvinClient:
 
         url = self._client.base_url
         return f"{url.scheme}://{url.host}" + (f":{url.port}" if url.port else "")
+
+    @property
+    def api_base_url(self) -> str:
+        """Return the credential-free configured API base URL."""
+
+        return str(self._client.base_url).rstrip("/")
 
     def close(self) -> None:
         self._client.close()
@@ -178,12 +196,14 @@ class MarvinClient:
 
             if len(response.content) > self._max_response_bytes:
                 raise RemoteError(
-                    f"{method} {endpoint} returned more than {self._max_response_bytes} bytes"
+                    f"{method} {endpoint} returned more than {self._max_response_bytes} bytes",
+                    http_status_code=response.status_code,
                 )
             if response.status_code in {401, 403}:
                 raise CredentialError(
                     "Amazing Marvin rejected the full-access credential "
-                    f"(HTTP {response.status_code})"
+                    f"(HTTP {response.status_code})",
+                    http_status_code=response.status_code,
                 )
             if response.status_code in allowed_statuses:
                 return response
@@ -192,9 +212,15 @@ class MarvinClient:
                 if rate_limit_attempts < MAX_RATE_LIMIT_ATTEMPTS:
                     self._pacer.delay(self._retry_after_seconds(response, rate_limit_attempts - 1))
                     continue
+                detail = (
+                    f"HTTP {response.status_code}"
+                    if response.status_code == 429
+                    else "HTTP 200 logical rate-limit response"
+                )
                 raise RemoteError(
                     f"{method} {endpoint} remained rate limited after "
-                    f"{MAX_RATE_LIMIT_ATTEMPTS} attempts"
+                    f"{MAX_RATE_LIMIT_ATTEMPTS} attempts ({detail})",
+                    http_status_code=response.status_code,
                 )
             if not mutation and response.status_code == 503:
                 transient_attempts += 1
@@ -204,13 +230,15 @@ class MarvinClient:
             if mutation and response.status_code >= 500:
                 raise AmbiguousServerResponseError(
                     f"{method} {endpoint} returned HTTP {response.status_code}; "
-                    "remote outcome must be reconciled"
+                    "remote outcome must be reconciled",
+                    http_status_code=response.status_code,
                 )
             if response.status_code >= 400:
                 detail = self._safe_response_text(response)
                 suffix = f": {detail}" if detail else ""
                 raise RemoteError(
-                    f"{method} {endpoint} returned HTTP {response.status_code}{suffix}"
+                    f"{method} {endpoint} returned HTTP {response.status_code}{suffix}",
+                    http_status_code=response.status_code,
                 )
             return response
 
@@ -247,10 +275,67 @@ class MarvinClient:
             raise RemoteError(f"GET doc returned an error document: {error}: {reason}")
         return document
 
-    def check_connection(self) -> None:
-        """Verify full-access authentication with a read-only lookup of a sentinel ID."""
+    def check_connection(self) -> ConnectionCheck:
+        """Verify full-access authentication and return canonical account identity."""
 
-        self.get_doc(DOCTOR_SENTINEL_DOCUMENT_ID)
+        response = self._request("GET", "me")
+        if not response.is_success:
+            raise RemoteError(
+                f"GET me returned unexpected HTTP {response.status_code}",
+                http_status_code=response.status_code,
+            )
+        try:
+            value = response.json()
+        except json.JSONDecodeError as exc:
+            raise RemoteError(
+                "Amazing Marvin returned malformed JSON for the account profile",
+                http_status_code=response.status_code,
+            ) from exc
+        if not isinstance(value, dict):
+            raise RemoteError(
+                "Amazing Marvin returned a non-object account profile",
+                http_status_code=response.status_code,
+            )
+        if "error" in value:
+            error = str(value.get("error", "unknown"))[:100]
+            reason = str(value.get("reason", "unknown"))[:200]
+            raise RemoteError(
+                f"GET me returned an error response: {error}: {reason}",
+                http_status_code=response.status_code,
+            )
+
+        email = value.get("email")
+        user_id = value.get("userId")
+        if (
+            not isinstance(email, str)
+            or not email.strip()
+            or len(email) > 320
+            or any(ord(character) < 32 for character in email)
+        ):
+            raise RemoteError(
+                "Amazing Marvin returned an invalid account email",
+                http_status_code=response.status_code,
+            )
+        if isinstance(user_id, bool) or not isinstance(user_id, (str, int)):
+            raise RemoteError(
+                "Amazing Marvin returned an invalid account user ID",
+                http_status_code=response.status_code,
+            )
+        rendered_user_id = str(user_id)
+        if not rendered_user_id or len(rendered_user_id) > 100 or not rendered_user_id.isdigit():
+            raise RemoteError(
+                "Amazing Marvin returned an invalid account user ID",
+                http_status_code=response.status_code,
+            )
+
+        return ConnectionCheck(
+            account_email=email,
+            account_user_id=rendered_user_id,
+            method=response.request.method,
+            request_url=str(response.request.url),
+            status_code=response.status_code,
+            reason_phrase=response.reason_phrase,
+        )
 
     def get_labels(self) -> list[dict[str, Any]]:
         """Fetch label metadata using the full token's compatible read endpoint."""
