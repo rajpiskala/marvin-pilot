@@ -21,6 +21,7 @@ from marvin_pilot.models.plan_v1 import (
 )
 from marvin_pilot.plan_io import SUPPORTED_SCHEMA_VERSIONS, plan_digest
 from marvin_pilot.visualizer_fields import presentation_for, short_value
+from marvin_pilot.visualizer_hierarchy import HierarchyContext, HierarchyNode
 
 Action = Literal["create", "update", "complete", "trash"]
 NodeType = Literal["inbox", "category", "project", "task", "recurringTask", "unknown"]
@@ -217,6 +218,7 @@ class PlanView:
     summary: str
     digest: str
     source_name: str | None
+    hierarchy_source: Literal["plan", "backup"]
     counts: dict[str, int]
     total_operations: int
     operations: tuple[OperationView, ...]
@@ -415,9 +417,132 @@ def _path_node_view(node: HierarchyPathNode) -> PathNodeView:
     )
 
 
+def _projected_hierarchy(
+    plan: ChangePlanV1,
+    hierarchy: HierarchyContext | None,
+) -> tuple[dict[str, HierarchyNode], dict[str, HierarchyNode]]:
+    """Build plan-aware before/after indexes without changing the reviewed plan."""
+
+    before = dict(hierarchy.nodes) if hierarchy is not None else {}
+    after = dict(before)
+    for operation in plan.operations:
+        if operation.target.type not in {"project", "task"}:
+            continue
+        identifier = operation.target.id
+        if isinstance(operation, CreateOperation):
+            parent_id = _fields_parent_id(operation.after, default="unassigned")
+            after[identifier] = HierarchyNode(
+                id=identifier,
+                type=operation.target.type,
+                title=operation.after.title,
+                parent_id=parent_id,
+                emoji=None,
+                color=None,
+                order=_fields_order(operation.after, default=None),
+            )
+            continue
+
+        existing = before.get(identifier)
+        before_node = HierarchyNode(
+            id=identifier,
+            type=operation.target.type,
+            title=operation.target.title,
+            parent_id=_fields_parent_id(
+                getattr(operation, "before", None),
+                default=existing.parent_id if existing is not None else None,
+            ),
+            emoji=existing.emoji if existing is not None else None,
+            color=existing.color if existing is not None else None,
+            order=_fields_order(
+                getattr(operation, "before", None),
+                default=existing.order if existing is not None else None,
+            ),
+        )
+        before[identifier] = before_node
+        if isinstance(operation, TrashOperation):
+            after.pop(identifier, None)
+            continue
+        after_fields = getattr(operation, "after", None)
+        after[identifier] = replace(
+            before_node,
+            title=_fields_title(after_fields, default=before_node.title),
+            parent_id=_fields_parent_id(after_fields, default=before_node.parent_id),
+            order=_fields_order(after_fields, default=before_node.order),
+        )
+    return before, after
+
+
+def _fields_parent_id(fields: object, *, default: str | None) -> str | None:
+    if fields is None or "parent" not in fields.model_fields_set:
+        return default
+    parent = fields.parent
+    return "unassigned" if parent is None else parent.id
+
+
+def _fields_title(fields: object, *, default: str) -> str:
+    if fields is None or "title" not in fields.model_fields_set:
+        return default
+    return fields.title if isinstance(fields.title, str) else default
+
+
+def _fields_order(fields: object, *, default: int | None) -> int | None:
+    if fields is None:
+        return default
+    for field in ("masterRank", "dayRank"):
+        if field in fields.model_fields_set:
+            value = getattr(fields, field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+    return default
+
+
+def _hierarchy_path(
+    operation: UpdateOperation | CreateOperation | CompleteOperation | TrashOperation,
+    side: Literal["before", "after"],
+    nodes: dict[str, HierarchyNode],
+) -> tuple[PathState, tuple[PathNodeView, ...]] | None:
+    target = nodes.get(operation.target.id)
+    if target is None or target.parent_id is None:
+        return None
+    parent_id = target.parent_id
+    if parent_id == "unassigned":
+        if operation.target.type in {"task", "recurringTask"}:
+            return (
+                "path",
+                (PathNodeView("unassigned", "inbox", "Inbox", None, None, None),),
+            )
+        return "root", ()
+    if parent_id in {"", "root"}:
+        return "root", ()
+
+    reverse_path: list[PathNodeView] = []
+    seen = {operation.target.id}
+    current_id: str | None = parent_id
+    while current_id not in {"", "root", "unassigned"}:
+        if current_id is None or current_id in seen:
+            return None
+        seen.add(current_id)
+        node = nodes.get(current_id)
+        if node is None:
+            return None
+        reverse_path.append(
+            PathNodeView(
+                id=node.id,
+                type=node.type,
+                title=node.title,
+                emoji=node.emoji,
+                color=node.color,
+                order=node.order,
+            )
+        )
+        current_id = node.parent_id
+    return "path", tuple(reversed(reverse_path))
+
+
 def _legacy_path(
     operation: UpdateOperation | CreateOperation | CompleteOperation | TrashOperation,
     side: Literal["before", "after"],
+    nodes: dict[str, HierarchyNode],
 ) -> tuple[PathState, tuple[PathNodeView, ...]]:
     display_title = None
     if operation.display is not None:
@@ -427,20 +552,31 @@ def _legacy_path(
     if fields is not None and "parent" in fields.model_fields_set:
         parent = fields.parent
     if display_title:
+        resolved = nodes.get(parent.id) if parent is not None else None
         if parent is not None and parent.title == display_title:
             node_id = parent.id
         else:
             node_id = f"legacy-section:{display_title}"
-        return "legacy", (PathNodeView(node_id, "unknown", display_title, None, None, None),)
+        return "legacy", (
+            PathNodeView(
+                node_id,
+                resolved.type if resolved is not None else "unknown",
+                display_title,
+                resolved.emoji if resolved is not None else None,
+                resolved.color if resolved is not None else None,
+                resolved.order if resolved is not None else None,
+            ),
+        )
     if parent is not None:
+        resolved = nodes.get(parent.id)
         return "legacy", (
             PathNodeView(
                 parent.id,
-                "unknown",
-                parent.title or "Unknown parent",
-                None,
-                None,
-                None,
+                resolved.type if resolved is not None else "unknown",
+                parent.title or (resolved.title if resolved is not None else "Unknown parent"),
+                resolved.emoji if resolved is not None else None,
+                resolved.color if resolved is not None else None,
+                resolved.order if resolved is not None else None,
             ),
         )
     return "unknown", ()
@@ -449,6 +585,7 @@ def _legacy_path(
 def _side_path(
     operation: UpdateOperation | CreateOperation | CompleteOperation | TrashOperation,
     side: Literal["before", "after"],
+    nodes: dict[str, HierarchyNode],
 ) -> tuple[PathState, tuple[PathNodeView, ...]]:
     if operation.display is not None:
         field_name = f"{side}Path"
@@ -459,7 +596,12 @@ def _side_path(
             if not path:
                 return "root", ()
             return "path", tuple(_path_node_view(node) for node in path)
-    return _legacy_path(operation, side)
+        if getattr(operation.display, f"{side}Section"):
+            return _legacy_path(operation, side, nodes)
+    inferred = _hierarchy_path(operation, side, nodes)
+    if inferred is not None:
+        return inferred
+    return _legacy_path(operation, side, nodes)
 
 
 def _display_order(
@@ -529,10 +671,13 @@ def _day_section_placement(
 
 
 def _operation_view(
-    operation: UpdateOperation | CreateOperation | CompleteOperation | TrashOperation, index: int
+    operation: UpdateOperation | CreateOperation | CompleteOperation | TrashOperation,
+    index: int,
+    before_hierarchy: dict[str, HierarchyNode],
+    after_hierarchy: dict[str, HierarchyNode],
 ) -> OperationView:
-    before_path_state, before_path = _side_path(operation, "before")
-    after_path_state, after_path = _side_path(operation, "after")
+    before_path_state, before_path = _side_path(operation, "before", before_hierarchy)
+    after_path_state, after_path = _side_path(operation, "after", after_hierarchy)
     if (
         isinstance(operation, CompleteOperation)
         and after_path_state == "unknown"
@@ -954,11 +1099,17 @@ def _previews(plan: ChangePlanV1, operations: tuple[OperationView, ...]) -> Prev
     )
 
 
-def build_plan_view(plan: ChangePlanV1, *, source_name: str | None = None) -> PlanView:
+def build_plan_view(
+    plan: ChangePlanV1,
+    *,
+    source_name: str | None = None,
+    hierarchy: HierarchyContext | None = None,
+) -> PlanView:
     """Build all immutable visualizer projections from one validated plan."""
 
+    before_hierarchy, after_hierarchy = _projected_hierarchy(plan, hierarchy)
     operations = tuple(
-        _operation_view(operation, index)
+        _operation_view(operation, index, before_hierarchy, after_hierarchy)
         for index, operation in enumerate(plan.operations, start=1)
     )
     counts = {
@@ -978,6 +1129,7 @@ def build_plan_view(plan: ChangePlanV1, *, source_name: str | None = None) -> Pl
         summary=plan.summary,
         digest=plan_digest(plan),
         source_name=source_name,
+        hierarchy_source="backup" if hierarchy is not None else "plan",
         counts=counts,
         total_operations=len(operations),
         operations=operations,

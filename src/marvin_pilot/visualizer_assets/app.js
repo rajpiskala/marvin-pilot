@@ -59,6 +59,7 @@ const elements = {
   summary: document.querySelector("#plan-summary"),
   fileName: document.querySelector("#plan-file-name"),
   total: document.querySelector("#plan-total"),
+  hierarchySource: document.querySelector("#plan-hierarchy-source"),
   planId: document.querySelector("#plan-id"),
   digest: document.querySelector("#plan-digest"),
   createCount: document.querySelector("#create-count"),
@@ -1390,6 +1391,9 @@ function renderPlan(plan) {
   elements.summary.textContent = plan.summary;
   elements.fileName.textContent = plan.source_name || "Browser upload";
   elements.total.textContent = `${plan.total_operations} operation${plan.total_operations === 1 ? "" : "s"}`;
+  elements.hierarchySource.textContent = plan.hierarchy_source === "backup"
+    ? "Local backup + plan projection"
+    : "Plan metadata and references only";
   elements.planId.textContent = plan.plan_id;
   elements.digest.textContent = plan.digest;
   elements.createCount.textContent = plan.counts.create;

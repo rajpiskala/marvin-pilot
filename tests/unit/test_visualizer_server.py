@@ -11,16 +11,18 @@ import httpx
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.plan_io import MAX_PLAN_BYTES, parse_plan_bytes
 from marvin_pilot.visualizer import build_plan_view
+from marvin_pilot.visualizer_hierarchy import build_backup_hierarchy_context
 from marvin_pilot.visualizer_server import LOOPBACK_HOST, SECURITY_HEADERS, VisualizerServer
 
 
 @contextmanager
-def running_server(*, preload: bool = True):
+def running_server(*, preload: bool = True, hierarchy=None):
     plan = parse_plan_bytes(json.dumps(EXAMPLE_PLAN).encode()) if preload else None
     server = VisualizerServer(
         preloaded_plan=plan,
         source_name=r"C:\private\plan.json" if preload else None,
         session_token="unit-test-session",
+        hierarchy=hierarchy,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -78,6 +80,41 @@ def test_empty_server_reports_no_current_plan() -> None:
         response = client.get(server.url + "api/current")
     assert response.status_code == 200
     assert response.json() == {"plan": None}
+
+
+def test_backup_hierarchy_is_reused_for_browser_uploaded_plans() -> None:
+    upload_plan = json.loads(json.dumps(EXAMPLE_PLAN))
+    upload_plan["operations"][0].pop("display")
+    hierarchy = build_backup_hierarchy_context(
+        [
+            {
+                "_id": "home-category",
+                "db": "Categories",
+                "type": "category",
+                "title": "Household",
+                "parentId": "root",
+            },
+            {
+                "_id": "task-wash-dishes-id",
+                "db": "Tasks",
+                "title": "Wash the dishes",
+                "parentId": "home-category",
+            },
+        ]
+    )
+    with running_server(preload=False, hierarchy=hierarchy) as (server, client):
+        uploaded = client.post(
+            server.url + "api/plan",
+            content=json.dumps(upload_plan).encode(),
+            headers={"Content-Type": "application/json", "Origin": server.origin},
+        )
+
+    assert uploaded.status_code == 200
+    plan = uploaded.json()["plan"]
+    assert plan["hierarchy_source"] == "backup"
+    first = plan["operations"][0]
+    assert first["before_path_state"] == "path"
+    assert first["before_path"][-1]["title"] == "Household"
 
 
 def test_session_host_origin_route_and_methods_are_restricted() -> None:

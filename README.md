@@ -299,6 +299,21 @@ provide a fresh backup; Pilot parses it directly and leaves no expanded copy beh
 marvin-pilot visualize plan.json
 ```
 
+If an AI-authored plan contains parent IDs but omits the optional typed display paths, supply a
+fresh local Marvin backup to reconstruct the hierarchy:
+
+```console
+marvin-pilot visualize plan.json --backup MarvinBackup.json.lzma
+```
+
+This remains credential-free and makes no Marvin API calls. Pilot indexes active categories,
+projects, and tasks locally, combines that snapshot with project creates, renames, moves, and
+Trash operations from the plan, and sends only the hierarchy nodes needed by the rendered preview
+to the loopback browser page. It does not modify the plan, so its canonical digest is unchanged.
+Explicit `display.beforePath`/`display.afterPath` values—including an explicit `null`—always win
+over backup inference. Use a current backup: an item absent from the snapshot remains visibly
+unresolved rather than being guessed.
+
 The default **Preview** renders Marvin-like **Now** and **After (preview)** hierarchies. Inbox, categories, projects, tasks, recurrence definitions, occurrences, and subtasks have distinct Marvin-like visual treatment; projects visibly support create, rename, move, schedule, complete, and Trash transitions. A generated occurrence keeps its task circle and shows a compact recurrence-loop icon on the right, while a recurrence definition omits the task circle and uses the loop icon as its type marker. Tooltips and item details spell out whether a change affects one generated occurrence or the series template. Completed After cards show the exact marked-done timestamp using the reviewer's browser locale, time zone, and 12/24-hour convention. Moved items render under their truthful parent on each side and cross-highlight their counterpart, while shared hierarchy disclosure stays synchronized. Click any row to pin its two states in a sticky comparison tray; moved-item Previous/Next and Jump controls avoid hunting for a far-away destination. Deep hierarchies scroll horizontally within each pane, and single-state views provide the full content width.
 
 Use **Day sections: Show/Hide** to layer explicit Today-list groupings over the hierarchy. Day sections such as Waiting or Main are visually distinct from categories and projects. Switch to **Changes** for an aligned operation diff grouped by typed After location, Now location, plan order, or supplied Today section. Search and the Moved filter keep large cleanups navigable. Action totals filter either mode, and item details expose the reason, identifiers, exact field diff, hierarchy path, supplied day-section context, and structured subtask changes.
@@ -307,7 +322,14 @@ It does not load a Marvin credential, call the Marvin API, persist task data in 
 
 Press `Ctrl+C` in the launching terminal to stop it.
 
-Typed `display.beforePath` and `display.afterPath` metadata supplies offline ancestry without affecting apply. Empty paths mean a known Marvin root; omitted paths render under **Location not supplied** instead of being guessed. Completion is the safe exception: when a known `beforePath` is present and `afterPath` is omitted, the completed After state inherits that unchanged ancestry. Explicit `afterPath: null` remains unknown. Optional path-node and target order values reproduce sibling ordering, while legacy `beforeSection`/`afterSection` values remain a visibly inferred fallback.
+Typed `display.beforePath` and `display.afterPath` metadata supplies offline ancestry without
+affecting apply. Empty paths mean a known Marvin root. For omitted paths, Pilot first resolves IDs
+from other project operations in the plan and then from optional `--backup` context; anything it
+still cannot prove renders under **Location not supplied** instead of being guessed. Completion is
+the safe exception: when a known `beforePath` is present and `afterPath` is omitted, the completed
+After state inherits that unchanged ancestry. Explicit `afterPath: null` remains unknown. Optional
+path-node and target order values reproduce sibling ordering, while legacy
+`beforeSection`/`afterSection` values remain a visibly inferred fallback.
 
 An update or Trash operation on an already-completed task may provide its original RFC 3339 timestamp as `display.existingCompletedAt`. Preview then renders the task as completed, with the localized completion timestamp, in every state where it exists. Live preflight requires this exact metadata before updating a completed task and verifies it against Marvin's `doneAt`; the review-only field never becomes a setter. Reparenting therefore changes only `parentId` and preserves both `done` and `doneAt` through apply and revert.
 

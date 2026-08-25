@@ -550,6 +550,9 @@ def test_drop_and_file_upload_are_validated_and_untrusted_text_stays_text(page) 
         page.locator("#plan-view").wait_for(state="visible")
         page.get_by_text("Plan information", exact=True).click()
         assert page.locator("#plan-file-name").inner_text() == filename
+        assert page.locator("#plan-hierarchy-source").inner_text() == (
+            "Plan metadata and references only"
+        )
         assert page.locator("script").count() == 1
         assert page.locator("#plan-id").inner_text() == EXAMPLE_PLAN["planId"]
 

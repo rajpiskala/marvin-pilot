@@ -14,6 +14,7 @@ from marvin_pilot.errors import MarvinPilotError
 from marvin_pilot.models.plan_v1 import ChangePlanV1
 from marvin_pilot.plan_io import MAX_PLAN_BYTES, parse_plan_bytes
 from marvin_pilot.visualizer import build_plan_view
+from marvin_pilot.visualizer_hierarchy import HierarchyContext
 
 LOOPBACK_HOST = "127.0.0.1"
 MAX_FILENAME_LENGTH = 255
@@ -60,10 +61,16 @@ class VisualizerServer:
         preloaded_plan: ChangePlanV1 | None = None,
         source_name: str | None = None,
         session_token: str | None = None,
+        hierarchy: HierarchyContext | None = None,
     ) -> None:
         self.session_token = session_token or secrets.token_urlsafe(32)
+        self._hierarchy = hierarchy
         self._current = (
-            build_plan_view(preloaded_plan, source_name=_safe_source_name(source_name)).to_dict()
+            build_plan_view(
+                preloaded_plan,
+                source_name=_safe_source_name(source_name),
+                hierarchy=self._hierarchy,
+            ).to_dict()
             if preloaded_plan is not None
             else None
         )
@@ -206,7 +213,11 @@ class VisualizerServer:
                     source_name = _safe_source_name(
                         self.headers.get("X-Marvin-Pilot-Filename"), url_encoded=True
                     )
-                    owner._current = build_plan_view(plan, source_name=source_name).to_dict()
+                    owner._current = build_plan_view(
+                        plan,
+                        source_name=source_name,
+                        hierarchy=owner._hierarchy,
+                    ).to_dict()
                 except MarvinPilotError as exc:
                     self._send_json(
                         HTTPStatus.UNPROCESSABLE_ENTITY,

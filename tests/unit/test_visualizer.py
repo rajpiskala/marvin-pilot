@@ -10,6 +10,7 @@ from marvin_pilot.models.plan_v1 import RecurringTaskFields, TaskFields
 from marvin_pilot.plan_io import parse_plan_bytes
 from marvin_pilot.visualizer import build_plan_view
 from marvin_pilot.visualizer_fields import FIELD_PRESENTATIONS, presentation_for
+from marvin_pilot.visualizer_hierarchy import build_backup_hierarchy_context
 
 
 def _parse(value: dict):
@@ -96,6 +97,44 @@ def _hierarchy_plan() -> dict:
     }
 
 
+def _backup_hierarchy_documents() -> list[dict]:
+    return [
+        {
+            "_id": "category-work",
+            "db": "Categories",
+            "type": "category",
+            "title": "Work",
+            "parentId": "root",
+            "emoji": "💼",
+            "color": "#c69c7b",
+            "rank": 1,
+        },
+        {
+            "_id": "category-atlas",
+            "db": "Categories",
+            "type": "project",
+            "title": "Project Atlas",
+            "parentId": "category-work",
+            "rank": 2,
+        },
+        {
+            "_id": "project-monitoring",
+            "db": "Categories",
+            "type": "project",
+            "title": "Release Monitoring",
+            "parentId": "category-atlas",
+            "rank": 3,
+        },
+        {
+            "_id": "task-a",
+            "db": "Tasks",
+            "title": "Task A",
+            "parentId": "project-monitoring",
+            "rank": 4,
+        },
+    ]
+
+
 def test_presentation_registry_covers_schema_and_compiler() -> None:
     fields = set(TaskFields.model_fields)
     assert set(FIELD_SPECS) == fields
@@ -109,6 +148,7 @@ def test_plan_view_metadata_counts_and_digest_are_deterministic() -> None:
     second = _view()
     assert first == second
     assert first.source_name == "plan.json"
+    assert first.hierarchy_source == "plan"
     assert first.schema_version == 1
     assert first.supported_schema_versions == (1,)
     assert first.counts == {"create": 1, "update": 2, "complete": 0, "trash": 1}
@@ -145,6 +185,72 @@ def test_typed_paths_build_first_class_project_and_task_trees() -> None:
     assert view.previews.before.incomplete_operation_ids == ()
     assert view.operations[0].change_kinds == ("renamed",)
     assert view.operations[2].change_kinds == ("moved",)
+
+
+def test_backup_fills_omitted_paths_and_projects_the_after_hierarchy() -> None:
+    value = _hierarchy_plan()
+    for operation in value["operations"]:
+        operation.pop("display", None)
+    for side in ("before", "after"):
+        value["operations"][2][side]["parent"].pop("title")
+    plan = _parse(value)
+    hierarchy = build_backup_hierarchy_context(_backup_hierarchy_documents())
+
+    view = build_plan_view(plan, source_name="plan.json", hierarchy=hierarchy)
+
+    assert view.hierarchy_source == "backup"
+    assert view.digest == build_plan_view(plan).digest
+    assert view.previews.before.incomplete_operation_ids == ()
+    assert view.previews.after.incomplete_operation_ids == ()
+    work_before = view.previews.before.roots[0]
+    assert (work_before.title, work_before.emoji, work_before.color) == (
+        "Work",
+        "💼",
+        "#c69c7b",
+    )
+    atlas_before = work_before.children[0]
+    monitoring_before = atlas_before.children[0]
+    assert monitoring_before.title == "Release Monitoring"
+    assert [child.operation_id for child in monitoring_before.children] == ["move-task"]
+
+    atlas_after = view.previews.after.roots[0].children[0]
+    assert [(child.title, child.operation_id) for child in atlas_after.children] == [
+        ("Monitoring", "rename-monitoring"),
+        ("Follow-ups", "create-followups"),
+    ]
+    assert [child.operation_id for child in atlas_after.children[1].children] == ["move-task"]
+    assert view.operations[2].before_path[-1].title == "Release Monitoring"
+    assert view.operations[2].after_path[-1].title == "Follow-ups"
+
+
+def test_explicit_unknown_path_is_not_overridden_by_backup() -> None:
+    value = _hierarchy_plan()
+    value["operations"][2]["display"]["beforePath"] = None
+    hierarchy = build_backup_hierarchy_context(_backup_hierarchy_documents())
+
+    view = build_plan_view(_parse(value), hierarchy=hierarchy)
+
+    assert view.operations[2].before_path_state == "unknown"
+    assert view.operations[2].before_path == ()
+    assert view.previews.before.incomplete_operation_ids == ("move-task",)
+
+
+def test_plan_targets_resolve_legacy_parent_names_without_a_backup() -> None:
+    value = _hierarchy_plan()
+    for operation in value["operations"]:
+        operation.pop("display", None)
+    for side in ("before", "after"):
+        value["operations"][2][side]["parent"].pop("title")
+
+    view = _view(value)
+    moved = view.operations[2]
+
+    assert view.hierarchy_source == "plan"
+    assert moved.before_path_state == "legacy"
+    assert moved.before_path[-1].type == "project"
+    assert moved.before_path[-1].title == "Release Monitoring"
+    assert moved.after_path[-1].type == "project"
+    assert moved.after_path[-1].title == "Follow-ups"
 
 
 def test_missing_paths_are_grouped_as_incomplete_instead_of_rendered_as_roots() -> None:

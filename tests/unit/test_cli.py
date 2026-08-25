@@ -161,9 +161,10 @@ def test_visualize_preloads_without_credentials_and_opens_browser(
     class FakeServer:
         url = "http://127.0.0.1:1234/session/"
 
-        def __init__(self, *, preloaded_plan, source_name):
+        def __init__(self, *, preloaded_plan, source_name, hierarchy):
             calls["plan"] = preloaded_plan
             calls["source_name"] = source_name
+            calls["hierarchy"] = hierarchy
 
         def serve_forever(self):
             calls["served"] = True
@@ -181,10 +182,13 @@ def test_visualize_preloads_without_credentials_and_opens_browser(
     result = runner.invoke(app, ["visualize", str(path)])
     assert result.exit_code == 0
     assert calls["source_name"] == "plan.json"
+    assert calls["hierarchy"] is None
     assert calls["url"] == FakeServer.url
     assert calls["served"] is True
     assert calls["shutdown"] is True
     assert "Preview only" in result.stdout
+    assert "visible state(s) omit typed paths" in result.stdout
+    assert "--backup BACKUP.json.lzma" in result.stdout
     assert "No Marvin credential" in result.stdout
 
 
@@ -215,6 +219,62 @@ def test_visualize_no_open_and_missing_path_behavior(
     assert opened == []
     assert missing.exit_code == 2
     assert "not a regular file" in missing.stderr
+
+
+def test_visualize_loads_optional_backup_hierarchy_without_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan_path = tmp_path / "plan.json"
+    backup_path = tmp_path / "backup.json"
+    write_plan(plan_path)
+    backup_path.write_text(
+        json.dumps(
+            [
+                {
+                    "_id": "home",
+                    "db": "Categories",
+                    "type": "category",
+                    "title": "Home",
+                    "parentId": "root",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    calls: dict[str, object] = {}
+
+    class FakeServer:
+        url = "http://127.0.0.1:1234/session/"
+
+        def __init__(self, *, preloaded_plan, source_name, hierarchy):
+            calls["plan"] = preloaded_plan
+            calls["source_name"] = source_name
+            calls["hierarchy"] = hierarchy
+
+        def serve_forever(self):
+            calls["served"] = True
+
+        def shutdown(self):
+            calls["shutdown"] = True
+
+    monkeypatch.setattr(cli_module, "VisualizerServer", FakeServer)
+    monkeypatch.setattr(
+        cli_module,
+        "_load_config_or_fail",
+        lambda: pytest.fail("visualize must not load config or credentials"),
+    )
+
+    result = runner.invoke(
+        app,
+        ["visualize", str(plan_path), "--backup", str(backup_path), "--no-open"],
+    )
+
+    assert result.exit_code == 0
+    hierarchy = calls["hierarchy"]
+    assert hierarchy.nodes["home"].title == "Home"
+    assert "Hierarchy: 1 active item(s) loaded locally from the backup." in result.stdout
+    assert "omit typed paths" not in result.stdout
+    assert "No Marvin credential or API connection" in result.stdout
 
 
 def test_live_describe_requires_a_credential_before_network_access(

@@ -34,7 +34,7 @@ from marvin_pilot.approval import (
     confirm_revert,
     require_controlling_terminal,
 )
-from marvin_pilot.backup_context import project_context_json
+from marvin_pilot.backup_context import load_backup_documents, project_context_json
 from marvin_pilot.config import (
     AppConfig,
     default_config_path,
@@ -75,6 +75,7 @@ from marvin_pilot.preflight import preflight_plan
 from marvin_pilot.reverter import execute_revert
 from marvin_pilot.schema import plan_schema_json
 from marvin_pilot.terminal_review import render_live_preflight_terminal
+from marvin_pilot.visualizer_hierarchy import build_backup_hierarchy_context
 from marvin_pilot.visualizer_server import VisualizerServer
 
 SAFETY_CONTRACT = """This CLI separates AI-authored proposals from human-authorized
@@ -518,6 +519,16 @@ def visualize_command(
         bool,
         typer.Option("--no-open", help="Print the local URL without opening a browser."),
     ] = False,
+    backup: Annotated[
+        Path | None,
+        typer.Option(
+            "--backup",
+            help=(
+                "Locally resolve omitted hierarchy from a Marvin .json or .json.lzma backup; "
+                "the plan remains unchanged."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Open an offline, credential-free, read-only browser preview."""
 
@@ -526,9 +537,37 @@ def visualize_command(
     if plan_path is not None:
         plan = _read_plan_argument(plan_path)
         source_name = "stdin" if plan_path == "-" else Path(plan_path).name
-    server = VisualizerServer(preloaded_plan=plan, source_name=source_name)
+    hierarchy = None
+    if backup is not None:
+        try:
+            documents, _source_format, _source_bytes = load_backup_documents(backup)
+            hierarchy = build_backup_hierarchy_context(documents)
+        except MarvinPilotError as exc:
+            _fail(exc)
+    server = VisualizerServer(
+        preloaded_plan=plan,
+        source_name=source_name,
+        hierarchy=hierarchy,
+    )
     typer.echo(f"Visualizer: {server.url}")
     typer.echo("Preview only — nothing has been applied.")
+    if hierarchy is not None:
+        typer.echo(
+            f"Hierarchy: {len(hierarchy.nodes)} active item(s) loaded locally from the backup."
+        )
+    elif plan is not None:
+        omitted_paths = sum(
+            operation.display is None or f"{side}Path" not in operation.display.model_fields_set
+            for operation in plan.operations
+            for side in ("before", "after")
+            if not (side == "before" and operation.action == "create")
+            and not (side == "after" and operation.action == "trash")
+        )
+        if omitted_paths:
+            typer.echo(
+                f"Hierarchy note: {omitted_paths} visible state(s) omit typed paths. "
+                "Use --backup BACKUP.json.lzma for local hierarchy resolution."
+            )
     typer.echo("No Marvin credential or API connection is used. Press Ctrl+C to stop.")
     if not no_open:
         try:

@@ -52,6 +52,7 @@ def test_assets_are_offline_external_and_have_expected_controls() -> None:
     assert "Side by side" in html
     assert "Now only" in html
     assert "After only" in html
+    assert 'id="plan-hierarchy-source"' in html
     assert "Review options" not in html
 
 
@@ -74,6 +75,7 @@ def test_javascript_uses_safe_dom_and_local_routes_only() -> None:
     assert "marvinPilot.visualizer.comparisonView.v1" in script
     assert script.count("window.localStorage.setItem") == 1
     assert "JSON.stringify(currentPlan)" not in script
+    assert 'plan.hierarchy_source === "backup"' in script
     assert "paletteClass" in script
     assert 'article.setAttribute("aria-description", card.sparse_label)' in script
 
