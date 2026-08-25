@@ -292,6 +292,34 @@ def _resolve_revert_source(store: HistoryStore, path: Path):
     return matches[0]
 
 
+@app.command("doctor")
+def doctor_command(
+    full_access_key_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--full-access-key-file",
+            help="Read the secret from this file; the token itself is never a CLI argument.",
+        ),
+    ] = None,
+) -> None:
+    """Check configuration, full-access authentication, and API connectivity without writes."""
+
+    typer.echo("Marvin Pilot doctor")
+    config = _load_config_or_fail()
+    typer.echo(f"[ok] Configuration loaded (credential mode: {config.credential_mode})")
+    client = _client_from_config(config, full_access_key_file)
+    typer.echo("[ok] Full-access credential loaded")
+    try:
+        client.check_connection()
+    except MarvinPilotError as exc:
+        error_console.print("[failed] Amazing Marvin connection check", markup=False)
+        _fail(exc)
+    finally:
+        client.close()
+    typer.echo(f"[ok] Amazing Marvin accepted the credential at {client.api_base_host}")
+    typer.echo("[ok] Read-only check complete; no Marvin data was changed")
+
+
 @app.command("validate")
 def validate_command(
     plan_path: Annotated[str, typer.Argument(help="Plan JSON path, or - for stdin.")],

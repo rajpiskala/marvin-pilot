@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 import marvin_pilot.cli as cli_module
 import marvin_pilot.config as config_module
 from marvin_pilot.cli import app
-from marvin_pilot.errors import CredentialError
+from marvin_pilot.errors import CredentialError, RemoteError
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.field_registry import FIELD_SPECS
 
@@ -24,6 +24,10 @@ class CliMarvinClient:
         self.document = copy.deepcopy(document)
         self.closed = False
         self.mutations = 0
+        self.connection_checks = 0
+
+    def check_connection(self) -> None:
+        self.connection_checks += 1
 
     def get_doc(self, item_id: str):
         if self.document.get("_id") == item_id:
@@ -216,6 +220,73 @@ def test_live_describe_requires_a_credential_before_network_access(
     result = runner.invoke(app, ["describe", str(path), "--live"])
     assert result.exit_code == 4
     assert "no full-access token is stored" in result.stderr
+
+
+def test_doctor_checks_full_access_credential_without_mutation(
+    isolated_app_dirs: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = CliMarvinClient({})
+    key_file = tmp_path / "full-token.txt"
+    seen: dict[str, object] = {}
+
+    def client_from_config(config, supplied_key_file):
+        seen["mode"] = config.credential_mode
+        seen["key_file"] = supplied_key_file
+        return client
+
+    monkeypatch.setattr(cli_module, "_client_from_config", client_from_config)
+    result = runner.invoke(
+        app,
+        ["doctor", "--full-access-key-file", str(key_file)],
+    )
+
+    assert result.exit_code == 0
+    assert "Marvin Pilot doctor" in result.stdout
+    assert "Configuration loaded (credential mode: keyring)" in result.stdout
+    assert "Full-access credential loaded" in result.stdout
+    assert "Amazing Marvin accepted the credential at https://marvin.test" in result.stdout
+    assert "no Marvin data was changed" in result.stdout
+    assert seen == {"mode": "keyring", "key_file": key_file}
+    assert client.connection_checks == 1
+    assert client.mutations == 0
+    assert client.closed is True
+
+
+@pytest.mark.parametrize(
+    ("error", "exit_code", "message"),
+    [
+        (
+            CredentialError("Amazing Marvin rejected the full-access credential (HTTP 401)"),
+            4,
+            "Amazing Marvin rejected the full-access credential (HTTP 401)",
+        ),
+        (
+            RemoteError("GET doc timed out"),
+            8,
+            "GET doc timed out",
+        ),
+    ],
+)
+def test_doctor_reports_connection_failure_and_closes_client(
+    isolated_app_dirs: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    exit_code: int,
+    message: str,
+) -> None:
+    class RejectingClient(CliMarvinClient):
+        def check_connection(self) -> None:
+            raise error
+
+    client = RejectingClient({})
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == exit_code
+    assert "[failed] Amazing Marvin connection check" in result.stderr
+    assert message in result.stderr
+    assert client.mutations == 0
+    assert client.closed is True
 
 
 def test_schema_command_outputs_json() -> None:

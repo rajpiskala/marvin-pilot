@@ -12,7 +12,11 @@ from marvin_pilot.errors import (
     CredentialError,
     RemoteError,
 )
-from marvin_pilot.marvin_client import MarvinClient, RequestPacer
+from marvin_pilot.marvin_client import (
+    DOCTOR_SENTINEL_DOCUMENT_ID,
+    MarvinClient,
+    RequestPacer,
+)
 
 
 class FakeTime:
@@ -94,6 +98,26 @@ def test_get_doc_rejects_other_200_error_documents() -> None:
         pytest.raises(RemoteError, match="unexpected: bad state"),
     ):
         client.get_doc("task")
+
+
+def test_connection_check_uses_read_only_full_access_sentinel_lookup() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return json_response(200, {"error": "not_found", "reason": "missing"})
+
+    with client_for(handler) as client:
+        assert client.check_connection() is None
+
+    assert len(seen) == 1
+    request = seen[0]
+    assert request.method == "GET"
+    assert request.url.path == "/api/doc"
+    assert request.url.params["id"] == DOCTOR_SENTINEL_DOCUMENT_ID
+    assert request.content == b""
+    assert request.headers["X-Full-Access-Token"] == "full-secret-token"
+    assert "X-API-Token" not in request.headers
 
 
 def test_get_labels_uses_full_access_header_and_validates_metadata() -> None:

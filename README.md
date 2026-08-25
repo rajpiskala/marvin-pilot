@@ -140,11 +140,17 @@ The recommended credential mode uses your operating system's native credential s
 marvin-pilot config set-credential-mode keyring
 marvin-pilot config set-full-access-token
 marvin-pilot config show
+marvin-pilot doctor
 ```
 
 Enter `FULL_ACCESS_TOKEN` at the hidden prompt.
 
 `config show` deliberately never prints the credential.
+
+`doctor` makes one read-only full-access document lookup to verify that the credential can be
+loaded, Marvin is reachable, and Marvin accepts the token. It does not read a real task, write a
+receipt, or change any Marvin data. Authentication failures and network failures use distinct exit
+codes and actionable messages without printing the token.
 
 Two stricter modes are also available:
 
@@ -247,6 +253,7 @@ provide a fresh backup; Pilot parses it directly and leaves no expanded copy beh
 
 | Command                               | What it does                               |
 | ------------------------------------- | ------------------------------------------ |
+| `marvin-pilot doctor`                 | Test full-token authentication, read-only  |
 | `marvin-pilot context project …`      | Extract full project history from a backup |
 | `marvin-pilot validate PLAN`          | Strictly validate a plan offline           |
 | `marvin-pilot describe PLAN`          | Print a human-readable description         |

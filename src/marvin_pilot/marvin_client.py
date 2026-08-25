@@ -25,6 +25,7 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_SAFE_ERROR_CHARS = 500
 MAX_TRANSIENT_ATTEMPTS = 4
 MAX_RATE_LIMIT_ATTEMPTS = 6
+DOCTOR_SENTINEL_DOCUMENT_ID = "marvin-pilot-doctor-credential-check-do-not-create"
 
 
 class RequestPacer:
@@ -245,6 +246,11 @@ class MarvinClient:
             reason = str(document.get("reason", "unknown"))[:200]
             raise RemoteError(f"GET doc returned an error document: {error}: {reason}")
         return document
+
+    def check_connection(self) -> None:
+        """Verify full-access authentication with a read-only lookup of a sentinel ID."""
+
+        self.get_doc(DOCTOR_SENTINEL_DOCUMENT_ID)
 
     def get_labels(self) -> list[dict[str, Any]]:
         """Fetch label metadata using the full token's compatible read endpoint."""
