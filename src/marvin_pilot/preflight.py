@@ -479,7 +479,8 @@ def _verify_project_parent_hierarchy(
         return
     current_id = after["parent"]["id"]
     seen: set[str] = set()
-    while current_id not in {"", "unassigned"}:
+    ancestry: list[str] = []
+    while current_id not in {"", "unassigned", "root"}:
         if current_id == operation.target.id:
             raise LivePreconditionError(
                 f"operation {operation.operationId!r} would create a project parent cycle"
@@ -489,6 +490,7 @@ def _verify_project_parent_hierarchy(
                 f"operation {operation.operationId!r} proposed parent hierarchy is already cyclic"
             )
         seen.add(current_id)
+        ancestry.append(current_id)
 
         planned = planned_creates.get(current_id)
         if planned is not None:
@@ -500,10 +502,17 @@ def _verify_project_parent_hierarchy(
         if current_id not in cache:
             cache[current_id] = reader.get_doc(current_id)
         document = cache[current_id]
-        if document is None or document.get("db") != "Categories":
+        if document is None:
             raise LivePreconditionError(
-                f"operation {operation.operationId!r} proposed parent ancestry contains a "
-                f"missing or non-Category document {current_id!r}"
+                f"operation {operation.operationId!r} proposed parent ancestry is broken: "
+                + " -> ".join(repr(identifier) for identifier in ancestry)
+                + " (not found)"
+            )
+        if document.get("db") != "Categories":
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} proposed parent ancestry is broken: "
+                + " -> ".join(repr(identifier) for identifier in ancestry)
+                + f" (expected a Category document, found db={document.get('db')!r})"
             )
         current_id = document.get("parentId") or "unassigned"
 

@@ -281,6 +281,89 @@ def test_project_move_rejects_self_and_descendant_parent_cycles() -> None:
             )
 
 
+@pytest.mark.parametrize("action", ["create", "update"])
+def test_project_parent_under_root_level_category_is_accepted(action: str) -> None:
+    live = {
+        "project-existing": {
+            "_id": "project-existing",
+            "_rev": "1-project",
+            "db": "Categories",
+            "type": "project",
+            "title": "Movable project",
+            "parentId": "unassigned",
+            "done": False,
+            "updatedAt": 100,
+        },
+        "nested-category": {
+            "_id": "nested-category",
+            "db": "Categories",
+            "type": "category",
+            "title": "Nested category",
+            "parentId": "top-category",
+        },
+        "top-category": {
+            "_id": "top-category",
+            "db": "Categories",
+            "type": "category",
+            "title": "Top category",
+            "parentId": "root",
+        },
+    }
+    if action == "create":
+        operation = project_create(parent={"id": "nested-category", "title": "Nested category"})
+    else:
+        operation = {
+            "operationId": "move-project",
+            "action": "update",
+            "target": {
+                "type": "project",
+                "id": "project-existing",
+                "title": "Movable project",
+            },
+            "reason": "Move beneath a real top-level category hierarchy.",
+            "before": {"parent": {"id": "unassigned", "title": "Inbox"}},
+            "after": {"parent": {"id": "nested-category", "title": "Nested category"}},
+            "expectedUpdatedAt": 100,
+        }
+
+    result = preflight_plan(
+        parse_plan_bytes(encode_plan([operation])), FakeReader(live), now_ms=NOW_MS
+    )
+    assert result.operations[0].compiled.desired_fields["parentId"] == "nested-category"
+
+
+@pytest.mark.parametrize(
+    ("broken_document", "reason"),
+    [
+        (None, "not found"),
+        ({"_id": "missing-category", "db": "Tasks", "title": "Wrong type"}, "db='Tasks'"),
+    ],
+)
+def test_project_parent_reports_the_broken_ancestry_chain(
+    broken_document: dict | None, reason: str
+) -> None:
+    live = {
+        "nested-category": {
+            "_id": "nested-category",
+            "db": "Categories",
+            "type": "category",
+            "title": "Nested category",
+            "parentId": "missing-category",
+        }
+    }
+    if broken_document is not None:
+        live["missing-category"] = broken_document
+    operation = project_create(parent={"id": "nested-category", "title": "Nested category"})
+
+    with pytest.raises(LivePreconditionError) as raised:
+        preflight_plan(parse_plan_bytes(encode_plan([operation])), FakeReader(live), now_ms=NOW_MS)
+
+    message = str(raised.value)
+    assert "'nested-category' -> 'missing-category'" in message
+    assert reason in message
+    assert "'root'" not in message
+
+
 def test_project_rules_reject_task_only_fields_and_future_completion() -> None:
     create = project_create()
     create["after"]["dependencies"] = ["task-a"]
