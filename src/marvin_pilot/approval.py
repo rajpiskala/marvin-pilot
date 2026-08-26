@@ -43,7 +43,7 @@ def _confirm(
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> bool:
-    """Ask once for operation-level approval; default to no for every other response."""
+    """Require an explicit yes or no decision from the controlling terminal."""
 
     with ExitStack() as stack:
         if input_stream is None:
@@ -55,10 +55,21 @@ def _confirm(
                 output_stream = output_stream or terminal_output
         if output_stream is None:
             output_stream = sys.stderr
-        output_stream.write(f"{verb} these {operation_count} operations? [y/N] ")
-        output_stream.flush()
-        answer = input_stream.readline()
-        return answer.strip().lower() in {"y", "yes"}
+        prompt = f"{verb} these {operation_count} operations? [y = {verb.lower()}, n = cancel] "
+        while True:
+            output_stream.write(prompt)
+            output_stream.flush()
+            answer = input_stream.readline()
+            if answer == "":
+                output_stream.write("\nNo response received; cancelling safely.\n")
+                output_stream.flush()
+                return False
+            normalized = answer.strip().lower()
+            if normalized in {"y", "yes"}:
+                return True
+            if normalized in {"n", "no"}:
+                return False
+            output_stream.write("Please answer y or n; empty input is not a decision.\n")
 
 
 def confirm_apply(

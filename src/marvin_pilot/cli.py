@@ -600,7 +600,7 @@ def apply_command(
             "--yes",
             "-y",
             help=(
-                "Skip the final [y/N] prompt after successful preflight; an interactive "
+                "Skip the final explicit y/n prompt after successful preflight; an interactive "
                 "controlling terminal is still required."
             ),
         ),

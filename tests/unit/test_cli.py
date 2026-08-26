@@ -719,6 +719,7 @@ def test_apply_decline_has_exit_6_and_no_receipt(
     monkeypatch.setattr(cli_module, "confirm_apply", lambda _count: False)
     result = runner.invoke(app, ["apply", str(path)])
     assert result.exit_code == 6
+    assert "apply declined; no Marvin changes were made" in result.stderr
     assert client.mutations == 0
     assert runner.invoke(app, ["history", "list"]).stdout.strip() == "No receipts."
 

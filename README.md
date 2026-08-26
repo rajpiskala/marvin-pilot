@@ -30,7 +30,7 @@ Marvin Pilot keeps that credential on the human side of the workflow.
 | Credential          | `API_TOKEN`                                | `FULL_ACCESS_TOKEN`              |
 | Purpose             | Read workload through Marvin's limited API | Apply reviewed changes           |
 | Can run unattended? | Yes                                        | No                               |
-| Mutation approval   | —                                          | Interactive `[y/N]`              |
+| Mutation approval   | —                                          | Explicit interactive `y` or `n`  |
 | Recovery            | —                                          | Receipts + conflict-aware revert |
 
 The full-access token is never placed in a plan, MCP configuration, AI prompt, command-line argument, or environment variable.
@@ -201,8 +201,10 @@ metadata are used when supplied by the plan or live document. Color chips automa
 black or white text for WCAG contrast, and textual labels plus encoding-safe fallbacks keep all
 meaning available in monochrome, redirected, and legacy Windows terminals.
 
-By default, `apply` asks once for confirmation before making changes. If you have already reviewed
-the complete plan and want the faster daily workflow, use:
+By default, `apply` requires an explicit `y` or `n` before making changes. Empty or unrecognized
+input explains the accepted answers and re-prompts instead of silently choosing a default. An
+explicit decline confirms that no Marvin data changed. If you have already reviewed the complete
+plan and want the faster daily workflow, use:
 
 ```console
 marvin-pilot apply plans/first-plan.json --yes
@@ -211,7 +213,8 @@ marvin-pilot apply plans/first-plan.json -y
 ```
 
 `--yes` never skips parsing, limits, live preflight, concurrency checks, receipt journaling, API
-verification, or the interactive-terminal requirement. It only skips the final `[y/N]` keystroke.
+verification, or the interactive-terminal requirement. It only skips the final explicit `y`/`n`
+decision.
 `revert` deliberately continues to require its explicit prompt. Apply and revert use a separate
 progress bar, so their elapsed time and ETA cover only that phase instead of including the
 preflight wait.
@@ -410,9 +413,10 @@ The intended boundary is simple:
 
 **Human:** review plans, run `apply`, run `revert`.
 
-`apply` and `revert` require an interactive controlling terminal and default to **No**. A human may
-opt into `apply --yes` after reviewing a plan; it skips the final keystroke but not the terminal
-requirement or any safety check. Revert has no equivalent bypass.
+`apply` and `revert` require an interactive controlling terminal and an explicit `y` or `n` decision;
+empty input is never approval or decline. A human may opt into `apply --yes` after reviewing a plan;
+it skips the final decision but not the terminal requirement or any safety check. Revert has no
+equivalent bypass.
 
 The full-access credential is retrieved only when a live command needs it and is never written into plans or receipts.
 
