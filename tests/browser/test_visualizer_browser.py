@@ -1019,7 +1019,7 @@ def test_regression_01_has_exact_cross_pane_indentation_and_move_navigation(page
         assert tray.is_visible()
         assert "moved items" in tray.locator(".comparison-tray-title").inner_text()
         assert moved_task["after"]["parent"]["title"] in tray.inner_text()
-        assert tray.get_by_role("button", name="Jump to After").count() == 1
+        tray.get_by_role("button", name="Jump to After").wait_for(state="visible")
 
         page.get_by_role("radio", name="Changes").click()
         assert page.locator("#changes-grouping-control").is_visible()
