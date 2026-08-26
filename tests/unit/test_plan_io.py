@@ -470,6 +470,29 @@ def test_subtask_conversion_requires_ordered_dependent_trash() -> None:
 
 
 def test_subtask_source_provenance_is_strict_and_single_use() -> None:
+    accepted_loss = _subtask_conversion_plan()
+    accepted_loss["operations"][0]["after"]["subtasks"][0]["sourceTask"]["acceptLoss"] = [
+        "estimatedTimeDuration",
+        "note",
+    ]
+    parsed = parse_plan_bytes(encode(accepted_loss))
+    source = parsed.operations[0].after.subtasks[0].sourceTask
+    assert source is not None
+    assert source.acceptLoss == ["estimatedTimeDuration", "note"]
+
+    unknown_loss = _subtask_conversion_plan()
+    unknown_loss["operations"][0]["after"]["subtasks"][0]["sourceTask"]["acceptLoss"] = ["rank"]
+    with pytest.raises(PlanSyntaxError, match="acceptLoss"):
+        parse_plan_bytes(encode(unknown_loss))
+
+    duplicate_loss = _subtask_conversion_plan()
+    duplicate_loss["operations"][0]["after"]["subtasks"][0]["sourceTask"]["acceptLoss"] = [
+        "note",
+        "note",
+    ]
+    with pytest.raises(PlanSyntaxError, match="unique fields"):
+        parse_plan_bytes(encode(duplicate_loss))
+
     value = _subtask_conversion_plan()
     value["operations"][0]["before"]["subtasks"] = [
         {

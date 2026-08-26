@@ -346,7 +346,11 @@ def subtask_conversion_plan() -> dict:
                         {
                             "id": "order",
                             "title": "(1) Order food",
-                            "sourceTask": {"id": "loose-order", "title": "Order food"},
+                            "sourceTask": {
+                                "id": "loose-order",
+                                "title": "Order food",
+                                "acceptLoss": ["estimatedTimeDuration"],
+                            },
                         },
                         {"id": "pickup", "title": "(2) Pick up food", "done": True},
                         {"id": "check", "title": "(3) Check the food is correct"},
@@ -1068,6 +1072,10 @@ def test_ordered_subtasks_and_loose_task_conversion_are_visually_traceable(page)
         assert after.locator(".subtask-row.done").count() == 1
         source = after.locator('[data-source-task-id="loose-order"]')
         assert source.locator(".subtask-source").inner_text() == "From Order food"
+        assert source.locator(".subtask-loss").inner_text() == "Drops Estimated time duration"
+        assert "Explicitly accepted source-task data loss" in source.locator(
+            ".subtask-loss"
+        ).get_attribute("title")
         source.hover()
         assert (
             page.locator('[data-operation-id="trash-loose-order"].counterpart-highlight').count()
@@ -1079,6 +1087,7 @@ def test_ordered_subtasks_and_loose_task_conversion_are_visually_traceable(page)
         assert details.locator(".subtask-diff-row").count() == 4
         detail_text = details.inner_text()
         assert "Converted from loose task: Order food" in detail_text
+        assert "Explicitly accepted loss: Estimated time duration" in detail_text
         assert "Removed" in detail_text
         assert "Completed" in detail_text
         assert "Moved from 1 to 2" in detail_text

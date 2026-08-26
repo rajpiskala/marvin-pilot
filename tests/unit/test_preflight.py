@@ -305,7 +305,10 @@ def test_desired_field_verification_is_exact() -> None:
     assert not desired_fields_match(None, {})
 
 
-def _subtask_conversion_plan():
+def _subtask_conversion_plan(*, accept_loss: list[str] | None = None):
+    source_task = {"id": "loose-order", "title": "Order food"}
+    if accept_loss is not None:
+        source_task["acceptLoss"] = accept_loss
     value = {
         "schemaVersion": 1,
         "planId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -323,7 +326,7 @@ def _subtask_conversion_plan():
                         {
                             "id": "sub-order",
                             "title": "Order food",
-                            "sourceTask": {"id": "loose-order", "title": "Order food"},
+                            "sourceTask": source_task,
                         }
                     ]
                 },
@@ -364,9 +367,16 @@ def _subtask_documents() -> dict[str, dict[str, Any]]:
 
 
 def test_subtask_conversion_preflight_preserves_source_and_compiles_atomically() -> None:
-    result = preflight_plan(
-        _subtask_conversion_plan(), FakeReader(_subtask_documents()), now_ms=NOW_MS
+    documents = _subtask_documents()
+    documents["loose-order"].update(
+        {
+            "rank": 500,
+            "masterRank": 900,
+            "firstScheduled": "2026-07-01",
+            "workedOnAt": 1_786_200_000_000,
+        }
     )
+    result = preflight_plan(_subtask_conversion_plan(), FakeReader(documents), now_ms=NOW_MS)
     update, trash = result.operations
     subtasks = next(
         setter["val"]
@@ -388,12 +398,18 @@ def test_subtask_conversion_preflight_preserves_source_and_compiles_atomically()
             lambda docs: docs["loose-order"].update({"done": True}),
             "cannot convert completed sourceTask",
         ),
-        (lambda docs: docs["loose-order"].update({"note": "Keep this"}), "not represented.*note"),
+        (
+            lambda docs: docs["loose-order"].update({"note": "Keep this"}),
+            "acceptLoss.*note",
+        ),
         (
             lambda docs: docs["loose-order"].update({"isStarred": 1}),
-            "not represented.*isStarred",
+            "acceptLoss.*starPriority",
         ),
         (lambda docs: docs["loose-order"].update({"isPinned": True}), "coupled behavior"),
+        (lambda docs: docs["loose-order"].update({"subtasks": {"one": {}}}), "existing subtasks"),
+        (lambda docs: docs["loose-order"].update({"dependsOn": {"task-a": True}}), "dependencies"),
+        (lambda docs: docs["loose-order"].update({"duration": 600_000}), "tracked time"),
     ],
 )
 def test_subtask_conversion_rejects_lossy_or_stale_sources(mutation, message: str) -> None:
@@ -401,3 +417,26 @@ def test_subtask_conversion_rejects_lossy_or_stale_sources(mutation, message: st
     mutation(documents)
     with pytest.raises(LivePreconditionError, match=message):
         preflight_plan(_subtask_conversion_plan(), FakeReader(documents), now_ms=NOW_MS)
+
+
+def test_subtask_conversion_requires_exact_loss_acknowledgments() -> None:
+    documents = _subtask_documents()
+    documents["loose-order"]["timeEstimate"] = 600_000
+
+    result = preflight_plan(
+        _subtask_conversion_plan(accept_loss=["estimatedTimeDuration"]),
+        FakeReader(documents),
+        now_ms=NOW_MS,
+    )
+
+    assert [(warning.check, warning.expected, warning.found) for warning in result.warnings] == [
+        ("source-task-accepted-loss", [], ["estimatedTimeDuration"])
+    ]
+    assert "explicitly accepts sourceTask" in result.warnings[0].message
+
+    with pytest.raises(LivePreconditionError, match=r"not present.*note"):
+        preflight_plan(
+            _subtask_conversion_plan(accept_loss=["estimatedTimeDuration", "note"]),
+            FakeReader(documents),
+            now_ms=NOW_MS,
+        )

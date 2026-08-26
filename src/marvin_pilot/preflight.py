@@ -469,16 +469,30 @@ def _verify_references(
     return tuple(warnings)
 
 
-_SUBTASK_CONVERSION_LOSS_FIELDS = tuple(
-    dict.fromkeys(
-        [
-            spec.marvin_name
-            for plan_name, spec in FIELD_SPECS.items()
-            if plan_name not in {"title", "parent"}
-        ]
-        + ["firstScheduled", "times", "duration", "workedOnAt"]
+_SUBTASK_ACCEPTABLE_LOSS_FIELDS = {
+    plan_name: FIELD_SPECS[plan_name].marvin_name
+    for plan_name in (
+        "scheduledDate",
+        "dueDate",
+        "startDate",
+        "endDate",
+        "plannedWeek",
+        "plannedMonth",
+        "labels",
+        "estimatedTimeDuration",
+        "note",
+        "dailySection",
+        "bonusSection",
+        "customSectionId",
+        "timeBlockSectionId",
+        "starPriority",
+        "frogSize",
+        "backburner",
+        "reviewDate",
+        "snoozedUntil",
+        "permanentSnoozeUntil",
     )
-)
+}
 
 
 def _conversion_value_is_meaningful(value: Any) -> bool:
@@ -492,14 +506,15 @@ def _verify_subtask_sources(
     reader: DocumentReader,
     cache: dict[str, dict[str, Any] | None],
     planned_creates: dict[str, CreateOperation],
-) -> None:
+) -> tuple[_OperationWarning, ...]:
     if (
         not isinstance(operation, (UpdateOperation, CreateOperation))
         or operation.target.type == "recurringTask"
     ):
-        return
+        return ()
     if "subtasks" not in operation.after.model_fields_set or operation.after.subtasks is None:
-        return
+        return ()
+    warnings: list[_OperationWarning] = []
     for subtask in operation.after.subtasks:
         source = subtask.sourceTask
         if source is None:
@@ -533,21 +548,57 @@ def _verify_subtask_sources(
                 f"completion as subtasks[].done={bool(document.get('done', False))!r}"
             )
         reasons = coupled_task_reasons(document)
+        if _conversion_value_is_meaningful(document.get("subtasks")):
+            reasons.append("existing subtasks")
+        if _conversion_value_is_meaningful(document.get("dependsOn")):
+            reasons.append("dependencies")
+        if any(
+            _conversion_value_is_meaningful(document.get(field)) for field in ("times", "duration")
+        ):
+            reasons.append("tracked time history")
         if reasons:
             raise LivePreconditionError(
                 f"operation {operation.operationId!r} cannot convert sourceTask {source.id!r} "
                 "with coupled behavior: " + ", ".join(reasons)
             )
         lossy = [
-            field
-            for field in _SUBTASK_CONVERSION_LOSS_FIELDS
-            if _conversion_value_is_meaningful(document.get(field))
+            plan_name
+            for plan_name, marvin_name in _SUBTASK_ACCEPTABLE_LOSS_FIELDS.items()
+            if _conversion_value_is_meaningful(document.get(marvin_name))
         ]
-        if lossy:
+        accepted = list(source.acceptLoss)
+        unacknowledged = [field for field in lossy if field not in accepted]
+        unused = [field for field in accepted if field not in lossy]
+        if unacknowledged:
             raise LivePreconditionError(
                 f"operation {operation.operationId!r} cannot convert sourceTask {source.id!r}; "
-                "these fields are not represented by a basic subtask: " + ", ".join(lossy)
+                "explicitly acknowledge fields not represented by a basic subtask with "
+                "sourceTask.acceptLoss: " + ", ".join(unacknowledged),
+                check="source-task-unacknowledged-loss",
+                expected=lossy,
+                found=accepted,
             )
+        if unused:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} sourceTask {source.id!r} accepts loss "
+                "that is not present in live state: " + ", ".join(unused),
+                check="source-task-unused-loss-acknowledgment",
+                expected=lossy,
+                found=accepted,
+            )
+        if accepted:
+            warnings.append(
+                _OperationWarning(
+                    check="source-task-accepted-loss",
+                    message=(
+                        f"operation {operation.operationId!r} explicitly accepts sourceTask "
+                        f"{source.id!r} data loss: " + ", ".join(accepted)
+                    ),
+                    expected=[],
+                    found=accepted,
+                )
+            )
+    return tuple(warnings)
 
 
 def _verify_project_parent_hierarchy(
@@ -661,10 +712,11 @@ def validate_plan_live(
                 revision = _revision_snapshot(live)
             if isinstance(operation, CreateOperation):
                 _verify_recurrence_identity(operation, live, reader, cache)
-            operation_warnings = _verify_references(
+            reference_warnings = _verify_references(
                 operation, reader, cache, metadata_cache, planned_creates
             )
-            _verify_subtask_sources(operation, reader, cache, planned_creates)
+            source_warnings = _verify_subtask_sources(operation, reader, cache, planned_creates)
+            operation_warnings = reference_warnings + source_warnings
             _verify_project_parent_hierarchy(operation, reader, cache, planned_creates)
             checked.append(
                 PreflightOperation(

@@ -341,6 +341,7 @@ def test_subtask_consolidation_apply_and_revert_restores_exact_embedded_map(
             "done": False,
             "day": "unassigned",
             "parentId": "unassigned",
+            "timeEstimate": 600_000,
             "updatedAt": 200,
         },
     }
@@ -364,7 +365,11 @@ def test_subtask_consolidation_apply_and_revert_restores_exact_embedded_map(
                             "id": "converted-order",
                             "title": "Order food",
                             "done": False,
-                            "sourceTask": {"id": source_id, "title": "Order food"},
+                            "sourceTask": {
+                                "id": source_id,
+                                "title": "Order food",
+                                "acceptLoss": ["estimatedTimeDuration"],
+                            },
                         },
                         {
                             "id": "existing-pickup",
@@ -387,12 +392,13 @@ def test_subtask_consolidation_apply_and_revert_restores_exact_embedded_map(
     raw = json.dumps(value).encode()
     client = InMemoryMarvin(documents)
     clock = Clock()
+    reviews = []
     source = execute_apply(
         parse_plan_bytes(raw),
         raw,
         client=client,
         history=HistoryStore(tmp_path, now=clock),
-        approve=lambda _checked: True,
+        approve=lambda checked: reviews.append(checked) or True,
         now_ms=lambda: APPLY_MS,
         wall_clock=clock,
     )
@@ -403,10 +409,13 @@ def test_subtask_consolidation_apply_and_revert_restores_exact_embedded_map(
     assert applied["existing-pickup"]["nativeExtension"] == {"keep": "exactly"}
     assert applied["existing-pickup"]["doneAt"] == APPLY_MS
     assert source_id not in client.documents
+    assert reviews[0].warnings[0].check == "source-task-accepted-loss"
+    assert source.receipt.operations[1].beforeDocument["timeEstimate"] == 600_000
 
     revert_fixture(tmp_path, client, source, clock)
     assert client.documents[parent_id]["subtasks"] == original_subtasks
     assert client.documents[source_id]["title"] == "Order food"
+    assert client.documents[source_id]["timeEstimate"] == 600_000
     assert "deletedAt" not in client.documents[source_id]
 
 

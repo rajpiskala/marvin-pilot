@@ -54,6 +54,8 @@ class SubtaskItemView:
     order: int
     source_task_id: str | None
     source_task_title: str | None
+    accepted_loss: tuple[str, ...]
+    accepted_loss_labels: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,17 +276,24 @@ def _task_card(
         note_state, note = "clear", None
     else:
         note_state, note = "value", values["note"]
-    subtasks = tuple(
-        SubtaskItemView(
-            id=item["id"],
-            title=item["title"],
-            done=item.get("done", False),
-            order=index,
-            source_task_id=(item.get("sourceTask") or {}).get("id"),
-            source_task_title=(item.get("sourceTask") or {}).get("title"),
+    subtasks = []
+    for index, item in enumerate(values.get("subtasks") or [], start=1):
+        source = item.get("sourceTask") or {}
+        accepted_loss = tuple(source.get("acceptLoss") or [])
+        subtasks.append(
+            SubtaskItemView(
+                id=item["id"],
+                title=item["title"],
+                done=item.get("done", False),
+                order=index,
+                source_task_id=source.get("id"),
+                source_task_title=source.get("title"),
+                accepted_loss=accepted_loss,
+                accepted_loss_labels=tuple(
+                    presentation_for(field).label for field in accepted_loss
+                ),
+            )
         )
-        for index, item in enumerate(values.get("subtasks") or [], start=1)
-    )
     return TaskCardView(
         title=title,
         title_source=title_source,
@@ -292,7 +301,7 @@ def _task_card(
         items=tuple(items),
         note_state=note_state,
         note=note,
-        subtasks=subtasks,
+        subtasks=tuple(subtasks),
         fields_shown=len(values),
     )
 

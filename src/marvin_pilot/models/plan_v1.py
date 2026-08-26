@@ -94,11 +94,35 @@ class LabelRef(ClosedModel):
         return None if value is None else _non_empty(value, "labels[].title", maximum=1_000)
 
 
+SubtaskAcceptedLoss = Literal[
+    "scheduledDate",
+    "dueDate",
+    "startDate",
+    "endDate",
+    "plannedWeek",
+    "plannedMonth",
+    "labels",
+    "estimatedTimeDuration",
+    "note",
+    "dailySection",
+    "bonusSection",
+    "customSectionId",
+    "timeBlockSectionId",
+    "starPriority",
+    "frogSize",
+    "backburner",
+    "reviewDate",
+    "snoozedUntil",
+    "permanentSnoozeUntil",
+]
+
+
 class SubtaskSourceRef(ClosedModel):
     """Optional provenance for safely converting a loose task into a subtask."""
 
     id: StrictStr
     title: StrictStr
+    acceptLoss: list[SubtaskAcceptedLoss] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -109,6 +133,13 @@ class SubtaskSourceRef(ClosedModel):
     @classmethod
     def validate_title(cls, value: str) -> str:
         return _non_empty(value, "subtasks[].sourceTask.title", maximum=1_000)
+
+    @field_validator("acceptLoss")
+    @classmethod
+    def validate_accept_loss(cls, value: list[SubtaskAcceptedLoss]) -> list[SubtaskAcceptedLoss]:
+        if len(value) != len(set(value)):
+            raise ValueError("subtasks[].sourceTask.acceptLoss must contain unique fields")
+        return value
 
 
 class SubtaskFields(ClosedModel):

@@ -544,6 +544,50 @@ def test_every_task_field_has_an_exact_diff_and_card_fallback() -> None:
     assert operation.after.subtasks[0].done is True
 
 
+def test_source_task_accepted_loss_is_explicit_view_data() -> None:
+    value = {
+        "schemaVersion": 1,
+        "planId": "55555555-5555-4555-8555-555555555555",
+        "createdAt": "2026-08-09T08:00:00-07:00",
+        "summary": "Preview acknowledged source-task loss.",
+        "operations": [
+            {
+                "operationId": "build-checklist",
+                "action": "update",
+                "target": {"type": "task", "id": "parent", "title": "Parent task"},
+                "reason": "Consolidate one source task.",
+                "before": {"subtasks": []},
+                "after": {
+                    "subtasks": [
+                        {
+                            "id": "sub-a",
+                            "title": "Source task",
+                            "sourceTask": {
+                                "id": "source-a",
+                                "title": "Source task",
+                                "acceptLoss": ["estimatedTimeDuration", "note"],
+                            },
+                        }
+                    ]
+                },
+            },
+            {
+                "operationId": "trash-source",
+                "action": "trash",
+                "target": {"type": "task", "id": "source-a", "title": "Source task"},
+                "reason": "The subtask replaces the source.",
+                "dependsOnOperations": ["build-checklist"],
+            },
+        ],
+    }
+
+    operation = _view(value).operations[0]
+    assert operation.after is not None
+    source = operation.after.subtasks[0]
+    assert source.accepted_loss == ("estimatedTimeDuration", "note")
+    assert source.accepted_loss_labels == ("Estimated time duration", "Note")
+
+
 def test_untrusted_html_stays_plain_view_data() -> None:
     value = copy.deepcopy(EXAMPLE_PLAN)
     value["operations"][0]["target"]["title"] = '<img src=x onerror="alert(1)">'

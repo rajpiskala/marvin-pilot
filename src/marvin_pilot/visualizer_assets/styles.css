@@ -1459,6 +1459,17 @@ footer {
   white-space: nowrap;
 }
 
+.subtask-loss {
+  padding: 2px 5px;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning) 14%, var(--card-background));
+  color: var(--warning);
+  font-size: 8px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .subtask-row.source-highlight {
   outline: 2px solid var(--focus);
   outline-offset: 1px;

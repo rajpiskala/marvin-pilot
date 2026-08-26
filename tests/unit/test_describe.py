@@ -52,6 +52,51 @@ def test_description_formats_lists_booleans_and_dependencies() -> None:
     assert "depends on: reschedule-wash-dishes" in rendered
 
 
+def test_description_calls_out_explicitly_accepted_source_task_loss() -> None:
+    value = {
+        "schemaVersion": 1,
+        "planId": "55555555-5555-4555-8555-555555555555",
+        "createdAt": "2026-08-09T08:00:00-07:00",
+        "summary": "Describe acknowledged source-task loss.",
+        "operations": [
+            {
+                "operationId": "build-checklist",
+                "action": "update",
+                "target": {"type": "task", "id": "parent", "title": "Parent task"},
+                "reason": "Consolidate one source task.",
+                "before": {"subtasks": []},
+                "after": {
+                    "subtasks": [
+                        {
+                            "id": "sub-a",
+                            "title": "Source task",
+                            "sourceTask": {
+                                "id": "source-a",
+                                "title": "Source task",
+                                "acceptLoss": ["estimatedTimeDuration", "note"],
+                            },
+                        }
+                    ]
+                },
+            },
+            {
+                "operationId": "trash-source",
+                "action": "trash",
+                "target": {"type": "task", "id": "source-a", "title": "Source task"},
+                "reason": "The subtask replaces the source.",
+                "dependsOnOperations": ["build-checklist"],
+            },
+        ],
+    }
+
+    rendered = render_plan_description(parse_plan_bytes(json.dumps(value).encode()))
+
+    assert (
+        "explicitly accepted sourceTask loss: Source task [source-a] -> "
+        "estimated time duration, note"
+    ) in rendered
+
+
 def test_live_description_surfaces_preflight_and_compiler_managed_fields() -> None:
     from marvin_pilot.describe import render_live_preflight
 

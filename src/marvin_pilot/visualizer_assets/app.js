@@ -453,6 +453,12 @@ function renderCard(
         source.title = `Converted from loose task ${subtask.source_task_id}`;
         item.append(source);
       }
+      if (subtask.accepted_loss_labels.length > 0) {
+        const fields = subtask.accepted_loss_labels.join(", ");
+        const loss = node("span", "subtask-loss", `Drops ${fields}`);
+        loss.title = `Explicitly accepted source-task data loss: ${fields}`;
+        item.append(loss);
+      }
       list.append(item);
     });
     subtaskDetails.append(list);
@@ -527,6 +533,9 @@ function renderSubtaskDiff(operation) {
       description = newEntry.item.source_task_title
         ? `Converted from loose task: ${newEntry.item.source_task_title}`
         : "Added";
+      if (newEntry.item.accepted_loss_labels.length > 0) {
+        description += ` · Explicitly accepted loss: ${newEntry.item.accepted_loss_labels.join(", ")}`;
+      }
     } else if (!newEntry) {
       kind = "removed";
       description = "Removed";

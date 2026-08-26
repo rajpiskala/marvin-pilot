@@ -1551,6 +1551,34 @@
       "additionalProperties": false,
       "description": "Optional provenance for safely converting a loose task into a subtask.",
       "properties": {
+        "acceptLoss": {
+          "items": {
+            "enum": [
+              "scheduledDate",
+              "dueDate",
+              "startDate",
+              "endDate",
+              "plannedWeek",
+              "plannedMonth",
+              "labels",
+              "estimatedTimeDuration",
+              "note",
+              "dailySection",
+              "bonusSection",
+              "customSectionId",
+              "timeBlockSectionId",
+              "starPriority",
+              "frogSize",
+              "backburner",
+              "reviewDate",
+              "snoozedUntil",
+              "permanentSnoozeUntil"
+            ],
+            "type": "string"
+          },
+          "title": "Acceptloss",
+          "type": "array"
+        },
         "id": {
           "title": "Id",
           "type": "string"

@@ -68,6 +68,21 @@ def format_plan_value(field: str, value: Any) -> str:
     return str(value)
 
 
+def _accepted_source_loss_lines(fields: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for subtask in fields.get("subtasks") or []:
+        source = subtask.get("sourceTask") or {}
+        accepted = source.get("acceptLoss") or []
+        if not accepted:
+            continue
+        labels = ", ".join(FIELD_LABELS.get(field, field) for field in accepted)
+        lines.append(
+            f"   explicitly accepted sourceTask loss: {source.get('title', source['id'])} "
+            f"[{source['id']}] -> {labels}"
+        )
+    return lines
+
+
 def render_plan_description(plan: ChangePlanV1) -> str:
     """Render a stable plain-text summary suitable for humans and LLMs."""
 
@@ -105,10 +120,12 @@ def render_plan_description(plan: ChangePlanV1) -> str:
                     f"   {FIELD_LABELS[field]}: {format_plan_value(field, before[field])} -> "
                     f"{format_plan_value(field, new_value)}"
                 )
+            lines.extend(_accepted_source_loss_lines(after))
         elif isinstance(operation, CreateOperation):
             after = operation.after.model_dump(exclude_unset=True, mode="json")
             for field, new_value in after.items():
                 lines.append(f"   {FIELD_LABELS[field]}: {format_plan_value(field, new_value)}")
+            lines.extend(_accepted_source_loss_lines(after))
         elif isinstance(operation, CompleteOperation):
             lines.append(f"   completed at: {operation.completedAt}")
 

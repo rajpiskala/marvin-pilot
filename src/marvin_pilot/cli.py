@@ -1206,8 +1206,16 @@ Subtask notes:
     prior subtask, and null clears the checklist. Title and done support rename/reopen/complete.
   - To consolidate a loose task, add sourceTask: {{"id":"...","title":"..."}} only on a new
     after.subtasks item, then add a later trash operation for that source task. The Trash must
-    depend on the parent create/update operation. Live preflight rejects stale, coupled, completed,
-    or metadata-rich sources that a basic subtask cannot preserve.
+    depend on the parent create/update operation.
+  - Marvin ordering/history bookkeeping (rank, masterRank, firstScheduled, workedOnAt) is expected
+    to disappear. Meaningful unrepresentable fields require an exact sourceTask.acceptLoss array.
+    Allowed acknowledgments: scheduledDate, dueDate, startDate, endDate, plannedWeek, plannedMonth,
+    labels, estimatedTimeDuration, note, dailySection, bonusSection, customSectionId,
+    timeBlockSectionId, starPriority, frogSize, backburner, reviewDate, snoozedUntil,
+    permanentSnoozeUntil. Missing and unused acknowledgments fail live validation.
+  - Existing source subtasks, dependencies, recurrence, completion, and tracked-time history remain
+    hard blockers. Accepted losses are visible in descriptions, live/apply warnings, visualizer
+    badges, and the receipt's immutable source plan.
   - Pilot merges retained native subtask records by ID, preserves unknown native metadata, writes
     deterministic ranks, snapshots the entire embedded map, and restores it exactly on revert.
 
