@@ -61,6 +61,7 @@ from marvin_pilot.describe import (
     render_revert_preflight,
 )
 from marvin_pilot.errors import (
+    LivePreconditionError,
     MarvinPilotError,
     PlanSemanticError,
     PlanSyntaxError,
@@ -71,7 +72,7 @@ from marvin_pilot.executor import execute_apply, unix_milliseconds
 from marvin_pilot.history import HistoryStore
 from marvin_pilot.marvin_client import MarvinClient
 from marvin_pilot.plan_io import MAX_PLAN_BYTES, load_plan, parse_plan_bytes, plan_digest
-from marvin_pilot.preflight import preflight_plan
+from marvin_pilot.preflight import LiveValidationResult, preflight_plan, validate_plan_live
 from marvin_pilot.reverter import execute_revert
 from marvin_pilot.schema import plan_schema_json
 from marvin_pilot.terminal_review import render_live_preflight_terminal
@@ -455,17 +456,183 @@ def doctor_command(
     _render_doctor_report(rows, success=True, target_console=console)
 
 
+def _live_validation_indices(
+    plan,
+    *,
+    from_index: int | None,
+    from_operation: str | None,
+    target_ids: list[str],
+) -> tuple[int, ...]:
+    modes = sum((from_index is not None, from_operation is not None, bool(target_ids)))
+    if modes > 1:
+        raise PlanSyntaxError(
+            "use only one live-validation selector: --from-index, --from-operation, or --target"
+        )
+    if from_index is not None:
+        if from_index < 1 or from_index > len(plan.operations):
+            raise PlanSyntaxError(
+                f"--from-index must be between 1 and {len(plan.operations)}, got {from_index}"
+            )
+        return tuple(range(from_index, len(plan.operations) + 1))
+    if from_operation is not None:
+        for index, operation in enumerate(plan.operations, start=1):
+            if operation.operationId == from_operation:
+                return tuple(range(index, len(plan.operations) + 1))
+        raise PlanSyntaxError(f"--from-operation does not match an operation: {from_operation!r}")
+    if target_ids:
+        requested = set(target_ids)
+        matched = tuple(
+            index
+            for index, operation in enumerate(plan.operations, start=1)
+            if operation.target.id in requested
+        )
+        missing = sorted(requested - {plan.operations[index - 1].target.id for index in matched})
+        if missing:
+            raise PlanSyntaxError("--target ID is not present in the plan: " + ", ".join(missing))
+        return matched
+    return tuple(range(1, len(plan.operations) + 1))
+
+
+def _live_validation_payload(result: LiveValidationResult) -> dict[str, object]:
+    processed = len(result.operations) + len(result.errors)
+    return {
+        "schemaVersion": 1,
+        "valid": result.valid,
+        "planId": result.plan.planId,
+        "digest": plan_digest(result.plan),
+        "totalOperations": len(result.plan.operations),
+        "selectedOperations": len(result.selected_indices),
+        "processedOperations": processed,
+        "strictConcurrency": result.strict_concurrency,
+        "errors": len(result.errors),
+        "warnings": len(result.warnings),
+        "diagnostics": [
+            {
+                "severity": item.severity,
+                "operationIndex": item.operation_index,
+                "operationId": item.operation_id,
+                "targetId": item.target_id,
+                "check": item.check,
+                "message": item.message,
+                "expected": item.expected,
+                "found": item.found,
+            }
+            for item in result.diagnostics
+        ],
+    }
+
+
+def _render_live_validation(result: LiveValidationResult) -> str:
+    status = "PASSED" if result.valid else "FAILED"
+    processed = len(result.operations) + len(result.errors)
+    lines = [
+        f"Live validation: {status}",
+        f"Plan ID: {result.plan.planId}",
+        f"Digest: {plan_digest(result.plan)}",
+        (
+            f"Selection: {len(result.selected_indices)} of {len(result.plan.operations)} "
+            f"operation(s); processed {processed}"
+        ),
+        f"Diagnostics: {len(result.errors)} error(s), {len(result.warnings)} warning(s)",
+    ]
+    for item in result.diagnostics:
+        lines.append(
+            f"{item.severity.upper()} {item.operation_index}. [{item.operation_id}] "
+            f"target={item.target_id} check={item.check}: {item.message}"
+        )
+        if item.expected is not None or item.found is not None:
+            lines.append(f"  expected={item.expected!r}; found={item.found!r}")
+    return "\n".join(lines) + "\n"
+
+
 @app.command("validate")
 def validate_command(
     plan_path: Annotated[str, typer.Argument(help="Plan JSON path, or - for stdin.")],
+    live: Annotated[
+        bool,
+        typer.Option("--live", help="Collect read-only diagnostics against current Marvin state."),
+    ] = False,
+    from_index: Annotated[
+        int | None,
+        typer.Option("--from-index", help="Start live checks at this 1-based plan entry."),
+    ] = None,
+    from_operation: Annotated[
+        str | None,
+        typer.Option("--from-operation", help="Start live checks at this operation ID."),
+    ] = None,
+    target: Annotated[
+        list[str] | None,
+        typer.Option("--target", help="Live-check operations for this target ID; repeatable."),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit stable JSON diagnostics; progress remains on stderr."),
+    ] = False,
+    fail_fast: Annotated[
+        bool,
+        typer.Option("--fail-fast", help="Stop live checks after the first error."),
+    ] = False,
+    full_access_key_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--full-access-key-file",
+            help="Read the secret from this file; the token itself is never a CLI argument.",
+        ),
+    ] = None,
 ) -> None:
-    """Validate a change plan offline; never load a credential or access the network."""
+    """Validate offline by default, or collect read-only live diagnostics with --live."""
 
     plan = _read_plan_argument(plan_path)
-    typer.echo(
-        f"Valid Marvin Pilot change plan: {len(plan.operations)} operation(s)\n"
-        f"Plan ID: {plan.planId}\nDigest: {plan_digest(plan)}"
+    live_only_options = (
+        from_index is not None
+        or from_operation is not None
+        or bool(target)
+        or json_output
+        or fail_fast
+        or full_access_key_file is not None
     )
+    if not live:
+        if live_only_options:
+            _fail(PlanSyntaxError("live-validation options require --live"))
+        typer.echo(
+            f"Valid Marvin Pilot change plan: {len(plan.operations)} operation(s)\n"
+            f"Plan ID: {plan.planId}\nDigest: {plan_digest(plan)}"
+        )
+        return
+    try:
+        selected_indices = _live_validation_indices(
+            plan,
+            from_index=from_index,
+            from_operation=from_operation,
+            target_ids=target or [],
+        )
+    except MarvinPilotError as exc:
+        _fail(exc)
+    config = _load_config_or_fail()
+    client = _client_from_config(config, full_access_key_file)
+    display = _OperationProgress("Live validation", len(selected_indices))
+    display.start()
+    try:
+        result = validate_plan_live(
+            plan,
+            client,
+            now_ms=unix_milliseconds(),
+            strict_concurrency=config.strict_concurrency,
+            selected_indices=selected_indices,
+            fail_fast=fail_fast,
+            progress=display.update,
+        )
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        display.stop()
+        client.close()
+    if json_output:
+        typer.echo(json.dumps(_live_validation_payload(result), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(_render_live_validation(result), nl=False)
+    if not result.valid:
+        raise typer.Exit(code=LivePreconditionError.exit_code)
 
 
 @app.command("describe")
@@ -983,12 +1150,13 @@ full original document; recovery is through `marvin-pilot revert`, not Marvin's 
 
 Allowlisted task/project fields:
   title                       non-empty item title
-  parent                      {{"id": "...", "title": "optional review hint"}}
+  parent                      {{"id": "...", "title": "optional warning-only review hint"}}
   scheduledDate               YYYY-MM-DD or null to unschedule
   dueDate/startDate/endDate   YYYY-MM-DD or null
   plannedWeek                 Monday date (YYYY-MM-DD) or null
   plannedMonth                YYYY-MM or null
-  labels                      array of {{"id": "...", "title": "optional hint"}} or null
+  labels                      array of {{"id": "...", "title": "optional hint"}} or null;
+                              stale titles warn but do not block
   estimatedTimeDuration       duration string or null; maps to Marvin timeEstimate
   note                        string or null
   subtasks                    ordered array of {{id,title,done?,sourceTask?}} or null; tasks only
@@ -1068,6 +1236,15 @@ Generate machine-readable JSON Schema with:
 Review without credentials or network access with:
   marvin-pilot validate PLAN.json
   marvin-pilot describe PLAN.json
+
+Collect every read-only live error/warning before human apply with:
+  marvin-pilot validate PLAN.json --live
+  marvin-pilot validate PLAN.json --live --json
+  marvin-pilot validate PLAN.json --live --from-index 190
+
+Required target, recurrence-series, and sourceTask titles are strict safety hints. Optional
+parent/label titles produce review warnings with the exact live value; they do not replace ID and
+updatedAt checks. Apply always revalidates the complete plan regardless of diagnostic selectors.
 
 COMPLETE VERSION 1 EXAMPLE
 {complete_example}

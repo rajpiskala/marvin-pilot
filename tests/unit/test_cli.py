@@ -71,6 +71,30 @@ class CliMarvinClient:
         self.closed = True
 
 
+class ReadOnlyCliMarvinClient:
+    def __init__(self, documents: dict[str, dict]) -> None:
+        self.documents = copy.deepcopy(documents)
+        self.reads: list[str] = []
+        self.label_reads = 0
+        self.closed = False
+
+    def get_doc(self, item_id: str):
+        self.reads.append(item_id)
+        document = self.documents.get(item_id)
+        return copy.deepcopy(document) if document is not None else None
+
+    def get_labels(self):
+        self.label_reads += 1
+        return [
+            copy.deepcopy(document | {"_id": item_id})
+            for item_id, document in self.documents.items()
+            if document.get("db") == "Labels"
+        ]
+
+    def close(self) -> None:
+        self.closed = True
+
+
 @pytest.fixture
 def isolated_app_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     config_path = tmp_path / "roaming" / "marvin-pilot" / "config.toml"
@@ -99,6 +123,42 @@ def one_operation_plan() -> dict:
     plan = json.loads(json.dumps(EXAMPLE_PLAN))
     plan["operations"] = [plan["operations"][0]]
     return plan
+
+
+def live_example_documents() -> dict[str, dict]:
+    return {
+        "task-wash-dishes-id": {
+            "_id": "task-wash-dishes-id",
+            "_rev": "1-wash",
+            "db": "Tasks",
+            "title": "Wash the dishes",
+            "day": "2026-08-08",
+            "firstScheduled": "2026-08-01",
+            "updatedAt": 100,
+        },
+        "task-dinner-id": {
+            "_id": "task-dinner-id",
+            "_rev": "1-dinner",
+            "db": "Tasks",
+            "title": "Eat dinner with Jacob",
+            "parentId": "unassigned",
+            "updatedAt": 200,
+        },
+        "duplicate-task-id": {
+            "_id": "duplicate-task-id",
+            "_rev": "1-duplicate",
+            "db": "Tasks",
+            "title": "Study chapter 3",
+            "updatedAt": 1_786_221_000_123,
+        },
+        "people-category-id": {
+            "_id": "people-category-id",
+            "db": "Categories",
+            "type": "category",
+            "title": "People",
+            "parentId": "root",
+        },
+    }
 
 
 def test_main_help_leads_with_safety_contract() -> None:
@@ -140,6 +200,84 @@ def test_validate_semantic_failure_uses_exit_code_3(tmp_path: Path) -> None:
     result = runner.invoke(app, ["validate", str(path)])
     assert result.exit_code == 3
     assert "does not change any values" in result.stderr
+
+
+def test_validate_live_collects_all_errors_as_json(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path)
+    documents = live_example_documents()
+    documents["task-wash-dishes-id"]["title"] = "Changed wash title"
+    documents["duplicate-task-id"]["updatedAt"] = 999
+    client = ReadOnlyCliMarvinClient(documents)
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+
+    result = runner.invoke(app, ["validate", str(path), "--live", "--json"])
+
+    assert result.exit_code == 5
+    payload = json.loads(result.stdout)
+    assert payload["valid"] is False
+    assert payload["errors"] == 2
+    assert payload["warnings"] == 0
+    assert [item["operationIndex"] for item in payload["diagnostics"]] == [1, 4]
+    assert payload["diagnostics"][0]["expected"] == "Wash the dishes"
+    assert payload["diagnostics"][0]["found"] == "Changed wash title"
+    assert "Live validation" in result.stderr
+    assert all(client.reads.count(item_id) == 1 for item_id in set(client.reads))
+    assert client.closed
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        ["--from-index", "4"],
+        ["--from-operation", "trash-duplicate-math-task"],
+        ["--target", "duplicate-task-id"],
+    ],
+)
+def test_validate_live_can_select_a_late_operation(
+    isolated_app_dirs: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    selector: list[str],
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path)
+    client = ReadOnlyCliMarvinClient(live_example_documents())
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+
+    result = runner.invoke(app, ["validate", str(path), "--live", *selector])
+
+    assert result.exit_code == 0
+    assert "Selection: 1 of 4 operation(s); processed 1" in result.stdout
+    assert client.reads == ["duplicate-task-id"]
+    assert client.closed
+
+
+def test_validate_live_selectors_are_explicit_and_live_only(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path)
+    monkeypatch.setattr(
+        cli_module,
+        "_client_from_config",
+        lambda *_args: pytest.fail("invalid selectors must fail before credentials"),
+    )
+
+    offline = runner.invoke(app, ["validate", str(path), "--from-index", "2"])
+    combined = runner.invoke(
+        app,
+        ["validate", str(path), "--live", "--from-index", "2", "--target", "duplicate-task-id"],
+    )
+    out_of_range = runner.invoke(app, ["validate", str(path), "--live", "--from-index", "5"])
+
+    assert offline.exit_code == 2
+    assert "require --live" in offline.stderr
+    assert combined.exit_code == 2
+    assert "use only one" in combined.stderr
+    assert out_of_range.exit_code == 2
+    assert "between 1 and 4" in out_of_range.stderr
 
 
 def test_describe_is_offline_and_readable(tmp_path: Path) -> None:
@@ -721,6 +859,33 @@ def test_apply_decline_has_exit_6_and_no_receipt(
     assert result.exit_code == 6
     assert "apply declined; no Marvin changes were made" in result.stderr
     assert client.mutations == 0
+    assert runner.invoke(app, ["history", "list"]).stdout.strip() == "No receipts."
+
+
+def test_apply_preflight_reports_all_live_errors_before_approval(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path)
+    documents = live_example_documents()
+    documents["task-wash-dishes-id"]["title"] = "Changed wash title"
+    documents["duplicate-task-id"]["updatedAt"] = 999
+    client = ReadOnlyCliMarvinClient(documents)
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    monkeypatch.setattr(
+        cli_module,
+        "confirm_apply",
+        lambda _count: pytest.fail("a failing preflight must not request approval"),
+    )
+
+    result = runner.invoke(app, ["apply", str(path)])
+
+    assert result.exit_code == 5
+    assert "live preflight found 2 errors" in result.stderr
+    assert "reschedule-wash-dishes" in result.stderr
+    assert "trash-duplicate-math-task" in result.stderr
+    assert all(client.reads.count(item_id) == 1 for item_id in set(client.reads))
+    assert client.closed
     assert runner.invoke(app, ["history", "list"]).stdout.strip() == "No receipts."
 
 

@@ -187,6 +187,36 @@ marvin-pilot describe plans/first-plan.json
 marvin-pilot visualize plans/first-plan.json
 ```
 
+Before handing the plan to the human, an AI assistant may run the read-only live validator:
+
+```console
+marvin-pilot validate plans/first-plan.json --live
+```
+
+Live validation fetches each unique referenced Marvin document once, reports every error and
+non-blocking hint warning in one run, and returns nonzero when any error is present. It never calls
+a mutation endpoint. Use `--json` for stable diagnostics containing the plan index, operation ID,
+target ID, check name, expected value, and live value. Progress remains on stderr, leaving stdout
+machine-readable.
+
+For a large plan, narrow only the advisory live scan:
+
+```console
+# Entries 190 through the end (1-based)
+marvin-pilot validate plan.json --live --from-index 190
+
+# This named operation through the end
+marvin-pilot validate plan.json --live --from-operation move-task-a
+
+# Every operation targeting one or more exact Marvin document IDs
+marvin-pilot validate plan.json --live --target DOC_ID
+```
+
+Selectors avoid unrelated reads but still fetch required parents, dependencies, recurrence
+templates, and source tasks. `--fail-fast` restores one-error diagnostic behavior. `apply` never
+accepts these selectors: immediately before approval it revalidates the complete plan and reports
+all violations, because an earlier successful diagnostic scan is not current write authority.
+
 When the plan looks correct:
 
 ```console
@@ -276,6 +306,13 @@ so a later plan builder can establish exact live locks. Trash subtrees are omitt
 This deliberately avoids a persistent cache and invalidation service. For a fresh historical audit,
 provide a fresh backup; Pilot parses it directly and leaves no expanded copy behind.
 
+Pilot also deliberately does not reconstruct Marvin's Today view from a backup. Today includes
+client-side rollover and section behavior that a snapshot cannot reproduce faithfully. Use the
+limited-access Amazing Marvin MCP for current Today/inbox discovery, backup context for complete
+historical project analysis, and `validate --live` to check the resulting exact proposal against
+current write-side state. This keeps one small interface instead of adding a stale persistent cache,
+a raw document browser, and an automatic plan-rewriting command.
+
 ## Core commands
 
 | Command                               | What it does                               |
@@ -283,6 +320,7 @@ provide a fresh backup; Pilot parses it directly and leaves no expanded copy beh
 | `marvin-pilot doctor`                 | Show account, HTTP, and full-token health  |
 | `marvin-pilot context project …`      | Extract full project history from a backup |
 | `marvin-pilot validate PLAN`          | Strictly validate a plan offline           |
+| `marvin-pilot validate PLAN --live`   | Collect read-only live diagnostics         |
 | `marvin-pilot describe PLAN`          | Print a human-readable description         |
 | `marvin-pilot visualize PLAN`         | Open the local visual diff                 |
 | `marvin-pilot apply PLAN`             | Preflight, confirm, apply, verify, receipt |
@@ -353,6 +391,12 @@ marvin-pilot help plan-format
 ```
 
 V1 supports common task and project fields including titles, parents/categories, dates and scheduling, labels, estimates, notes, ranks, sections, priorities, backburner state, review dates, and snooze values. Tasks additionally support star priority, `masterRank`, dependencies, and ordered embedded `subtasks`. JSON `null` clears a supported value.
+
+Existing targets use exact IDs plus required title safety hints. Target, recurrence-series, and
+`sourceTask` titles remain hard live preconditions. Optional `parent.title` and label titles are
+review hints: stale values produce prominent warnings containing the exact live replacement but do
+not block an otherwise identity- and concurrency-safe plan. Pilot never applies fuzzy emoji or
+whitespace normalization.
 
 Each subtask has a stable `id`, exact `title`, and `done` state; array order becomes native Marvin rank. Retained subtask records are merged by ID so unknown native metadata survives. Omission removes a prior subtask and `null` clears the checklist. A new subtask may include review-only `sourceTask: {id, title}` when consolidating a loose task, but only with a later dependent `trash` operation. Live preflight refuses stale, coupled, completed, or metadata-rich sources that cannot be represented losslessly, and receipts restore the original embedded map exactly.
 

@@ -276,19 +276,40 @@ def render_live_preflight_terminal(result: PreflightResult, *, encoding: str) ->
     summary.add_row("Digest", plan_digest(result.plan))
     summary.add_row("Operations", f"{len(result.operations)} ({totals})")
     summary.add_row("Strict concurrency", "ON" if result.strict_concurrency else "OFF")
+    has_warnings = bool(result.warnings)
+    status_style = "bold bright_yellow" if has_warnings else "bold bright_green"
+    status_text = (
+        f"Live preflight: PASSED with {len(result.warnings)} warning(s)"
+        if has_warnings
+        else f"Live preflight: PASSED for {len(result.operations)} operation(s)"
+    )
     header = Panel(
         Group(
-            Text(
-                f"Live preflight: PASSED for {len(result.operations)} operation(s)",
-                style="bold bright_green",
-            ),
+            Text(status_text, style=status_style),
             summary,
         ),
         title=Text("REVIEWED APPLY PLAN", style="bold bright_green"),
-        border_style="bright_green",
+        border_style="bright_yellow" if has_warnings else "bright_green",
         box=box.ASCII,
         padding=(1, 2),
     )
+    warning_panel = None
+    if has_warnings:
+        warning_lines = Text()
+        for index, warning in enumerate(result.warnings):
+            if index:
+                warning_lines.append("\n")
+            warning_lines.append(
+                f"{warning.operation_index}. [{warning.operation_id}] ", style="bold"
+            )
+            warning_lines.append(warning.message)
+        warning_panel = Panel(
+            warning_lines,
+            title=Text("REVIEW WARNINGS", style="bold bright_yellow"),
+            border_style="bright_yellow",
+            box=box.ASCII,
+            padding=(1, 2),
+        )
     operations = [
         _operation_panel(
             checked,
@@ -298,4 +319,8 @@ def render_live_preflight_terminal(result: PreflightResult, *, encoding: str) ->
         )
         for index, checked in enumerate(result.operations, start=1)
     ]
-    return Group(header, *operations, fit=False)
+    components = [header]
+    if warning_panel is not None:
+        components.append(warning_panel)
+    components.extend(operations)
+    return Group(*components, fit=False)

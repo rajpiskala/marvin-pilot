@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class MarvinPilotError(Exception):
     """Base class for failures that can be shown without a traceback."""
@@ -35,6 +37,19 @@ class LivePreconditionError(MarvinPilotError):
     """Live Marvin state does not match the reviewed plan."""
 
     exit_code = 5
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        check: str = "live-precondition",
+        expected: Any = None,
+        found: Any = None,
+    ) -> None:
+        super().__init__(message)
+        self.check = check
+        self.expected = expected
+        self.found = found
 
 
 class UserDeclinedError(MarvinPilotError):

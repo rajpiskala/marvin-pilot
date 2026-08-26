@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from marvin_pilot.compiler import CompiledMutation, compile_operation
 from marvin_pilot.errors import LivePreconditionError
@@ -40,11 +40,54 @@ class PreflightOperation:
 
 
 @dataclass(frozen=True, slots=True)
+class PreflightDiagnostic:
+    severity: Literal["error", "warning"]
+    operation_index: int
+    operation_id: str
+    target_id: str
+    check: str
+    message: str
+    expected: Any = None
+    found: Any = None
+
+
+@dataclass(frozen=True, slots=True)
 class PreflightResult:
     plan: ChangePlanV1
     operations: tuple[PreflightOperation, ...]
     checked_at_ms: int
     strict_concurrency: bool
+    warnings: tuple[PreflightDiagnostic, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class LiveValidationResult:
+    plan: ChangePlanV1
+    operations: tuple[PreflightOperation, ...]
+    diagnostics: tuple[PreflightDiagnostic, ...]
+    selected_indices: tuple[int, ...]
+    checked_at_ms: int
+    strict_concurrency: bool
+
+    @property
+    def errors(self) -> tuple[PreflightDiagnostic, ...]:
+        return tuple(item for item in self.diagnostics if item.severity == "error")
+
+    @property
+    def warnings(self) -> tuple[PreflightDiagnostic, ...]:
+        return tuple(item for item in self.diagnostics if item.severity == "warning")
+
+    @property
+    def valid(self) -> bool:
+        return not self.errors
+
+
+@dataclass(frozen=True, slots=True)
+class _OperationWarning:
+    check: str
+    message: str
+    expected: Any
+    found: Any
 
 
 def _meaningful(value: Any) -> bool:
@@ -119,7 +162,10 @@ def _check_existing_preconditions(
     if document.get("title") != operation.target.title:
         raise LivePreconditionError(
             f"operation {operation.operationId!r} title is stale: expected "
-            f"{operation.target.title!r}, found {document.get('title')!r}"
+            f"{operation.target.title!r}, found {document.get('title')!r}",
+            check="target-title",
+            expected=operation.target.title,
+            found=document.get("title"),
         )
     if (
         operation.expectedUpdatedAt is not None
@@ -127,7 +173,10 @@ def _check_existing_preconditions(
     ):
         raise LivePreconditionError(
             f"operation {operation.operationId!r} updatedAt is stale: expected "
-            f"{operation.expectedUpdatedAt}, found {document.get('updatedAt')!r}"
+            f"{operation.expectedUpdatedAt}, found {document.get('updatedAt')!r}",
+            check="updated-at",
+            expected=operation.expectedUpdatedAt,
+            found=document.get("updatedAt"),
         )
     explicit_occurrence = (
         operation.target.type == "task" and operation.target.recurrence is not None
@@ -238,12 +287,18 @@ def _verify_recurrence_identity(
     if document.get("recurringTaskId") != recurrence.seriesId:
         raise LivePreconditionError(
             f"operation {operation.operationId!r} recurring series ID is stale: expected "
-            f"{recurrence.seriesId!r}, found {document.get('recurringTaskId')!r}"
+            f"{recurrence.seriesId!r}, found {document.get('recurringTaskId')!r}",
+            check="recurrence-series-id",
+            expected=recurrence.seriesId,
+            found=document.get("recurringTaskId"),
         )
     if document.get("day") != recurrence.scheduledDate:
         raise LivePreconditionError(
             f"operation {operation.operationId!r} occurrence date is stale: expected "
-            f"{recurrence.scheduledDate!r}, found {document.get('day')!r}"
+            f"{recurrence.scheduledDate!r}, found {document.get('day')!r}",
+            check="recurrence-date",
+            expected=recurrence.scheduledDate,
+            found=document.get("day"),
         )
     if recurrence.seriesId not in cache:
         cache[recurrence.seriesId] = reader.get_doc(recurrence.seriesId)
@@ -260,7 +315,10 @@ def _verify_recurrence_identity(
     if template.get("title") != recurrence.seriesTitle:
         raise LivePreconditionError(
             f"operation {operation.operationId!r} recurrence series title is stale: expected "
-            f"{recurrence.seriesTitle!r}, found {template.get('title')!r}"
+            f"{recurrence.seriesTitle!r}, found {template.get('title')!r}",
+            check="recurrence-series-title",
+            expected=recurrence.seriesTitle,
+            found=template.get("title"),
         )
 
 
@@ -295,13 +353,19 @@ def _verify_reference(
     reader: DocumentReader,
     cache: dict[str, dict[str, Any] | None],
     planned_creates: dict[str, CreateOperation],
-) -> None:
+) -> _OperationWarning | None:
     if kind == "parent" and reference_id == "unassigned":
         if title_hint is not None and title_hint != "Inbox":
-            raise LivePreconditionError(
-                f"operation {operation_id!r} calls parent 'unassigned' {title_hint!r}, not 'Inbox'"
+            return _OperationWarning(
+                check="parent-title-hint",
+                message=(
+                    f"operation {operation_id!r} parent title hint is stale for 'unassigned': "
+                    f"expected {title_hint!r}, found 'Inbox'"
+                ),
+                expected=title_hint,
+                found="Inbox",
             )
-        return
+        return None
     planned = planned_creates.get(reference_id)
     if planned is not None:
         if kind == "parent" and planned.target.type != "project":
@@ -311,11 +375,16 @@ def _verify_reference(
             )
         planned_title = planned.after.title
         if title_hint is not None and planned_title != title_hint:
-            raise LivePreconditionError(
-                f"operation {operation_id!r} {kind} title is stale for planned create "
-                f"{reference_id!r}: expected {title_hint!r}, found {planned_title!r}"
+            return _OperationWarning(
+                check=f"{kind}-title-hint",
+                message=(
+                    f"operation {operation_id!r} {kind} title hint is stale for planned create "
+                    f"{reference_id!r}: expected {title_hint!r}, found {planned_title!r}"
+                ),
+                expected=title_hint,
+                found=planned_title,
             )
-        return
+        return None
     if reference_id not in cache:
         cache[reference_id] = reader.get_doc(reference_id)
     document = cache[reference_id]
@@ -324,10 +393,16 @@ def _verify_reference(
             f"operation {operation_id!r} references missing {kind} ID {reference_id!r}"
         )
     if title_hint is not None and document.get("title") != title_hint:
-        raise LivePreconditionError(
-            f"operation {operation_id!r} {kind} title is stale for {reference_id!r}: "
-            f"expected {title_hint!r}, found {document.get('title')!r}"
+        return _OperationWarning(
+            check=f"{kind}-title-hint",
+            message=(
+                f"operation {operation_id!r} {kind} title hint is stale for {reference_id!r}: "
+                f"expected {title_hint!r}, found {document.get('title')!r}"
+            ),
+            expected=title_hint,
+            found=document.get("title"),
         )
+    return None
 
 
 def _verify_references(
@@ -336,13 +411,14 @@ def _verify_references(
     cache: dict[str, dict[str, Any] | None],
     metadata_cache: dict[str, Any],
     planned_creates: dict[str, CreateOperation],
-) -> None:
+) -> tuple[_OperationWarning, ...]:
     parents, labels, dependencies = _reference_hints(operation)
     seen: set[tuple[str, str, str | None]] = set()
+    warnings: list[_OperationWarning] = []
     for parent in parents:
         key = ("parent", parent["id"], parent.get("title"))
         if key not in seen:
-            _verify_reference(
+            warning = _verify_reference(
                 kind="parent",
                 reference_id=parent["id"],
                 title_hint=parent.get("title"),
@@ -351,6 +427,8 @@ def _verify_references(
                 cache=cache,
                 planned_creates=planned_creates,
             )
+            if warning is not None:
+                warnings.append(warning)
             seen.add(key)
     for label in labels:
         key = ("label", label["id"], label.get("title"))
@@ -365,10 +443,17 @@ def _verify_references(
                 )
             title_hint = label.get("title")
             if title_hint is not None and label_document.get("title") != title_hint:
-                raise LivePreconditionError(
-                    f"operation {operation.operationId!r} label title is stale for "
-                    f"{label['id']!r}: expected {title_hint!r}, found "
-                    f"{label_document.get('title')!r}"
+                warnings.append(
+                    _OperationWarning(
+                        check="label-title-hint",
+                        message=(
+                            f"operation {operation.operationId!r} label title hint is stale for "
+                            f"{label['id']!r}: expected {title_hint!r}, found "
+                            f"{label_document.get('title')!r}"
+                        ),
+                        expected=title_hint,
+                        found=label_document.get("title"),
+                    )
                 )
             seen.add(key)
     for dependency_id in set(dependencies):
@@ -381,6 +466,7 @@ def _verify_references(
             cache=cache,
             planned_creates=planned_creates,
         )
+    return tuple(warnings)
 
 
 _SUBTASK_CONVERSION_LOSS_FIELDS = tuple(
@@ -517,15 +603,17 @@ def _verify_project_parent_hierarchy(
         current_id = document.get("parentId") or "unassigned"
 
 
-def preflight_plan(
+def validate_plan_live(
     plan: ChangePlanV1,
     reader: DocumentReader,
     *,
     now_ms: int,
     strict_concurrency: bool = True,
+    selected_indices: tuple[int, ...] | None = None,
+    fail_fast: bool = False,
     progress: Callable[[int, int, str], None] | None = None,
-) -> PreflightResult:
-    """Read and validate every target/reference, then compile every operation."""
+) -> LiveValidationResult:
+    """Collect live diagnostics for selected 1-based plan entries without mutating Marvin."""
 
     cache: dict[str, dict[str, Any] | None] = {}
     metadata_cache: dict[str, Any] = {}
@@ -535,48 +623,133 @@ def preflight_plan(
         if isinstance(operation, CreateOperation)
     }
     checked: list[PreflightOperation] = []
-    total = len(plan.operations)
-    for index, operation in enumerate(plan.operations, start=1):
+    diagnostics: list[PreflightDiagnostic] = []
+    indices = selected_indices or tuple(range(1, len(plan.operations) + 1))
+    if not indices or len(indices) != len(set(indices)):
+        raise ValueError("selected live-validation indices must be non-empty and unique")
+    if any(index < 1 or index > len(plan.operations) for index in indices):
+        raise ValueError("selected live-validation index is outside the plan")
+    total = len(indices)
+    for position, index in enumerate(indices, start=1):
+        operation = plan.operations[index - 1]
         if progress is not None:
-            progress(index - 1, total, operation.operationId)
-        target_id = operation.target.id
-        if target_id not in cache:
-            cache[target_id] = reader.get_doc(target_id)
-        live = cache[target_id]
-        if isinstance(operation, CreateOperation):
-            if live is not None:
-                raise LivePreconditionError(
-                    f"create operation {operation.operationId!r} target ID already exists"
-                )
-            revision: dict[str, Any] = {}
-        else:
-            if live is None:
-                raise LivePreconditionError(
-                    f"operation {operation.operationId!r} target item does not exist"
-                )
-            _verify_recurrence_identity(operation, live, reader, cache)
-            _check_existing_preconditions(operation, live)
-            revision = _revision_snapshot(live)
-        if isinstance(operation, CreateOperation):
-            _verify_recurrence_identity(operation, live, reader, cache)
-        _verify_references(operation, reader, cache, metadata_cache, planned_creates)
-        _verify_subtask_sources(operation, reader, cache, planned_creates)
-        _verify_project_parent_hierarchy(operation, reader, cache, planned_creates)
-        checked.append(
-            PreflightOperation(
-                operation=operation,
-                live_document=live,
-                compiled=compile_operation(operation, live, now_ms),
-                live_revision=revision,
+            progress(position - 1, total, operation.operationId)
+        try:
+            target_id = operation.target.id
+            if target_id not in cache:
+                cache[target_id] = reader.get_doc(target_id)
+            live = cache[target_id]
+            if isinstance(operation, CreateOperation):
+                if live is not None:
+                    raise LivePreconditionError(
+                        f"create operation {operation.operationId!r} target ID already exists",
+                        check="create-id-available",
+                        expected=None,
+                        found=live.get("_id"),
+                    )
+                revision: dict[str, Any] = {}
+            else:
+                if live is None:
+                    raise LivePreconditionError(
+                        f"operation {operation.operationId!r} target item does not exist",
+                        check="target-exists",
+                        expected=target_id,
+                        found=None,
+                    )
+                _verify_recurrence_identity(operation, live, reader, cache)
+                _check_existing_preconditions(operation, live)
+                revision = _revision_snapshot(live)
+            if isinstance(operation, CreateOperation):
+                _verify_recurrence_identity(operation, live, reader, cache)
+            operation_warnings = _verify_references(
+                operation, reader, cache, metadata_cache, planned_creates
             )
-        )
+            _verify_subtask_sources(operation, reader, cache, planned_creates)
+            _verify_project_parent_hierarchy(operation, reader, cache, planned_creates)
+            checked.append(
+                PreflightOperation(
+                    operation=operation,
+                    live_document=live,
+                    compiled=compile_operation(operation, live, now_ms),
+                    live_revision=revision,
+                )
+            )
+            diagnostics.extend(
+                PreflightDiagnostic(
+                    severity="warning",
+                    operation_index=index,
+                    operation_id=operation.operationId,
+                    target_id=target_id,
+                    check=warning.check,
+                    message=warning.message,
+                    expected=warning.expected,
+                    found=warning.found,
+                )
+                for warning in operation_warnings
+            )
+        except LivePreconditionError as exc:
+            diagnostics.append(
+                PreflightDiagnostic(
+                    severity="error",
+                    operation_index=index,
+                    operation_id=operation.operationId,
+                    target_id=operation.target.id,
+                    check=exc.check,
+                    message=str(exc),
+                    expected=exc.expected,
+                    found=exc.found,
+                )
+            )
         if progress is not None:
-            progress(index, total, operation.operationId)
-    return PreflightResult(
+            progress(position, total, operation.operationId)
+        if diagnostics and diagnostics[-1].severity == "error" and fail_fast:
+            break
+    return LiveValidationResult(
         plan=plan,
         operations=tuple(checked),
+        diagnostics=tuple(diagnostics),
+        selected_indices=indices,
         checked_at_ms=now_ms,
         strict_concurrency=strict_concurrency,
+    )
+
+
+def preflight_plan(
+    plan: ChangePlanV1,
+    reader: DocumentReader,
+    *,
+    now_ms: int,
+    strict_concurrency: bool = True,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> PreflightResult:
+    """Read every operation, report all violations together, and compile a clean plan."""
+
+    validation = validate_plan_live(
+        plan,
+        reader,
+        now_ms=now_ms,
+        strict_concurrency=strict_concurrency,
+        progress=progress,
+    )
+    if validation.errors:
+        if len(validation.errors) == 1:
+            message = validation.errors[0].message
+        else:
+            details = "\n".join(
+                f"  {item.operation_index}. [{item.operation_id}] {item.message}"
+                for item in validation.errors
+            )
+            message = (
+                f"live preflight found {len(validation.errors)} errors across "
+                f"{len(validation.selected_indices)} operations:\n{details}"
+            )
+        raise LivePreconditionError(message, check="live-validation")
+    return PreflightResult(
+        plan=plan,
+        operations=validation.operations,
+        checked_at_ms=now_ms,
+        strict_concurrency=strict_concurrency,
+        warnings=validation.warnings,
     )
 
 

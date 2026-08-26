@@ -139,6 +139,12 @@ def render_live_preflight(result: PreflightResult) -> str:
         f"Live preflight: PASSED for {len(result.operations)} operation(s)",
         f"Strict concurrency recheck: {'on' if result.strict_concurrency else 'off'}",
     ]
+    if result.warnings:
+        lines.append(f"Warnings: {len(result.warnings)}")
+        lines.extend(
+            f"  {warning.operation_index}. [{warning.operation_id}] {warning.message}"
+            for warning in result.warnings
+        )
     for checked in result.operations:
         operation = checked.operation
         desired = checked.compiled.desired_fields

@@ -111,6 +111,47 @@ def test_terminal_review_is_colored_and_contains_redundant_review_labels() -> No
     assert "Pilot-managed" in rendered
 
 
+def test_terminal_review_surfaces_non_blocking_hint_warnings() -> None:
+    value = copy.deepcopy(EXAMPLE_PLAN)
+    value["operations"] = [value["operations"][1]]
+    value["operations"][0]["before"]["parent"]["title"] = "Old Inbox hint"
+    plan = parse_plan_bytes(json.dumps(value).encode())
+    result = preflight_plan(
+        plan,
+        Reader(
+            {
+                "task-dinner-id": {
+                    "_id": "task-dinner-id",
+                    "_rev": "1-task",
+                    "db": "Tasks",
+                    "title": "Eat dinner with Jacob",
+                    "parentId": "unassigned",
+                    "updatedAt": 200,
+                },
+                "people-category-id": {
+                    "_id": "people-category-id",
+                    "db": "Categories",
+                    "type": "category",
+                    "title": "People",
+                    "parentId": "root",
+                },
+            }
+        ),
+        now_ms=123,
+    )
+    output = StringIO()
+    review_console = Console(file=output, force_terminal=False, width=140)
+
+    review_console.print(render_live_preflight_terminal(result, encoding="utf-8"))
+
+    rendered = output.getvalue()
+    assert "PASSED with 1 warning(s)" in rendered
+    assert "REVIEW WARNINGS" in rendered
+    assert "parent title hint is stale" in rendered
+    assert "Old Inbox hint" in rendered
+    assert "Inbox" in rendered
+
+
 def test_terminal_review_falls_back_to_text_when_encoding_cannot_show_emoji() -> None:
     output = StringIO()
     review_console = Console(file=output, force_terminal=False, width=140)

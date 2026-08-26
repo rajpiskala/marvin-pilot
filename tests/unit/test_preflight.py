@@ -14,6 +14,7 @@ from marvin_pilot.preflight import (
     desired_fields_match,
     preflight_plan,
     recheck_operation,
+    validate_plan_live,
 )
 
 NOW_MS = 1_786_233_600_123
@@ -171,21 +172,78 @@ def test_coupled_tasks_are_blocked(documents: dict, fields: dict, reason: str) -
         preflight_plan(example_plan(), FakeReader(documents), now_ms=NOW_MS)
 
 
-def test_parent_reference_must_exist_and_match_hint(documents: dict) -> None:
+def test_parent_reference_must_exist_but_a_stale_hint_warns(documents: dict) -> None:
     del documents["people-category-id"]
     with pytest.raises(LivePreconditionError, match="missing parent"):
         preflight_plan(example_plan(), FakeReader(documents), now_ms=NOW_MS)
     documents["people-category-id"] = {"db": "Categories", "title": "Friends"}
-    with pytest.raises(LivePreconditionError, match="parent title is stale"):
-        preflight_plan(example_plan(), FakeReader(documents), now_ms=NOW_MS)
+    result = preflight_plan(example_plan(), FakeReader(documents), now_ms=NOW_MS)
+    assert [(warning.check, warning.expected, warning.found) for warning in result.warnings] == [
+        ("parent-title-hint", "People", "Friends")
+    ]
 
 
-def test_unassigned_parent_hint_must_say_inbox(documents: dict) -> None:
+def test_unassigned_parent_hint_warns_when_it_does_not_say_inbox(documents: dict) -> None:
     value = copy.deepcopy(EXAMPLE_PLAN)
     value["operations"][1]["before"]["parent"]["title"] = "Not Inbox"
     plan = parse_plan_bytes(json.dumps(value).encode())
-    with pytest.raises(LivePreconditionError, match="not 'Inbox'"):
-        preflight_plan(plan, FakeReader(documents), now_ms=NOW_MS)
+    result = preflight_plan(plan, FakeReader(documents), now_ms=NOW_MS)
+    warning = result.warnings[0]
+    assert warning.check == "parent-title-hint"
+    assert warning.expected == "Not Inbox"
+    assert warning.found == "Inbox"
+
+
+def test_live_validation_collects_all_errors_with_one_shared_read_cache(documents: dict) -> None:
+    documents["task-wash-dishes-id"]["title"] = "Changed wash title"
+    documents["task-dinner-id"]["title"] = "Changed dinner title"
+    documents["40d06376-9125-4e9e-a6bd-631cb0e6dc55"] = {
+        "_id": "40d06376-9125-4e9e-a6bd-631cb0e6dc55",
+        "db": "Tasks",
+        "title": "ID collision",
+    }
+    documents["duplicate-task-id"]["updatedAt"] = 999
+    reader = FakeReader(documents)
+
+    result = validate_plan_live(example_plan(), reader, now_ms=NOW_MS)
+
+    assert not result.valid
+    assert [item.operation_index for item in result.errors] == [1, 2, 3, 4]
+    assert [item.check for item in result.errors] == [
+        "target-title",
+        "target-title",
+        "create-id-available",
+        "updated-at",
+    ]
+    assert result.errors[0].expected == "Wash the dishes"
+    assert result.errors[0].found == "Changed wash title"
+    for item_id in (
+        "task-wash-dishes-id",
+        "task-dinner-id",
+        "40d06376-9125-4e9e-a6bd-631cb0e6dc55",
+        "duplicate-task-id",
+    ):
+        assert reader.calls.count(item_id) == 1
+
+    with pytest.raises(LivePreconditionError, match="found 4 errors"):
+        preflight_plan(example_plan(), FakeReader(documents), now_ms=NOW_MS)
+
+
+def test_live_validation_supports_selection_and_fail_fast(documents: dict) -> None:
+    documents["task-wash-dishes-id"]["title"] = "Changed wash title"
+    documents["duplicate-task-id"]["updatedAt"] = 999
+    reader = FakeReader(documents)
+
+    selected = validate_plan_live(example_plan(), reader, now_ms=NOW_MS, selected_indices=(3, 4))
+    assert [item.operation_index for item in selected.errors] == [4]
+    assert "task-wash-dishes-id" not in reader.calls
+    assert "task-dinner-id" not in reader.calls
+
+    stopped = validate_plan_live(
+        example_plan(), FakeReader(documents), now_ms=NOW_MS, fail_fast=True
+    )
+    assert [item.operation_index for item in stopped.errors] == [1]
+    assert stopped.operations == ()
 
 
 def test_label_and_dependency_references_are_verified(documents: dict) -> None:
@@ -206,6 +264,12 @@ def test_label_and_dependency_references_are_verified(documents: dict) -> None:
     reader = FakeReader(documents)
     preflight_plan(plan, reader, now_ms=NOW_MS)
     assert reader.label_calls == 1
+
+    documents["label-math"]["title"] = "Arithmetic"
+    result = preflight_plan(plan, FakeReader(documents), now_ms=NOW_MS)
+    assert [(warning.check, warning.expected, warning.found) for warning in result.warnings] == [
+        ("label-title-hint", "Math", "Arithmetic")
+    ]
 
 
 def test_recheck_detects_revision_change_and_disappearance(documents: dict) -> None:
