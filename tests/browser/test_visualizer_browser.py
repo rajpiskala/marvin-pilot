@@ -373,6 +373,42 @@ def subtask_conversion_plan() -> dict:
     }
 
 
+def ordered_same_target_plan() -> dict:
+    return {
+        "schemaVersion": 1,
+        "planId": "99999999-9999-4999-8999-999999999999",
+        "createdAt": "2026-08-09T08:00:00-07:00",
+        "summary": "Preview an ordered same-task chain.",
+        "operations": [
+            {
+                "operationId": "rename-release",
+                "action": "update",
+                "target": {"type": "task", "id": "release", "title": "Draft release"},
+                "reason": "Use the final title.",
+                "before": {"title": "Draft release"},
+                "after": {"title": "Publish release"},
+            },
+            {
+                "operationId": "schedule-release",
+                "action": "update",
+                "target": {"type": "task", "id": "release", "title": "Publish release"},
+                "reason": "Record the delivery date.",
+                "dependsOnOperations": ["rename-release"],
+                "before": {"scheduledDate": None},
+                "after": {"scheduledDate": "2026-08-08"},
+            },
+            {
+                "operationId": "complete-release",
+                "action": "complete",
+                "target": {"type": "task", "id": "release", "title": "Publish release"},
+                "reason": "Close the delivered work.",
+                "dependsOnOperations": ["schedule-release"],
+                "completedAt": "2026-08-08T17:00:00-07:00",
+            },
+        ],
+    }
+
+
 @pytest.fixture(scope="module")
 def browser():
     playwright_module = pytest.importorskip("playwright.sync_api")
@@ -890,6 +926,35 @@ def test_marvin_hierarchy_icons_day_sections_and_counterpart_highlighting(page) 
         page.get_by_role("radio", name="Changes").click()
         assert page.locator("#day-sections-toggle").is_hidden()
         assert page.locator(".diff-row").count() == 2
+
+
+def test_ordered_same_target_chain_shows_boundary_preview_and_all_steps(page) -> None:
+    with running_visualizer(plan_dict=ordered_same_target_plan()) as server:
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+
+        assert page.locator(".hierarchy-pane-before .operation-row").count() == 1
+        assert page.locator(".hierarchy-pane-after .operation-row").count() == 1
+        assert page.locator(".hierarchy-pane-before .task-title").inner_text() == "Draft release"
+        assert page.locator(".hierarchy-pane-after .task-title").inner_text() == "Publish release"
+        assert page.locator(".hierarchy-pane-before .target-chain-badge").inner_text() == "STEP 1/3"
+        assert page.locator(".hierarchy-pane-after .target-chain-badge").inner_text() == "STEP 3/3"
+
+        page.get_by_role("radio", name="Changes").click()
+        assert page.locator(".diff-row").count() == 3
+        assert page.locator(".target-chain-badge").all_inner_texts() == [
+            "STEP 1/3",
+            "STEP 1/3",
+            "STEP 2/3",
+            "STEP 2/3",
+            "STEP 3/3",
+            "STEP 3/3",
+        ]
+        page.locator('[data-operation-id="schedule-release"] .operation-details summary').click()
+        assert (
+            "same-item step 2/3"
+            in page.locator('[data-operation-id="schedule-release"] .detail-body').inner_text()
+        )
 
 
 def test_regression_01_has_exact_cross_pane_indentation_and_move_navigation(page) -> None:

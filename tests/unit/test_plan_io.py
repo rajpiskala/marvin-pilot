@@ -396,11 +396,121 @@ def test_duplicate_operation_ids_are_rejected(example_plan_dict: dict) -> None:
         parse_plan_bytes(encode(example_plan_dict))
 
 
-def test_duplicate_target_ids_are_rejected(example_plan_dict: dict) -> None:
+def test_duplicate_target_ids_require_an_explicit_direct_chain(example_plan_dict: dict) -> None:
     example_plan_dict["operations"][1]["target"]["id"] = example_plan_dict["operations"][0][
         "target"
     ]["id"]
-    with pytest.raises(PlanSemanticError, match="more than one operation targets"):
+    with pytest.raises(PlanSemanticError, match="add immediate prior operation"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
+def test_ordered_same_target_rename_move_and_complete_is_valid(example_plan_dict: dict) -> None:
+    original = example_plan_dict["operations"][1]
+    target_id = original["target"]["id"]
+    target_type = original["target"]["type"]
+    original_title = original["target"]["title"]
+    example_plan_dict["operations"] = [
+        {
+            "operationId": "rename-project-step",
+            "action": "update",
+            "target": {"type": target_type, "id": target_id, "title": original_title},
+            "reason": "Give the project its durable name.",
+            "before": {"title": original_title},
+            "after": {"title": "Dinner workflow"},
+            "expectedUpdatedAt": 200,
+        },
+        {
+            "operationId": "move-project-step",
+            "action": "update",
+            "target": {"type": target_type, "id": target_id, "title": "Dinner workflow"},
+            "reason": "Move the renamed project.",
+            "dependsOnOperations": ["rename-project-step"],
+            "before": {"parent": None},
+            "after": {"parent": {"id": "people-category-id", "title": "People"}},
+        },
+        {
+            "operationId": "complete-project-step",
+            "action": "complete",
+            "target": {"type": target_type, "id": target_id, "title": "Dinner workflow"},
+            "reason": "Close the reorganized project.",
+            "dependsOnOperations": ["move-project-step"],
+            "completedAt": "2026-08-08T07:30:00-07:00",
+        },
+    ]
+
+    parse_plan_bytes(encode(example_plan_dict))
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda operations: operations[1]["target"].update({"title": "Old stale title"}),
+            "chained target title is stale",
+        ),
+        (
+            lambda operations: operations[1].update({"expectedUpdatedAt": 200}),
+            "only the first operation may set expectedUpdatedAt",
+        ),
+        (
+            lambda operations: operations[1]["dependsOnOperations"].clear(),
+            "add immediate prior operation",
+        ),
+    ],
+)
+def test_same_target_chain_rejects_ambiguous_steps(
+    example_plan_dict: dict, mutate, message: str
+) -> None:
+    first = example_plan_dict["operations"][0]
+    second = {
+        "operationId": "complete-rescheduled-task",
+        "action": "complete",
+        "target": dict(first["target"]),
+        "reason": "Close the rescheduled work.",
+        "dependsOnOperations": [first["operationId"]],
+        "completedAt": "2026-08-08T07:30:00-07:00",
+    }
+    example_plan_dict["operations"] = [first, second]
+    mutate(example_plan_dict["operations"])
+
+    with pytest.raises(PlanSemanticError, match=message):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
+def test_trash_is_terminal_for_same_target_chain(example_plan_dict: dict) -> None:
+    trash = example_plan_dict["operations"][-1]
+    after_trash = {
+        "operationId": "rename-after-trash",
+        "action": "update",
+        "target": dict(trash["target"]),
+        "reason": "This is never safe.",
+        "dependsOnOperations": [trash["operationId"]],
+        "before": {"title": trash["target"]["title"]},
+        "after": {"title": "Impossible"},
+    }
+    example_plan_dict["operations"] = [trash, after_trash]
+
+    with pytest.raises(PlanSemanticError, match="after terminal trash"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
+def test_new_target_fields_must_be_coalesced_into_create(example_plan_dict: dict) -> None:
+    create = example_plan_dict["operations"][2]
+    follow_up = {
+        "operationId": "complete-new-task",
+        "action": "complete",
+        "target": {
+            "type": create["target"]["type"],
+            "id": create["target"]["id"],
+            "title": create["after"]["title"],
+        },
+        "reason": "A create chain is unnecessary.",
+        "dependsOnOperations": [create["operationId"]],
+        "completedAt": "2026-08-08T07:30:00-07:00",
+    }
+    example_plan_dict["operations"] = [create, follow_up]
+
+    with pytest.raises(PlanSemanticError, match="coalesce its fields into the create"):
         parse_plan_bytes(encode(example_plan_dict))
 
 

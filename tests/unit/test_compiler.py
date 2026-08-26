@@ -8,6 +8,7 @@ from marvin_pilot.compiler import (
     compile_operation,
     compile_trash,
     compile_update,
+    project_compiled_mutation,
 )
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.models.plan_v1 import CreateOperation, TrashOperation, UpdateOperation
@@ -132,6 +133,30 @@ def test_dispatch_and_affected_fields() -> None:
     assert compile_operation(create, None, NOW_MS).action == "create"
     assert compile_operation(trash, {}, NOW_MS).action == "trash"
     assert affected_marvin_fields(update) == ["day"]
+
+
+def test_compiled_mutations_project_nested_updates_create_and_delete() -> None:
+    update = compile_operation(
+        operations()[0],
+        {"_id": "task-wash-dishes-id", "day": "2026-08-08", "fieldUpdates": {}},
+        NOW_MS,
+    )
+    projected = project_compiled_mutation(
+        {"_id": "task-wash-dishes-id", "day": "2026-08-08", "fieldUpdates": {}},
+        update,
+    )
+    assert projected is not None
+    assert projected["day"] == "2026-08-09"
+    assert projected["fieldUpdates"]["day"] == NOW_MS
+    assert projected["updatedAt"] == NOW_MS
+
+    create = compile_operation(operations()[2], None, NOW_MS)
+    created = project_compiled_mutation(None, create)
+    assert created == create.payload
+    assert created is not create.payload
+
+    trash = compile_operation(operations()[3], {"title": "Study chapter 3"}, NOW_MS)
+    assert project_compiled_mutation({"title": "Study chapter 3"}, trash) is None
 
 
 def test_display_metadata_never_compiles_to_marvin() -> None:

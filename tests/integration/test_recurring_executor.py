@@ -168,10 +168,11 @@ def plan_value() -> dict[str, Any]:
                     "id": "occurrence-update",
                     "title": "Existing recurring fixture",
                     "recurrence": recurrence_ref(
-                        SERIES_UPDATE, "Existing recurring fixture", "2026-08-15"
+                        SERIES_UPDATE, "Updated recurring fixture", "2026-08-15"
                     ),
                 },
                 "reason": "Edit this occurrence only.",
+                "dependsOnOperations": ["update-series"],
                 "before": {"note": None},
                 "after": {"note": "Occurrence-only note"},
             },
@@ -183,10 +184,11 @@ def plan_value() -> dict[str, Any]:
                     "id": "occurrence-complete",
                     "title": "Existing recurring fixture",
                     "recurrence": recurrence_ref(
-                        SERIES_UPDATE, "Existing recurring fixture", "2026-08-16"
+                        SERIES_UPDATE, "Updated recurring fixture", "2026-08-16"
                     ),
                 },
                 "reason": "Complete this historical occurrence only.",
+                "dependsOnOperations": ["update-series"],
                 "completedAt": "2026-08-15T09:00:00-07:00",
             },
             {
@@ -197,10 +199,11 @@ def plan_value() -> dict[str, Any]:
                     "id": "occurrence-trash",
                     "title": "Existing recurring fixture",
                     "recurrence": recurrence_ref(
-                        SERIES_UPDATE, "Existing recurring fixture", "2026-08-17"
+                        SERIES_UPDATE, "Updated recurring fixture", "2026-08-17"
                     ),
                 },
                 "reason": "Trash one generated occurrence only.",
+                "dependsOnOperations": ["update-series"],
             },
             {
                 "operationId": "trash-series",

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from marvin_pilot.compiler import CompiledMutation
+from marvin_pilot.compiler import CompiledMutation, project_compiled_mutation
 from marvin_pilot.errors import (
     AmbiguousMutationError,
     LivePreconditionError,
@@ -38,6 +38,7 @@ class RevertOperation:
     live_document: dict[str, Any] | None
     compiled: CompiledMutation
     live_revision: dict[str, dict[str, Any]]
+    prior_same_target_operation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,11 +247,17 @@ def preflight_revert(
         raise PlanSemanticError(f"operation(s) already reverted or claimed: {details}")
 
     checked: list[RevertOperation] = []
+    projected_documents: dict[str, dict[str, Any] | None] = {}
+    processed_targets: dict[str, str] = {}
     total = len(selected)
     for index, source_operation in enumerate(selected, start=1):
         if progress is not None:
             progress(index - 1, total, source_operation.operationId)
-        live = client.get_doc(source_operation.targetId)
+        target_id = source_operation.targetId
+        prior_same_target_operation_id = processed_targets.get(target_id)
+        if target_id not in projected_documents:
+            projected_documents[target_id] = client.get_doc(target_id)
+        live = projected_documents[target_id]
         identity_document = live
         if source_operation.action == "trash":
             if source_operation.beforeDocument is None:
@@ -349,8 +356,11 @@ def preflight_revert(
                 live_document=live,
                 compiled=compiled,
                 live_revision=_revision_snapshot(live) if live is not None else {},
+                prior_same_target_operation_id=prior_same_target_operation_id,
             )
         )
+        projected_documents[target_id] = project_compiled_mutation(live, compiled)
+        processed_targets[target_id] = source_operation.operationId
         if progress is not None:
             progress(index, total, source_operation.operationId)
     return RevertPreflight(
@@ -367,6 +377,7 @@ def recheck_revert_operation(
     client: MutationClient,
     *,
     strict_concurrency: bool,
+    expected_revision: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     current = client.get_doc(checked.compiled.target_id)
     if checked.source_operation.action == "trash":
@@ -393,7 +404,8 @@ def recheck_revert_operation(
         )
     if strict_concurrency:
         current_revision = _revision_snapshot(current)
-        for field, before in checked.live_revision.items():
+        checked_revision = expected_revision or checked.live_revision
+        for field, before in checked_revision.items():
             if before["present"] and current_revision[field] != before:
                 raise LivePreconditionError(
                     f"operation {checked.source_operation.operationId!r} {field} changed after "
@@ -454,6 +466,7 @@ def _reconcile_or_retry(
     checked: RevertOperation,
     *,
     strict_concurrency: bool,
+    expected_revision: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     last_error: AmbiguousMutationError | None = None
     for attempt in range(MAX_RECONCILED_MUTATION_RETRIES):
@@ -468,7 +481,12 @@ def _reconcile_or_retry(
         if delay is not None:
             delay(attempt)
         try:
-            recheck_revert_operation(checked, client, strict_concurrency=strict_concurrency)
+            recheck_revert_operation(
+                checked,
+                client,
+                strict_concurrency=strict_concurrency,
+                expected_revision=expected_revision,
+            )
         except LivePreconditionError as exc:
             raise AmbiguousMutationError(
                 f"operation {checked.source_operation.operationId!r} has an ambiguous response "
@@ -548,6 +566,7 @@ def execute_revert(
     history.persist(handle)
     total = len(checked.operations)
     completed_count = 0
+    runtime_revisions: dict[str, dict[str, dict[str, Any]]] = {}
 
     for index, checked_operation in enumerate(checked.operations):
         receipt_operation = handle.receipt.operations[index]
@@ -558,10 +577,26 @@ def execute_revert(
         history.persist(handle)
         sending_started = False
         try:
+            target_id = checked_operation.compiled.target_id
+            expected_revision = (
+                runtime_revisions.get(target_id)
+                if checked_operation.prior_same_target_operation_id is not None
+                else None
+            )
+            if (
+                checked_operation.prior_same_target_operation_id is not None
+                and expected_revision is None
+            ):
+                raise LivePreconditionError(
+                    f"operation {receipt_operation.operationId!r} is missing the runtime "
+                    f"revision produced by prior same-target revert "
+                    f"{checked_operation.prior_same_target_operation_id!r}"
+                )
             recheck_revert_operation(
                 checked_operation,
                 client,
                 strict_concurrency=strict_concurrency,
+                expected_revision=expected_revision,
             )
             receipt_operation.status = "sending"
             history.persist(handle)
@@ -578,6 +613,7 @@ def execute_revert(
                     client,
                     checked_operation,
                     strict_concurrency=strict_concurrency,
+                    expected_revision=expected_revision,
                 )
             receipt_operation.status = "verifying"
             receipt_operation.outcome = outcome
@@ -597,6 +633,9 @@ def execute_revert(
                 }
                 if checked_operation.compiled.endpoint == "doc/create":
                     receipt_operation.afterDocument = deepcopy(resulting_document)
+                runtime_revisions[target_id] = _revision_snapshot(resulting_document)
+            if resulting_document is None:
+                runtime_revisions.pop(target_id, None)
             receipt_operation.status = "reverted"
             receipt_operation.applyIndex = completed_count + 1
             receipt_operation.endedAt = rfc3339_utc(wall_clock())

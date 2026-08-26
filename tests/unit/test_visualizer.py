@@ -588,6 +588,60 @@ def test_source_task_accepted_loss_is_explicit_view_data() -> None:
     assert source.accepted_loss_labels == ("Estimated time duration", "Note")
 
 
+def test_ordered_same_target_steps_are_explicit_but_preview_only_boundaries() -> None:
+    value = {
+        "schemaVersion": 1,
+        "planId": "88888888-8888-4888-8888-888888888888",
+        "createdAt": "2026-08-09T08:00:00-07:00",
+        "summary": "Preview an ordered same-task chain.",
+        "operations": [
+            {
+                "operationId": "rename-release",
+                "action": "update",
+                "target": {"type": "task", "id": "release", "title": "Draft release"},
+                "reason": "Use the final title.",
+                "before": {"title": "Draft release"},
+                "after": {"title": "Publish release"},
+            },
+            {
+                "operationId": "schedule-release",
+                "action": "update",
+                "target": {"type": "task", "id": "release", "title": "Publish release"},
+                "reason": "Record the delivery date.",
+                "dependsOnOperations": ["rename-release"],
+                "before": {"scheduledDate": None},
+                "after": {"scheduledDate": "2026-08-08"},
+            },
+            {
+                "operationId": "complete-release",
+                "action": "complete",
+                "target": {"type": "task", "id": "release", "title": "Publish release"},
+                "reason": "Close the delivered work.",
+                "dependsOnOperations": ["schedule-release"],
+                "completedAt": "2026-08-08T17:00:00-07:00",
+            },
+        ],
+    }
+
+    view = _view(value)
+
+    assert [operation.target_chain_position for operation in view.operations] == [1, 2, 3]
+    assert [operation.target_chain_length for operation in view.operations] == [3, 3, 3]
+    assert sum(len(section.operation_ids) for section in view.layouts.split) == 3
+    before_target = view.previews.before.roots[0].children[0]
+    after_target = view.previews.after.roots[0].children[0]
+    assert (before_target.title, before_target.operation_id) == (
+        "Draft release",
+        "rename-release",
+    )
+    assert (after_target.title, after_target.operation_id) == (
+        "Publish release",
+        "complete-release",
+    )
+    assert view.previews.before.day_sections[0].operation_ids == ("rename-release",)
+    assert view.previews.after.day_sections[0].operation_ids == ("complete-release",)
+
+
 def test_untrusted_html_stays_plain_view_data() -> None:
     value = copy.deepcopy(EXAMPLE_PLAN)
     value["operations"][0]["target"]["title"] = '<img src=x onerror="alert(1)">'

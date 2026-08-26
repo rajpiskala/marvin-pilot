@@ -229,6 +229,164 @@ def test_project_completion_apply_and_revert_restores_open_state(tmp_path: Path)
     assert client.documents[project_id]["doneDate"] is None
 
 
+def test_ordered_same_document_chain_applies_and_reverts_as_one_plan(tmp_path: Path) -> None:
+    task_id = "ordered-chain-task"
+    original = {
+        "_id": task_id,
+        "_rev": "1-original",
+        "db": "Tasks",
+        "title": "Draft release",
+        "day": "2026-08-07",
+        "firstScheduled": "2026-08-07",
+        "done": False,
+        "updatedAt": 100,
+    }
+    value = {
+        "schemaVersion": 1,
+        "planId": "77777777-7777-4777-8777-777777777777",
+        "createdAt": "2026-08-08T14:45:00-07:00",
+        "summary": "Rename, reschedule, and complete a task in one ordered chain.",
+        "operations": [
+            {
+                "operationId": "rename-release",
+                "action": "update",
+                "target": {"type": "task", "id": task_id, "title": "Draft release"},
+                "reason": "Use the final outcome-oriented title.",
+                "before": {"title": "Draft release"},
+                "after": {"title": "Prepare release"},
+                "expectedUpdatedAt": 100,
+            },
+            {
+                "operationId": "finalize-release-title",
+                "action": "update",
+                "target": {"type": "task", "id": task_id, "title": "Prepare release"},
+                "reason": "Advance the title through an explicit second state.",
+                "dependsOnOperations": ["rename-release"],
+                "before": {"title": "Prepare release"},
+                "after": {"title": "Publish release"},
+            },
+            {
+                "operationId": "reschedule-release",
+                "action": "update",
+                "target": {"type": "task", "id": task_id, "title": "Publish release"},
+                "reason": "Record the actual delivery day.",
+                "dependsOnOperations": ["finalize-release-title"],
+                "before": {"scheduledDate": "2026-08-07"},
+                "after": {"scheduledDate": "2026-08-08"},
+            },
+            {
+                "operationId": "complete-release",
+                "action": "complete",
+                "target": {"type": "task", "id": task_id, "title": "Publish release"},
+                "reason": "The renamed and rescheduled work is complete.",
+                "dependsOnOperations": ["reschedule-release"],
+                "completedAt": "2026-08-08T14:30:00-07:00",
+            },
+        ],
+    }
+    raw = json.dumps(value).encode()
+    client = InMemoryMarvin({task_id: original})
+    clock = Clock()
+
+    source = execute_apply(
+        parse_plan_bytes(raw),
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda checked: all(
+            operation.operation.target.id == task_id for operation in checked.operations
+        ),
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+
+    assert client.documents[task_id]["title"] == "Publish release"
+    assert client.documents[task_id]["day"] == "2026-08-08"
+    assert client.documents[task_id]["done"] is True
+    assert [operation.targetId for operation in source.receipt.operations] == [task_id] * 4
+    assert source.receipt.operations[2].beforeFields["day"]["value"] == "2026-08-07"
+    assert source.receipt.operations[3].beforeFields["done"] == {
+        "present": True,
+        "value": False,
+    }
+
+    reverted = revert_fixture(tmp_path, client, source, clock)
+
+    assert [operation.operationId for operation in reverted.receipt.operations] == [
+        "complete-release",
+        "reschedule-release",
+        "finalize-release-title",
+        "rename-release",
+    ]
+    restored = client.documents[task_id]
+    assert restored["title"] == original["title"]
+    assert restored["day"] == original["day"]
+    assert restored["done"] is False
+
+
+def test_ordered_update_then_trash_restores_and_reverts_the_intermediate_state(
+    tmp_path: Path,
+) -> None:
+    task_id = "rename-then-trash-task"
+    original = {
+        "_id": task_id,
+        "_rev": "1-original",
+        "db": "Tasks",
+        "title": "Duplicate draft",
+        "day": "unassigned",
+        "updatedAt": 100,
+    }
+    value = {
+        "schemaVersion": 1,
+        "planId": "12121212-1212-4212-8212-121212121212",
+        "createdAt": "2026-08-08T14:45:00-07:00",
+        "summary": "Clarify a duplicate before deleting it.",
+        "operations": [
+            {
+                "operationId": "rename-duplicate",
+                "action": "update",
+                "target": {"type": "task", "id": task_id, "title": "Duplicate draft"},
+                "reason": "Make the reviewed deletion unambiguous.",
+                "before": {"title": "Duplicate draft"},
+                "after": {"title": "Duplicate release draft"},
+                "expectedUpdatedAt": 100,
+            },
+            {
+                "operationId": "trash-renamed-duplicate",
+                "action": "trash",
+                "target": {
+                    "type": "task",
+                    "id": task_id,
+                    "title": "Duplicate release draft",
+                },
+                "reason": "Remove the confirmed duplicate.",
+                "dependsOnOperations": ["rename-duplicate"],
+            },
+        ],
+    }
+    raw = json.dumps(value).encode()
+    client = InMemoryMarvin({task_id: original})
+    clock = Clock()
+
+    source = execute_apply(
+        parse_plan_bytes(raw),
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _checked: True,
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+
+    assert task_id not in client.documents
+    assert source.receipt.operations[1].beforeDocument["title"] == "Duplicate release draft"
+
+    revert_fixture(tmp_path, client, source, clock)
+
+    assert client.documents[task_id]["title"] == original["title"]
+    assert client.documents[task_id]["day"] == original["day"]
+
+
 def test_completed_task_reparent_apply_and_revert_preserve_completion(tmp_path: Path) -> None:
     task_id = "completed-task-id"
     done_at = 1_784_856_600_000

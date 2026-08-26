@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -30,6 +31,36 @@ class CompiledMutation:
     payload: dict[str, Any]
     desired_fields: dict[str, Any]
     before_fields: dict[str, dict[str, Any]]
+
+
+def _set_nested_value(document: dict[str, Any], path: str, value: Any) -> None:
+    current = document
+    parts = path.split(".")
+    for part in parts[:-1]:
+        child = current.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            current[part] = child
+        current = child
+    current[parts[-1]] = deepcopy(value)
+
+
+def project_compiled_mutation(
+    document: dict[str, Any] | None,
+    compiled: CompiledMutation,
+) -> dict[str, Any] | None:
+    """Project one reviewed mutation without guessing Marvin's next CouchDB revision."""
+
+    if compiled.endpoint == "doc/delete":
+        return None
+    if compiled.endpoint == "doc/create":
+        return deepcopy(compiled.payload)
+    if document is None:
+        raise ValueError("document update projection requires an existing document")
+    projected = deepcopy(document)
+    for setter in compiled.payload["setters"]:
+        _set_nested_value(projected, setter["key"], setter["val"])
+    return projected
 
 
 def _setters_for_fields(

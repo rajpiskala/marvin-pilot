@@ -1142,6 +1142,19 @@ Conventions:
   clear a value           JSON null
   unschedule a task       scheduledDate: null
 
+Ordered same-target operations:
+  - Prefer one update when fields can be changed atomically. When actions cannot be coalesced
+    (for example rename -> move -> complete), repeat the target in plan order.
+  - Every later same-target operation must depend directly on the immediately preceding one.
+    Its target.title must be the title produced by that step, and it must omit expectedUpdatedAt.
+  - Only the first operation consumes the original expectedUpdatedAt lock. Live validation
+    simulates successful intermediate state; apply and reverse-order revert use actual post-write
+    revisions for strict concurrency checks. Trash is terminal.
+  - Preview shows the item's initial and final states once with ordered-step badges. Changes keeps
+    every intermediate operation visible.
+  - A newly created item's fields belong in its one create operation. Pilot rejects later
+    same-target operations after create as avoidable/contradictory lifecycle work.
+
 Normal task start times are generally written into task titles. A task is not a calendar time
 block. JSON comments, trailing commas, locale dates, the string "none", raw setters, credentials,
 API URLs, raw completion fields, implicit recurrence scope, reminders, and calendar sync are

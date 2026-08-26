@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from marvin_pilot.models.plan_v1 import (
     CreateOperation,
     CreateRecurringTaskFields,
     CreateTaskFields,
+    Operation,
     RecurringTaskFields,
     TaskFields,
     TrashOperation,
@@ -90,7 +92,9 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
     """Validate relationships that JSON Schema cannot express clearly."""
 
     operation_ids: set[str] = set()
-    target_ids: set[str] = set()
+    prior_target_operations: dict[str, Operation] = {}
+    first_target_operations: dict[str, Operation] = {}
+    current_target_titles: dict[str, str] = {}
     prior_operation_ids: set[str] = set()
     prior_creates: dict[str, CreateOperation] = {}
     all_creates = {
@@ -101,6 +105,7 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
     operation_positions = {
         operation.operationId: position for position, operation in enumerate(plan.operations)
     }
+    target_counts = Counter(operation.target.id for operation in plan.operations)
     trash_by_target = {
         operation.target.id: operation
         for operation in plan.operations
@@ -121,12 +126,51 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
             raise PlanSemanticError(f"duplicate operationId: {operation.operationId!r}")
         operation_ids.add(operation.operationId)
 
-        if operation.target.id in target_ids:
-            raise PlanSemanticError(
-                f"more than one operation targets item {operation.target.id!r}; "
-                "coalesce the changes"
-            )
-        target_ids.add(operation.target.id)
+        prior_target = prior_target_operations.get(operation.target.id)
+        if prior_target is not None:
+            if isinstance(prior_target, TrashOperation):
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} targets item {operation.target.id!r} "
+                    f"after terminal trash operation {prior_target.operationId!r}"
+                )
+            if isinstance(operation, CreateOperation):
+                raise PlanSemanticError(
+                    f"create operation {operation.operationId!r} targets item "
+                    f"{operation.target.id!r} more than once"
+                )
+            if isinstance(first_target_operations[operation.target.id], CreateOperation):
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} repeats newly created target "
+                    f"{operation.target.id!r}; coalesce its fields into the create operation"
+                )
+            if operation.target.type != prior_target.target.type:
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} changes target "
+                    f"{operation.target.id!r} from type {prior_target.target.type!r} to "
+                    f"{operation.target.type!r}"
+                )
+            if prior_target.operationId not in operation.dependsOnOperations:
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} repeats target "
+                    f"{operation.target.id!r}; add immediate prior operation "
+                    f"{prior_target.operationId!r} to dependsOnOperations"
+                )
+            expected_title = current_target_titles[operation.target.id]
+            if operation.target.title != expected_title:
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} chained target title is stale: "
+                    f"expected {expected_title!r}, found {operation.target.title!r}"
+                )
+            if operation.expectedUpdatedAt is not None:
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} follows another operation on target "
+                    f"{operation.target.id!r}; only the first operation may set "
+                    "expectedUpdatedAt"
+                )
+        elif isinstance(operation, CreateOperation):
+            current_target_titles[operation.target.id] = operation.after.title
+        else:
+            current_target_titles[operation.target.id] = operation.target.title
 
         if operation.display is not None:
             if "existingCompletedAt" in operation.display.model_fields_set:
@@ -204,7 +248,12 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                             )
                         parent_id = node.id
 
-                    target_key = (side, operation.target.id)
+                    target_key = (
+                        side,
+                        operation.target.id
+                        if target_counts[operation.target.id] == 1
+                        else f"{operation.target.id}:{operation.operationId}",
+                    )
                     previous_type = display_types.setdefault(target_key, operation.target.type)
                     if previous_type != operation.target.type:
                         raise PlanSemanticError(
@@ -494,6 +543,12 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                     f"complete operation {operation.operationId!r} completedAt is later than "
                     "the plan's createdAt"
                 )
+
+        if isinstance(operation, UpdateOperation) and "title" in operation.after.model_fields_set:
+            assert operation.after.title is not None
+            current_target_titles[operation.target.id] = operation.after.title
+        prior_target_operations[operation.target.id] = operation
+        first_target_operations.setdefault(operation.target.id, operation)
 
         prior_operation_ids.add(operation.operationId)
         if isinstance(operation, CreateOperation):

@@ -14,6 +14,7 @@ from marvin_pilot.preflight import (
     desired_fields_match,
     preflight_plan,
     recheck_operation,
+    revision_snapshot,
     validate_plan_live,
 )
 
@@ -79,6 +80,56 @@ def example_plan():
     return parse_plan_bytes(json.dumps(EXAMPLE_PLAN).encode())
 
 
+def same_target_plan():
+    value = {
+        "schemaVersion": 1,
+        "planId": "99999999-9999-4999-8999-999999999999",
+        "createdAt": "2026-08-08T14:45:00-07:00",
+        "summary": "Rename, reschedule, and complete one task in order.",
+        "operations": [
+            {
+                "operationId": "rename-dishes",
+                "action": "update",
+                "target": {
+                    "type": "task",
+                    "id": "task-wash-dishes-id",
+                    "title": "Wash the dishes",
+                },
+                "reason": "Clarify the outcome.",
+                "before": {"title": "Wash the dishes"},
+                "after": {"title": "Wash the kitchen dishes"},
+                "expectedUpdatedAt": 100,
+            },
+            {
+                "operationId": "reschedule-dishes",
+                "action": "update",
+                "target": {
+                    "type": "task",
+                    "id": "task-wash-dishes-id",
+                    "title": "Wash the kitchen dishes",
+                },
+                "reason": "Record the final scheduled day.",
+                "dependsOnOperations": ["rename-dishes"],
+                "before": {"scheduledDate": "2026-08-08"},
+                "after": {"scheduledDate": "2026-08-09"},
+            },
+            {
+                "operationId": "complete-dishes",
+                "action": "complete",
+                "target": {
+                    "type": "task",
+                    "id": "task-wash-dishes-id",
+                    "title": "Wash the kitchen dishes",
+                },
+                "reason": "Close the fully described task.",
+                "dependsOnOperations": ["reschedule-dishes"],
+                "completedAt": "2026-08-08T14:30:00-07:00",
+            },
+        ],
+    }
+    return parse_plan_bytes(json.dumps(value).encode())
+
+
 def test_whole_plan_preflight_compiles_without_writes(documents: dict) -> None:
     reader = FakeReader(documents)
     progress: list[tuple[int, int, str]] = []
@@ -112,6 +163,104 @@ def test_whole_plan_preflight_compiles_without_writes(documents: dict) -> None:
             (index, 4, operation.operationId),
         )
     ]
+
+
+def test_live_preflight_projects_an_explicit_same_target_chain(documents: dict) -> None:
+    reader = FakeReader(documents)
+
+    result = preflight_plan(same_target_plan(), reader, now_ms=NOW_MS)
+
+    assert reader.calls.count("task-wash-dishes-id") == 1
+    rename, reschedule, complete = result.operations
+    assert rename.prior_same_target_operation_id is None
+    assert reschedule.prior_same_target_operation_id == "rename-dishes"
+    assert complete.prior_same_target_operation_id == "reschedule-dishes"
+    assert reschedule.live_document["title"] == "Wash the kitchen dishes"
+    assert reschedule.live_document["updatedAt"] == NOW_MS
+    assert complete.live_document["day"] == "2026-08-09"
+    assert complete.compiled.before_fields["done"] == {"present": False}
+
+
+def test_live_validation_blocks_later_same_target_steps_after_an_error(documents: dict) -> None:
+    documents["task-wash-dishes-id"]["title"] = "Unexpected live title"
+
+    result = validate_plan_live(same_target_plan(), FakeReader(documents), now_ms=NOW_MS)
+
+    assert [diagnostic.check for diagnostic in result.errors] == [
+        "target-title",
+        "same-target-predecessor",
+        "same-target-predecessor",
+    ]
+    assert result.operations == ()
+
+
+def test_selected_later_chain_step_validates_against_current_live_state(documents: dict) -> None:
+    documents["task-wash-dishes-id"].update(
+        {"title": "Wash the kitchen dishes", "updatedAt": NOW_MS}
+    )
+
+    result = validate_plan_live(
+        same_target_plan(),
+        FakeReader(documents),
+        now_ms=NOW_MS,
+        selected_indices=(2,),
+    )
+
+    assert result.valid
+    assert result.operations[0].prior_same_target_operation_id is None
+
+
+def test_later_reference_checks_see_an_earlier_project_rename(documents: dict) -> None:
+    documents["project-release"] = {
+        "_id": "project-release",
+        "_rev": "1-project",
+        "db": "Categories",
+        "type": "project",
+        "title": "Old release name",
+        "parentId": "root",
+        "updatedAt": 300,
+    }
+    value = {
+        "schemaVersion": 1,
+        "planId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "createdAt": "2026-08-08T14:45:00-07:00",
+        "summary": "Rename a project before moving a task into it.",
+        "operations": [
+            {
+                "operationId": "rename-release-project",
+                "action": "update",
+                "target": {
+                    "type": "project",
+                    "id": "project-release",
+                    "title": "Old release name",
+                },
+                "reason": "Use the durable project name.",
+                "before": {"title": "Old release name"},
+                "after": {"title": "Release archive"},
+                "expectedUpdatedAt": 300,
+            },
+            {
+                "operationId": "move-dinner-task",
+                "action": "update",
+                "target": {
+                    "type": "task",
+                    "id": "task-dinner-id",
+                    "title": "Eat dinner with Jacob",
+                },
+                "reason": "File the task under the renamed project.",
+                "dependsOnOperations": ["rename-release-project"],
+                "before": {"parent": None},
+                "after": {"parent": {"id": "project-release", "title": "Release archive"}},
+            },
+        ],
+    }
+
+    result = preflight_plan(
+        parse_plan_bytes(json.dumps(value).encode()), FakeReader(documents), now_ms=NOW_MS
+    )
+
+    assert result.warnings == ()
+    assert result.operations[1].compiled.desired_fields["parentId"] == "project-release"
 
 
 @pytest.mark.parametrize(
@@ -288,6 +437,33 @@ def test_recheck_can_use_relevant_fields_when_strict_mode_is_off(documents: dict
     wash = result.operations[0]
     documents["task-wash-dishes-id"]["_rev"] = "2-wash"
     assert recheck_operation(wash, FakeReader(documents), strict_concurrency=False) is not None
+
+
+def test_same_target_recheck_uses_the_actual_prior_write_revision(documents: dict) -> None:
+    checked = preflight_plan(same_target_plan(), FakeReader(documents), now_ms=NOW_MS)
+    later = checked.operations[1]
+    post_prior = copy.deepcopy(later.live_document)
+    post_prior["_rev"] = "2-after-own-write"
+    expected_revision = revision_snapshot(post_prior)
+
+    assert (
+        recheck_operation(
+            later,
+            FakeReader({"task-wash-dishes-id": post_prior}),
+            strict_concurrency=True,
+            expected_revision=expected_revision,
+        )
+        is not None
+    )
+
+    post_prior["_rev"] = "3-external-edit"
+    with pytest.raises(LivePreconditionError, match="_rev changed"):
+        recheck_operation(
+            later,
+            FakeReader({"task-wash-dishes-id": post_prior}),
+            strict_concurrency=True,
+            expected_revision=expected_revision,
+        )
 
 
 def test_recheck_create_detects_new_collision(documents: dict) -> None:

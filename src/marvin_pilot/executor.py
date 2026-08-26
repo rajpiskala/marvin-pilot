@@ -29,6 +29,7 @@ from marvin_pilot.preflight import (
     desired_fields_match,
     preflight_plan,
     recheck_operation,
+    revision_snapshot,
 )
 
 MAX_RECONCILED_MUTATION_RETRIES = 3
@@ -108,6 +109,7 @@ def _reconcile_or_retry(
     checked: PreflightOperation,
     *,
     strict_concurrency: bool,
+    expected_revision: dict[str, Any] | None = None,
 ) -> str:
     """Resolve an ambiguous mutation response without blindly repeating its POST."""
 
@@ -122,7 +124,12 @@ def _reconcile_or_retry(
         if delay is not None:
             delay(attempt)
         try:
-            recheck_operation(checked, client, strict_concurrency=strict_concurrency)
+            recheck_operation(
+                checked,
+                client,
+                strict_concurrency=strict_concurrency,
+                expected_revision=expected_revision,
+            )
         except LivePreconditionError as exc:
             raise AmbiguousMutationError(
                 f"operation {checked.operation.operationId!r} has an ambiguous response "
@@ -206,6 +213,7 @@ def execute_apply(
     history.persist(handle)
     completed_count = 0
     total = len(checked_plan.operations)
+    runtime_revisions: dict[str, dict[str, Any]] = {}
 
     for index, checked in enumerate(checked_plan.operations):
         receipt_operation = handle.receipt.operations[index]
@@ -216,8 +224,22 @@ def execute_apply(
         history.persist(handle)
         sending_started = False
         try:
+            expected_revision = (
+                runtime_revisions.get(checked.operation.target.id)
+                if checked.prior_same_target_operation_id is not None
+                else None
+            )
+            if checked.prior_same_target_operation_id is not None and expected_revision is None:
+                raise LivePreconditionError(
+                    f"operation {checked.operation.operationId!r} is missing the runtime "
+                    f"revision produced by prior same-target operation "
+                    f"{checked.prior_same_target_operation_id!r}"
+                )
             current_document = recheck_operation(
-                checked, client, strict_concurrency=strict_concurrency
+                checked,
+                client,
+                strict_concurrency=strict_concurrency,
+                expected_revision=expected_revision,
             )
             if checked.compiled.endpoint == "doc/delete":
                 assert current_document is not None
@@ -235,6 +257,7 @@ def execute_apply(
                     client,
                     checked,
                     strict_concurrency=strict_concurrency,
+                    expected_revision=expected_revision,
                 )
 
             receipt_operation.status = "verifying"
@@ -255,6 +278,11 @@ def execute_apply(
                 }
                 if checked.compiled.endpoint == "doc/create":
                     receipt_operation.afterDocument = deepcopy(resulting_document)
+                runtime_revisions[checked.operation.target.id] = revision_snapshot(
+                    resulting_document
+                )
+            if resulting_document is None:
+                runtime_revisions.pop(checked.operation.target.id, None)
             receipt_operation.status = "applied"
             receipt_operation.applyIndex = completed_count + 1
             receipt_operation.endedAt = rfc3339_utc(wall_clock())

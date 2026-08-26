@@ -336,6 +336,8 @@ function renderCard(
     recurrenceScope = null,
     recurrenceScheduledDate = null,
     completedAt = null,
+    targetChainPosition = 1,
+    targetChainLength = 1,
   } = {},
 ) {
   const showOccurrenceDate = recurrenceScope === "occurrence"
@@ -353,6 +355,17 @@ function renderCard(
   const title = node("div", "task-title");
   appendTaskTitle(title, card.title);
   taskLine.append(title);
+  if (targetChainLength > 1) {
+    const chain = node(
+      "span",
+      "target-chain-badge",
+      `Step ${targetChainPosition}/${targetChainLength}`,
+    );
+    chain.title = (
+      `Ordered step ${targetChainPosition} of ${targetChainLength} for this same Marvin item.`
+    );
+    taskLine.append(chain);
+  }
   if (action) {
     const badgeText = (changeKinds.length > 0 ? changeKinds : [action]).join(" + ");
     const badge = node("span", `action-badge ${action}`, badgeText);
@@ -593,6 +606,13 @@ function renderOperationDetails(operation) {
       `#${operation.original_index} ${operation.action.toUpperCase()} · ${operation.operation_id}`,
     ),
   );
+  if (operation.target_chain_length > 1) {
+    identity.append(
+      document.createTextNode(
+        ` · same-item step ${operation.target_chain_position}/${operation.target_chain_length}`,
+      ),
+    );
+  }
   identity.append(document.createElement("br"));
   const targetLabel = operation.target_type === "recurringTask"
     ? "Recurring series"
@@ -712,6 +732,8 @@ function renderStateOperation(operation, sideName) {
       recurrenceScope: operation.recurrence_scope,
       recurrenceScheduledDate: operation.recurrence_scheduled_date,
       completedAt: completionTimestamp(operation, sideName),
+      targetChainPosition: operation.target_chain_position,
+      targetChainLength: operation.target_chain_length,
     }),
     renderOperationDetails(operation),
   );
@@ -729,6 +751,8 @@ function renderDiffCell(operation, sideName) {
         recurrenceScope: operation.recurrence_scope,
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt: completionTimestamp(operation, sideName),
+        targetChainPosition: operation.target_chain_position,
+        targetChainLength: operation.target_chain_length,
       }),
     );
   } else {
@@ -1048,6 +1072,8 @@ function renderHierarchyNode(item, sideName, operations, depth = 0) {
         recurrenceScope: operation.recurrence_scope,
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt,
+        targetChainPosition: operation.target_chain_position,
+        targetChainLength: operation.target_chain_length,
       }),
       renderOperationDetails(operation),
     );
@@ -1203,6 +1229,8 @@ function renderComparisonSide(operation, sideName) {
         recurrenceScope: operation.recurrence_scope,
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt: completionTimestamp(operation, sideName),
+        targetChainPosition: operation.target_chain_position,
+        targetChainLength: operation.target_chain_length,
       }),
     );
   } else {

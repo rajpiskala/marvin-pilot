@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
-from marvin_pilot.compiler import CompiledMutation, compile_operation
+from marvin_pilot.compiler import (
+    CompiledMutation,
+    compile_operation,
+    project_compiled_mutation,
+)
 from marvin_pilot.errors import LivePreconditionError
 from marvin_pilot.field_registry import (
     FIELD_SPECS,
@@ -37,6 +41,7 @@ class PreflightOperation:
     live_document: dict[str, Any] | None
     compiled: CompiledMutation
     live_revision: dict[str, Any]
+    prior_same_target_operation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +130,7 @@ def coupled_task_reasons(
     return reasons
 
 
-def _revision_snapshot(document: dict[str, Any]) -> dict[str, Any]:
+def revision_snapshot(document: dict[str, Any]) -> dict[str, Any]:
     return {
         field: {"present": field in document, "value": document.get(field)}
         for field in ("_rev", "updatedAt")
@@ -675,6 +680,8 @@ def validate_plan_live(
     }
     checked: list[PreflightOperation] = []
     diagnostics: list[PreflightDiagnostic] = []
+    processed_targets: dict[str, str] = {}
+    failed_targets: dict[str, str] = {}
     indices = selected_indices or tuple(range(1, len(plan.operations) + 1))
     if not indices or len(indices) != len(set(indices)):
         raise ValueError("selected live-validation indices must be non-empty and unique")
@@ -687,6 +694,16 @@ def validate_plan_live(
             progress(position - 1, total, operation.operationId)
         try:
             target_id = operation.target.id
+            prior_same_target_operation_id = processed_targets.get(target_id)
+            if target_id in failed_targets:
+                failed_operation_id = failed_targets[target_id]
+                raise LivePreconditionError(
+                    f"operation {operation.operationId!r} cannot be checked because prior "
+                    f"same-target operation {failed_operation_id!r} failed live validation",
+                    check="same-target-predecessor",
+                    expected=failed_operation_id,
+                    found=None,
+                )
             if target_id not in cache:
                 cache[target_id] = reader.get_doc(target_id)
             live = cache[target_id]
@@ -709,7 +726,7 @@ def validate_plan_live(
                     )
                 _verify_recurrence_identity(operation, live, reader, cache)
                 _check_existing_preconditions(operation, live)
-                revision = _revision_snapshot(live)
+                revision = revision_snapshot(live)
             if isinstance(operation, CreateOperation):
                 _verify_recurrence_identity(operation, live, reader, cache)
             reference_warnings = _verify_references(
@@ -718,14 +735,18 @@ def validate_plan_live(
             source_warnings = _verify_subtask_sources(operation, reader, cache, planned_creates)
             operation_warnings = reference_warnings + source_warnings
             _verify_project_parent_hierarchy(operation, reader, cache, planned_creates)
+            compiled = compile_operation(operation, live, now_ms)
             checked.append(
                 PreflightOperation(
                     operation=operation,
                     live_document=live,
-                    compiled=compile_operation(operation, live, now_ms),
+                    compiled=compiled,
                     live_revision=revision,
+                    prior_same_target_operation_id=prior_same_target_operation_id,
                 )
             )
+            cache[target_id] = project_compiled_mutation(live, compiled)
+            failed_targets.pop(target_id, None)
             diagnostics.extend(
                 PreflightDiagnostic(
                     severity="warning",
@@ -740,6 +761,7 @@ def validate_plan_live(
                 for warning in operation_warnings
             )
         except LivePreconditionError as exc:
+            failed_targets[operation.target.id] = operation.operationId
             diagnostics.append(
                 PreflightDiagnostic(
                     severity="error",
@@ -752,6 +774,7 @@ def validate_plan_live(
                     found=exc.found,
                 )
             )
+        processed_targets[operation.target.id] = operation.operationId
         if progress is not None:
             progress(position, total, operation.operationId)
         if diagnostics and diagnostics[-1].severity == "error" and fail_fast:
@@ -810,6 +833,7 @@ def recheck_operation(
     reader: DocumentReader,
     *,
     strict_concurrency: bool,
+    expected_revision: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Repeat target checks immediately before a write and detect intervening edits."""
 
@@ -827,9 +851,10 @@ def recheck_operation(
         )
     _check_existing_preconditions(operation, current)
     if strict_concurrency:
-        revision = _revision_snapshot(current)
+        revision = revision_snapshot(current)
+        checked_revision = expected_revision or checked.live_revision
         for field in ("_rev", "updatedAt"):
-            before = checked.live_revision[field]
+            before = checked_revision[field]
             after = revision[field]
             if before["present"] and before != after:
                 raise LivePreconditionError(

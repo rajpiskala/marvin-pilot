@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
@@ -118,6 +118,8 @@ class OperationView:
     reason: str
     target_id: str
     target_title: str
+    target_chain_position: int
+    target_chain_length: int
     depends_on_operations: tuple[str, ...]
     before: TaskCardView | None
     after: TaskCardView | None
@@ -429,30 +431,25 @@ def _path_node_view(node: HierarchyPathNode) -> PathNodeView:
 def _projected_hierarchy(
     plan: ChangePlanV1,
     hierarchy: HierarchyContext | None,
-) -> tuple[dict[str, HierarchyNode], dict[str, HierarchyNode]]:
-    """Build plan-aware before/after indexes without changing the reviewed plan."""
+) -> tuple[
+    dict[str, HierarchyNode],
+    dict[str, HierarchyNode],
+]:
+    """Build the plan's global initial and final hierarchy states for review."""
 
-    before = dict(hierarchy.nodes) if hierarchy is not None else {}
-    after = dict(before)
+    initial = dict(hierarchy.nodes) if hierarchy is not None else {}
+    seen_targets: set[str] = set()
     for operation in plan.operations:
-        if operation.target.type not in {"project", "task"}:
-            continue
         identifier = operation.target.id
-        if isinstance(operation, CreateOperation):
-            parent_id = _fields_parent_id(operation.after, default="unassigned")
-            after[identifier] = HierarchyNode(
-                id=identifier,
-                type=operation.target.type,
-                title=operation.after.title,
-                parent_id=parent_id,
-                emoji=None,
-                color=None,
-                order=_fields_order(operation.after, default=None),
-            )
+        if (
+            operation.target.type not in {"project", "task"}
+            or identifier in seen_targets
+            or isinstance(operation, CreateOperation)
+        ):
             continue
-
-        existing = before.get(identifier)
-        before_node = HierarchyNode(
+        seen_targets.add(identifier)
+        existing = initial.get(identifier)
+        initial[identifier] = HierarchyNode(
             id=identifier,
             type=operation.target.type,
             title=operation.target.title,
@@ -467,18 +464,45 @@ def _projected_hierarchy(
                 default=existing.order if existing is not None else None,
             ),
         )
-        before[identifier] = before_node
-        if isinstance(operation, TrashOperation):
-            after.pop(identifier, None)
+
+    current = dict(initial)
+    for operation in plan.operations:
+        if operation.target.type not in {"project", "task"}:
             continue
-        after_fields = getattr(operation, "after", None)
-        after[identifier] = replace(
-            before_node,
-            title=_fields_title(after_fields, default=before_node.title),
-            parent_id=_fields_parent_id(after_fields, default=before_node.parent_id),
-            order=_fields_order(after_fields, default=before_node.order),
-        )
-    return before, after
+        identifier = operation.target.id
+        if isinstance(operation, CreateOperation):
+            parent_id = _fields_parent_id(operation.after, default="unassigned")
+            current[identifier] = HierarchyNode(
+                id=identifier,
+                type=operation.target.type,
+                title=operation.after.title,
+                parent_id=parent_id,
+                emoji=None,
+                color=None,
+                order=_fields_order(operation.after, default=None),
+            )
+        elif isinstance(operation, TrashOperation):
+            current.pop(identifier, None)
+        else:
+            existing = current.get(identifier)
+            if existing is None:
+                existing = HierarchyNode(
+                    id=identifier,
+                    type=operation.target.type,
+                    title=operation.target.title,
+                    parent_id=None,
+                    emoji=None,
+                    color=None,
+                    order=None,
+                )
+            after_fields = getattr(operation, "after", None)
+            current[identifier] = replace(
+                existing,
+                title=_fields_title(after_fields, default=existing.title),
+                parent_id=_fields_parent_id(after_fields, default=existing.parent_id),
+                order=_fields_order(after_fields, default=existing.order),
+            )
+    return initial, current
 
 
 def _fields_parent_id(fields: object, *, default: str | None) -> str | None:
@@ -684,6 +708,8 @@ def _operation_view(
     index: int,
     before_hierarchy: dict[str, HierarchyNode],
     after_hierarchy: dict[str, HierarchyNode],
+    target_chain_position: int,
+    target_chain_length: int,
 ) -> OperationView:
     before_path_state, before_path = _side_path(operation, "before", before_hierarchy)
     after_path_state, after_path = _side_path(operation, "after", after_hierarchy)
@@ -743,6 +769,8 @@ def _operation_view(
         "reason": operation.reason,
         "target_id": operation.target.id,
         "target_title": getattr(operation.target, "title", f"New {operation.target.type}"),
+        "target_chain_position": target_chain_position,
+        "target_chain_length": target_chain_length,
         "depends_on_operations": tuple(operation.dependsOnOperations),
         "warnings": _display_warnings(operation),
         "change_kinds": _change_kinds(
@@ -1085,23 +1113,30 @@ def _previews(plan: ChangePlanV1, operations: tuple[OperationView, ...]) -> Prev
     show_day_sections = (
         plan.reviewDisplay.showDaySectionsByDefault if plan.reviewDisplay is not None else False
     )
+    before_by_target: OrderedDict[str, OperationView] = OrderedDict()
+    after_by_target: OrderedDict[str, OperationView] = OrderedDict()
+    for operation in operations:
+        before_by_target.setdefault(operation.target_id, operation)
+        after_by_target[operation.target_id] = operation
+    before_operations = tuple(before_by_target.values())
+    after_operations = tuple(after_by_target.values())
     return PreviewsView(
         show_day_sections_by_default=show_day_sections,
         before=StatePreviewView(
-            roots=_preview_tree(operations, "before"),
-            day_sections=_day_section_groups(operations, "before"),
+            roots=_preview_tree(before_operations, "before"),
+            day_sections=_day_section_groups(before_operations, "before"),
             incomplete_operation_ids=tuple(
                 operation.operation_id
-                for operation in operations
+                for operation in before_operations
                 if operation.before is not None and operation.before_path_state == "unknown"
             ),
         ),
         after=StatePreviewView(
-            roots=_preview_tree(operations, "after"),
-            day_sections=_day_section_groups(operations, "after"),
+            roots=_preview_tree(after_operations, "after"),
+            day_sections=_day_section_groups(after_operations, "after"),
             incomplete_operation_ids=tuple(
                 operation.operation_id
-                for operation in operations
+                for operation in after_operations
                 if operation.after is not None and operation.after_path_state == "unknown"
             ),
         ),
@@ -1117,10 +1152,22 @@ def build_plan_view(
     """Build all immutable visualizer projections from one validated plan."""
 
     before_hierarchy, after_hierarchy = _projected_hierarchy(plan, hierarchy)
-    operations = tuple(
-        _operation_view(operation, index, before_hierarchy, after_hierarchy)
-        for index, operation in enumerate(plan.operations, start=1)
-    )
+    target_counts = Counter(operation.target.id for operation in plan.operations)
+    target_positions: Counter[str] = Counter()
+    operation_views = []
+    for index, operation in enumerate(plan.operations, start=1):
+        target_positions[operation.target.id] += 1
+        operation_views.append(
+            _operation_view(
+                operation,
+                index,
+                before_hierarchy,
+                after_hierarchy,
+                target_positions[operation.target.id],
+                target_counts[operation.target.id],
+            )
+        )
+    operations = tuple(operation_views)
     counts = {
         action: sum(operation.action == action for operation in operations)
         for action in ("create", "update", "complete", "trash")
