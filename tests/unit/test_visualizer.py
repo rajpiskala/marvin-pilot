@@ -8,7 +8,7 @@ from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.field_registry import FIELD_SPECS
 from marvin_pilot.models.plan_v1 import RecurringTaskFields, TaskFields
 from marvin_pilot.plan_io import parse_plan_bytes
-from marvin_pilot.visualizer import build_plan_view
+from marvin_pilot.visualizer import build_plan_view, project_hierarchy_context
 from marvin_pilot.visualizer_fields import FIELD_PRESENTATIONS, presentation_for
 from marvin_pilot.visualizer_hierarchy import build_backup_hierarchy_context
 
@@ -256,6 +256,7 @@ def test_plan_targets_resolve_legacy_parent_names_without_a_backup() -> None:
 def test_missing_paths_are_grouped_as_incomplete_instead_of_rendered_as_roots() -> None:
     value = _hierarchy_plan()
     value["operations"][0].pop("display")
+    value["operations"] = [value["operations"][0]]
     view = _view(value)
     before = view.previews.before
     assert before.incomplete_operation_ids == ("rename-monitoring",)
@@ -678,3 +679,64 @@ def test_five_hundred_operation_view_is_complete_and_deterministic() -> None:
     assert first.total_operations == 500
     assert len(first.layouts.split) == 5
     assert sum(len(section.operation_ids) for section in first.layouts.split) == 500
+
+
+def test_prerequisite_projection_resolves_parent_names_without_repeating_paths() -> None:
+    prerequisite = _parse(_hierarchy_plan())
+    hierarchy = project_hierarchy_context(prerequisite)
+    parent_id = "33333333-3333-4333-8333-333333333333"
+    current = {
+        "schemaVersion": 1,
+        "planId": "88888888-8888-4888-8888-888888888888",
+        "createdAt": "2026-08-30T12:00:00-07:00",
+        "summary": "Move one task into a project created by an earlier phase.",
+        "operations": [
+            {
+                "operationId": "move-task",
+                "action": "update",
+                "target": {"type": "task", "id": "task-move", "title": "Review alerts"},
+                "reason": "Use the project created by the prerequisite plan.",
+                "before": {"parent": {"id": "unassigned", "title": "Inbox"}},
+                "after": {"parent": {"id": parent_id, "title": parent_id}},
+            }
+        ],
+    }
+
+    view = build_plan_view(
+        _parse(current),
+        hierarchy=hierarchy,
+        hierarchy_sources=("prerequisite plan projection",),
+    )
+    operation = view.operations[0]
+
+    assert operation.after_path[-1].title == "Follow-ups"
+    assert operation.after.items[0].text == "Follow-ups"
+    assert operation.diffs[0].after.summary == "Follow-ups"
+    assert parent_id in operation.diffs[0].after.exact
+    assert view.layouts.after[0].title == "Follow-ups"
+
+
+def test_unresolved_parent_ids_stay_exact_but_never_become_primary_labels() -> None:
+    parent_id = "77777777-7777-4777-8777-777777777777"
+    current = {
+        "schemaVersion": 1,
+        "planId": "99999999-9999-4999-8999-999999999999",
+        "createdAt": "2026-08-30T12:00:00-07:00",
+        "summary": "Render an intentionally incomplete hierarchy reference.",
+        "operations": [
+            {
+                "operationId": "move-task",
+                "action": "update",
+                "target": {"type": "task", "id": "task-move", "title": "Review alerts"},
+                "reason": "Exercise safe unknown-parent rendering.",
+                "before": {"parent": {"id": "unassigned", "title": "Inbox"}},
+                "after": {"parent": {"id": parent_id, "title": parent_id}},
+            }
+        ],
+    }
+
+    operation = _view(current).operations[0]
+
+    assert operation.after.items[0].text == "Unknown parent"
+    assert operation.diffs[0].after.summary == "Unknown parent"
+    assert parent_id in operation.diffs[0].after.exact

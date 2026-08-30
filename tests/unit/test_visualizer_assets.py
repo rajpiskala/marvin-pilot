@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import struct
 from importlib.resources import files
 
 ASSETS = files("marvin_pilot.visualizer_assets")
@@ -40,7 +41,8 @@ def test_assets_are_offline_external_and_have_expected_controls() -> None:
     assert '<script src="app.js" defer></script>' in html
     assert '<link rel="stylesheet" href="styles.css">' in html
     assert 'src="marvin-pilot.png"' in html
-    assert 'href="marvin-pilot.png"' in html
+    assert 'href="favicon-64.png"' in html
+    assert 'sizes="64x64"' in html
     assert "<textarea" not in html
     assert "style=" not in html
     assert 'data-theme-choice="light"' in html
@@ -63,6 +65,14 @@ def test_vendored_pilot_art_matches_the_supplied_project_asset() -> None:
     )
 
 
+def test_favicon_is_a_small_dedicated_square_asset() -> None:
+    favicon = ASSETS.joinpath("favicon-64.png").read_bytes()
+    assert favicon.startswith(b"\x89PNG\r\n\x1a\n")
+    assert struct.unpack(">II", favicon[16:24]) == (64, 64)
+    assert len(favicon) < 16_000
+    assert len(favicon) < len(ASSETS.joinpath("marvin-pilot.png").read_bytes()) // 100
+
+
 def test_javascript_uses_safe_dom_and_local_routes_only() -> None:
     script = _text("app.js")
     assert "innerHTML" not in script
@@ -73,6 +83,8 @@ def test_javascript_uses_safe_dom_and_local_routes_only() -> None:
     assert "api/current" in script
     assert "marvinPilot.visualizer.theme.v1" in script
     assert "marvinPilot.visualizer.comparisonView.v1" in script
+    assert "marvinPilot.visualizer.selectionMode.v1" in script
+    assert "marvinPilot.visualizer.titleDensity.v1" in script
     assert script.count("window.localStorage.setItem") == 1
     assert "JSON.stringify(currentPlan)" not in script
     assert 'plan.hierarchy_source === "backup"' in script

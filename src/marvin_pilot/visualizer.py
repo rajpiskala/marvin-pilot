@@ -223,6 +223,9 @@ class PlanView:
     digest: str
     source_name: str | None
     hierarchy_source: Literal["plan", "backup"]
+    hierarchy_sources: tuple[str, ...]
+    review_state: Literal["preview", "applied"]
+    receipt_id: str | None
     counts: dict[str, int]
     total_operations: int
     operations: tuple[OperationView, ...]
@@ -321,21 +324,34 @@ def _target_only_card(title: str) -> TaskCardView:
     )
 
 
+def _friendly_parent_title(
+    value: Any,
+    path_state: PathState,
+    path: tuple[PathNodeView, ...],
+) -> str:
+    if path_state in {"path", "legacy"} and path:
+        return path[-1].title
+    if path_state == "root":
+        return "Marvin root"
+    if isinstance(value, dict):
+        identifier = value.get("id")
+        title = value.get("title")
+        if isinstance(title, str) and title and title != identifier:
+            return title
+    return "Unknown parent"
+
+
 def _card_with_display_parent(
     card: TaskCardView,
     path_state: PathState,
     path: tuple[PathNodeView, ...],
 ) -> TaskCardView:
-    """Use the canonical display-path title when a parent is being changed."""
+    """Use a friendly hierarchy title for parent chips while retaining exact JSON."""
 
-    if path_state != "path" or not path:
-        return card
-    parent = path[-1]
     items = tuple(
         replace(
             item,
-            text=parent.title,
-            exact=_exact_json({"id": parent.id, "title": parent.title}),
+            text=_friendly_parent_title(json.loads(item.exact), path_state, path),
         )
         if item.field == "parent" and not item.cleared
         else item
@@ -345,19 +361,34 @@ def _card_with_display_parent(
 
 
 def _field_diffs(
-    before: dict[str, Any], after: dict[str, Any], names: set[str]
+    before: dict[str, Any],
+    after: dict[str, Any],
+    names: set[str],
+    *,
+    before_path_state: PathState,
+    before_path: tuple[PathNodeView, ...],
+    after_path_state: PathState,
+    after_path: tuple[PathNodeView, ...],
 ) -> tuple[FieldDiffView, ...]:
     result = []
     for field in _ordered_fields(names):
         spec = presentation_for(field)
-        result.append(
-            FieldDiffView(
-                field=field,
-                label=spec.label,
-                before=_field_value(field, before.get(field), present=field in before),
-                after=_field_value(field, after.get(field), present=field in after),
-            )
-        )
+        before_value = _field_value(field, before.get(field), present=field in before)
+        after_value = _field_value(field, after.get(field), present=field in after)
+        if field == "parent":
+            if before_value.state == "value":
+                before_value = replace(
+                    before_value,
+                    summary=_friendly_parent_title(
+                        before.get(field), before_path_state, before_path
+                    ),
+                )
+            if after_value.state == "value":
+                after_value = replace(
+                    after_value,
+                    summary=_friendly_parent_title(after.get(field), after_path_state, after_path),
+                )
+        result.append(FieldDiffView(field, spec.label, before_value, after_value))
     return tuple(result)
 
 
@@ -438,6 +469,27 @@ def _projected_hierarchy(
     """Build the plan's global initial and final hierarchy states for review."""
 
     initial = dict(hierarchy.nodes) if hierarchy is not None else {}
+    for operation in plan.operations:
+        if operation.display is None:
+            continue
+        for side in ("before", "after"):
+            field_name = f"{side}Path"
+            if field_name not in operation.display.model_fields_set:
+                continue
+            parent_id = "root"
+            for path_node in getattr(operation.display, field_name) or []:
+                if path_node.type not in {"category", "project", "task"}:
+                    continue
+                initial[path_node.id] = HierarchyNode(
+                    id=path_node.id,
+                    type=path_node.type,
+                    title=path_node.title,
+                    parent_id=parent_id,
+                    emoji=path_node.emoji,
+                    color=path_node.color,
+                    order=path_node.order,
+                )
+                parent_id = path_node.id
     seen_targets: set[str] = set()
     for operation in plan.operations:
         identifier = operation.target.id
@@ -503,6 +555,19 @@ def _projected_hierarchy(
                 order=_fields_order(after_fields, default=existing.order),
             )
     return initial, current
+
+
+def project_hierarchy_context(
+    plan: ChangePlanV1,
+    hierarchy: HierarchyContext | None = None,
+) -> HierarchyContext:
+    """Return the hierarchy produced after projecting one prerequisite plan locally."""
+
+    _before, after = _projected_hierarchy(plan, hierarchy)
+    return HierarchyContext(
+        nodes=after,
+        input_document_count=hierarchy.input_document_count if hierarchy is not None else 0,
+    )
 
 
 def _fields_parent_id(fields: object, *, default: str | None) -> str | None:
@@ -606,7 +671,11 @@ def _legacy_path(
             PathNodeView(
                 parent.id,
                 resolved.type if resolved is not None else "unknown",
-                parent.title or (resolved.title if resolved is not None else "Unknown parent"),
+                (
+                    resolved.title
+                    if resolved is not None
+                    else _friendly_parent_title(parent.model_dump(mode="json"), "unknown", ())
+                ),
                 resolved.emoji if resolved is not None else None,
                 resolved.color if resolved is not None else None,
                 resolved.order if resolved is not None else None,
@@ -816,7 +885,15 @@ def _operation_view(
             after=after_card,
             before_empty_label=None,
             after_empty_label=None,
-            diffs=_field_diffs(before_values, after_values, set(after_values)),
+            diffs=_field_diffs(
+                before_values,
+                after_values,
+                set(after_values),
+                before_path_state=before_path_state,
+                before_path=before_path,
+                after_path_state=after_path_state,
+                after_path=after_path,
+            ),
         )
     if isinstance(operation, CreateOperation):
         after_values = operation.after.model_dump(exclude_unset=True, mode="json")
@@ -835,7 +912,15 @@ def _operation_view(
             after=after_card,
             before_empty_label="No before state — created by this plan",
             after_empty_label=None,
-            diffs=_field_diffs({}, after_values, set(after_values)),
+            diffs=_field_diffs(
+                {},
+                after_values,
+                set(after_values),
+                before_path_state=before_path_state,
+                before_path=before_path,
+                after_path_state=after_path_state,
+                after_path=after_path,
+            ),
         )
     if isinstance(operation, CompleteOperation):
         lifecycle_before = FieldValueView("value", "Active", '"active"')
@@ -881,10 +966,17 @@ def _section_entries(
     operations: tuple[OperationView, ...],
     layout: Literal["split", "before", "after"],
 ) -> list[tuple[str, OperationView]]:
+    def section_for(view: OperationView, side: Literal["before", "after"]) -> str:
+        path = getattr(view, f"{side}_path")
+        state = getattr(view, f"{side}_path_state")
+        if state in {"path", "legacy"} and path:
+            return path[-1].title
+        return UNSECTIONED
+
     entries = []
-    for source, view in zip(plan.operations, operations, strict=True):
-        before_section = _side_section(source, "before")
-        after_section = _side_section(source, "after")
+    for _source, view in zip(plan.operations, operations, strict=True):
+        before_section = section_for(view, "before")
+        after_section = section_for(view, "after")
         if layout == "before":
             title = CREATED_PLACEHOLDERS if view.action == "create" else before_section
         elif layout == "after":
@@ -1148,6 +1240,9 @@ def build_plan_view(
     *,
     source_name: str | None = None,
     hierarchy: HierarchyContext | None = None,
+    hierarchy_sources: tuple[str, ...] = (),
+    review_state: Literal["preview", "applied"] = "preview",
+    receipt_id: str | None = None,
 ) -> PlanView:
     """Build all immutable visualizer projections from one validated plan."""
 
@@ -1186,6 +1281,9 @@ def build_plan_view(
         digest=plan_digest(plan),
         source_name=source_name,
         hierarchy_source="backup" if hierarchy is not None else "plan",
+        hierarchy_sources=hierarchy_sources,
+        review_state=review_state,
+        receipt_id=receipt_id,
         counts=counts,
         total_operations=len(operations),
         operations=operations,

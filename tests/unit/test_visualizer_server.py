@@ -41,6 +41,7 @@ def test_root_assets_and_security_headers_are_served_without_plan_content() -> N
         script = client.get(server.url + "app.js")
         stylesheet = client.get(server.url + "styles.css")
         artwork = client.get(server.url + "marvin-pilot.png")
+        favicon = client.get(server.url + "favicon-64.png")
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
@@ -51,6 +52,9 @@ def test_root_assets_and_security_headers_are_served_without_plan_content() -> N
     assert artwork.status_code == 200
     assert artwork.headers["content-type"] == "image/png"
     assert artwork.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert favicon.status_code == 200
+    assert favicon.headers["content-type"] == "image/png"
+    assert len(favicon.content) < 16_000
     for name, value in SECURITY_HEADERS.items():
         assert response.headers[name] == value
 

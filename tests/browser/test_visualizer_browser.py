@@ -24,13 +24,16 @@ pytestmark = [
 
 
 @contextmanager
-def running_visualizer(*, preload: bool = True, plan_dict: dict | None = None):
+def running_visualizer(
+    *, preload: bool = True, plan_dict: dict | None = None, server_kwargs: dict | None = None
+):
     source = plan_dict if plan_dict is not None else EXAMPLE_PLAN
     plan = parse_plan_bytes(json.dumps(source).encode()) if preload else None
     server = VisualizerServer(
         preloaded_plan=plan,
         source_name="review-plan.json" if preload else None,
         session_token="browser-test-session",
+        **(server_kwargs or {}),
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -608,6 +611,118 @@ def test_drop_and_file_upload_are_validated_and_untrusted_text_stays_text(page) 
         assert page.locator("#plan-summary").inner_text() == EXAMPLE_PLAN["summary"]
 
 
+def test_applied_receipt_state_uses_historical_labels(page) -> None:
+    with running_visualizer(
+        server_kwargs={
+            "review_state": "applied",
+            "receipt_id": "11111111-1111-4111-8111-111111111111",
+        }
+    ) as server:
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+        assert page.locator("#review-status").inner_text() == "Applied plan — receipt verified"
+        assert "11111111" in page.locator("#review-status").get_attribute("title")
+        headings = page.locator(".hierarchy-pane .preview-pane-header h2").all_inner_texts()
+        assert headings == ["Before", "Applied result"]
+
+        page.get_by_role("radio", name="Changes").click()
+        assert page.locator(".diff-pane-headings h2").all_inner_texts() == [
+            "Before",
+            "Applied result",
+        ]
+
+
+def test_title_copy_mode_excludes_metadata_and_full_mode_restores_native_copy(page) -> None:
+    with running_visualizer() as server:
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+        copied = page.evaluate(
+            """() => {
+                const titles = document.querySelectorAll('#sections [data-copy-title]');
+                const range = document.createRange();
+                range.setStartBefore(titles[0]);
+                range.setEndAfter(titles[1]);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+                const transfer = new DataTransfer();
+                let captured = '';
+                document.addEventListener('copy', (copyEvent) => {
+                    captured = copyEvent.clipboardData.getData('text/plain');
+                }, { once: true });
+                const event = new ClipboardEvent('copy', {
+                    bubbles: true,
+                    cancelable: true,
+                    clipboardData: transfer,
+                });
+                document.querySelector('#sections').dispatchEvent(event);
+                return { text: captured, prevented: event.defaultPrevented };
+            }"""
+        )
+        assert copied["prevented"] is True
+        assert copied["text"].splitlines() == ["Wash the dishes", "Eat dinner with Jacob"]
+        assert "UPDATE" not in copied["text"]
+        assert (
+            page.locator(".action-badge").first.evaluate(
+                "element => getComputedStyle(element).userSelect"
+            )
+            == "none"
+        )
+
+        page.locator("#selection-mode").select_option("full")
+        native = page.evaluate(
+            """() => {
+                const transfer = new DataTransfer();
+                const event = new ClipboardEvent('copy', {
+                    bubbles: true,
+                    cancelable: true,
+                    clipboardData: transfer,
+                });
+                document.querySelector('#sections').dispatchEvent(event);
+                return event.defaultPrevented;
+            }"""
+        )
+        assert native is False
+        assert (
+            page.locator(".action-badge").first.evaluate(
+                "element => getComputedStyle(element).userSelect"
+            )
+            == "auto"
+        )
+
+
+def test_compact_titles_expand_and_single_views_remain_full(page) -> None:
+    plan = copy.deepcopy(EXAMPLE_PLAN)
+    long_title = " ".join(["A deliberately long task title for dense cleanup review"] * 12)
+    plan["operations"][0]["target"]["title"] = long_title
+    plan["operations"][0]["before"]["title"] = long_title
+    plan["operations"][0]["after"]["title"] = long_title + " updated"
+    with running_visualizer(plan_dict=plan) as server:
+        page.set_viewport_size({"width": 900, "height": 900})
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+        title = page.locator(
+            '.hierarchy-pane-before [data-operation-id="reschedule-wash-dishes"] .task-title'
+        )
+        button = title.locator("xpath=following-sibling::button[contains(@class, 'title-expand')]")
+        assert button.is_visible()
+        compact_height = title.bounding_box()["height"]
+        button.click()
+        assert title.bounding_box()["height"] > compact_height
+
+        page.get_by_role("radio", name="Now only").click()
+        single_title = page.locator(
+            '.hierarchy-pane-before [data-operation-id="reschedule-wash-dishes"] .task-title'
+        )
+        assert (
+            single_title.locator(
+                "xpath=following-sibling::button[contains(@class, 'title-expand')]"
+            ).count()
+            == 0
+        )
+        assert single_title.bounding_box()["height"] > compact_height
+
+
 def test_filters_details_and_narrow_split_layout(page) -> None:
     with running_visualizer() as server:
         page.add_init_script(
@@ -722,8 +837,8 @@ def test_split_rows_and_following_sections_share_geometry(page) -> None:
 
         assert all(box is not None for box in (left, right, left_card, right_card))
         assert left["y"] == pytest.approx(right["y"], abs=1)
-        assert left["height"] == pytest.approx(right["height"], abs=1)
-        assert left_card["height"] == pytest.approx(right_card["height"], abs=1)
+        assert left["height"] < right["height"]
+        assert left_card["height"] < right_card["height"]
         assert left_card["width"] == pytest.approx(right_card["width"], abs=1)
         assert left_card["height"] > 55
         assert first_section is not None and second_section is not None
@@ -1120,7 +1235,13 @@ def test_held_out_plans_obey_general_hierarchy_invariants(page, number: str) -> 
 
 
 def test_ordered_subtasks_and_loose_task_conversion_are_visually_traceable(page) -> None:
-    with running_visualizer(plan_dict=subtask_conversion_plan()) as server:
+    plan = subtask_conversion_plan()
+    long_source_title = (
+        "Order food from the preferred restaurant after checking delivery timing and coupons"
+    )
+    plan["operations"][0]["after"]["subtasks"][0]["sourceTask"]["title"] = long_source_title
+    plan["operations"][1]["target"]["title"] = long_source_title
+    with running_visualizer(plan_dict=plan) as server:
         page.goto(server.url)
         page.locator("#plan-view").wait_for(state="visible")
         before = page.locator('.hierarchy-pane-before [data-operation-id="build-dinner-checklist"]')
@@ -1136,7 +1257,12 @@ def test_ordered_subtasks_and_loose_task_conversion_are_visually_traceable(page)
         ]
         assert after.locator(".subtask-row.done").count() == 1
         source = after.locator('[data-source-task-id="loose-order"]')
-        assert source.locator(".subtask-source").inner_text() == "From Order food"
+        assert source.locator(".subtask-source").inner_text() == "From source task"
+        assert long_source_title in source.locator(".subtask-source").get_attribute("title")
+        title_box = source.locator(".subtask-title").bounding_box()
+        provenance_box = source.locator(".subtask-source").bounding_box()
+        assert title_box is not None and title_box["width"] > 100
+        assert provenance_box is not None and provenance_box["width"] <= 150
         assert source.locator(".subtask-loss").inner_text() == "Drops Estimated time duration"
         assert "Explicitly accepted source-task data loss" in source.locator(
             ".subtask-loss"
@@ -1151,7 +1277,7 @@ def test_ordered_subtasks_and_loose_task_conversion_are_visually_traceable(page)
         details = after.locator(".operation-details[open]")
         assert details.locator(".subtask-diff-row").count() == 4
         detail_text = details.inner_text()
-        assert "Converted from loose task: Order food" in detail_text
+        assert f"Converted from loose task: {long_source_title}" in detail_text
         assert "Explicitly accepted loss: Estimated time duration" in detail_text
         assert "Removed" in detail_text
         assert "Completed" in detail_text

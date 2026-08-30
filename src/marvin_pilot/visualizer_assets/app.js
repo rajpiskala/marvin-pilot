@@ -2,11 +2,15 @@
 
 const THEME_KEY = "marvinPilot.visualizer.theme.v1";
 const VIEW_KEY = "marvinPilot.visualizer.comparisonView.v1";
+const SELECTION_KEY = "marvinPilot.visualizer.selectionMode.v1";
+const TITLE_DENSITY_KEY = "marvinPilot.visualizer.titleDensity.v1";
 const THEMES = ["light", "dusk", "night"];
 const VIEWS = ["split", "before", "after"];
 const MODES = ["preview", "changes"];
 const ACTIONS = ["create", "update", "complete", "trash"];
 const CHANGE_GROUPINGS = ["after", "before", "plan", "day"];
+const SELECTION_MODES = ["titles", "full"];
+const TITLE_DENSITIES = ["compact", "full"];
 const MAX_PLAN_BYTES = 4 * 1024 * 1024;
 const COMPACT_FIELD_PREFIXES = {
   dueDate: "Due",
@@ -35,6 +39,8 @@ function savePreference(key, value) {
 
 let selectedTheme = readPreference(THEME_KEY, THEMES, "light");
 let selectedView = readPreference(VIEW_KEY, VIEWS, "split");
+let selectedSelectionMode = readPreference(SELECTION_KEY, SELECTION_MODES, "titles");
+let selectedTitleDensity = readPreference(TITLE_DENSITY_KEY, TITLE_DENSITIES, "compact");
 let selectedMode = "preview";
 let showDaySections = false;
 let selectedChangeGrouping = "after";
@@ -62,6 +68,7 @@ const elements = {
   hierarchySource: document.querySelector("#plan-hierarchy-source"),
   planId: document.querySelector("#plan-id"),
   digest: document.querySelector("#plan-digest"),
+  reviewStatus: document.querySelector("#review-status"),
   createCount: document.querySelector("#create-count"),
   updateCount: document.querySelector("#update-count"),
   completeCount: document.querySelector("#complete-count"),
@@ -71,12 +78,21 @@ const elements = {
   changesGrouping: document.querySelector("#changes-grouping"),
   changesSearchControl: document.querySelector("#changes-search-control"),
   changesSearch: document.querySelector("#changes-search"),
+  selectionMode: document.querySelector("#selection-mode"),
+  titleDensity: document.querySelector("#title-density"),
   movedFilter: document.querySelector("#moved-filter"),
   movedCount: document.querySelector("#moved-count"),
   comparisonTray: document.querySelector("#comparison-tray"),
   sections: document.querySelector("#sections"),
   emptyFilter: document.querySelector("#empty-filter"),
 };
+
+function sideLabel(sideName) {
+  if (currentPlan?.review_state === "applied") {
+    return sideName === "before" ? "Before" : "Applied result";
+  }
+  return sideName === "before" ? "Now" : "After (preview)";
+}
 
 function setTheme(theme, persist = true) {
   selectedTheme = THEMES.includes(theme) ? theme : "light";
@@ -110,6 +126,26 @@ function setMode(mode) {
   elements.daySectionsToggle.hidden = selectedMode !== "preview";
   elements.changesGroupingControl.hidden = selectedMode !== "changes";
   elements.changesSearchControl.hidden = selectedMode !== "changes";
+  if (currentPlan) {
+    renderSections();
+  }
+}
+
+function setSelectionMode(mode, persist = true) {
+  selectedSelectionMode = SELECTION_MODES.includes(mode) ? mode : "titles";
+  elements.selectionMode.value = selectedSelectionMode;
+  elements.sections.dataset.selectionMode = selectedSelectionMode;
+  if (persist) {
+    savePreference(SELECTION_KEY, selectedSelectionMode);
+  }
+}
+
+function setTitleDensity(density, persist = true) {
+  selectedTitleDensity = TITLE_DENSITIES.includes(density) ? density : "compact";
+  elements.titleDensity.value = selectedTitleDensity;
+  if (persist) {
+    savePreference(TITLE_DENSITY_KEY, selectedTitleDensity);
+  }
   if (currentPlan) {
     renderSections();
   }
@@ -353,6 +389,7 @@ function renderCard(
     taskLine.append(objectIcon(targetType, Boolean(completedAt)));
   }
   const title = node("div", "task-title");
+  title.dataset.copyTitle = card.title;
   appendTaskTitle(title, card.title);
   taskLine.append(title);
   if (targetChainLength > 1) {
@@ -460,10 +497,13 @@ function renderCard(
       }
       item.append(objectIcon("subtask"));
       const title = node("span", "subtask-title", subtask.title);
+      title.dataset.copyTitle = subtask.title;
       item.append(title);
       if (subtask.source_task_title) {
-        const source = node("span", "subtask-source", `From ${subtask.source_task_title}`);
-        source.title = `Converted from loose task ${subtask.source_task_id}`;
+        const source = node("span", "subtask-source", "From source task");
+        source.title = (
+          `Converted from loose task “${subtask.source_task_title}” (${subtask.source_task_id})`
+        );
         item.append(source);
       }
       if (subtask.accepted_loss_labels.length > 0) {
@@ -878,7 +918,7 @@ function renderPathCrumbs(path, state, { compact = false } = {}) {
 function renderLocationBreadcrumb(operation, sideName) {
   const location = node("div", "card-location");
   location.append(
-    node("span", "card-location-label", sideName === "before" ? "Now" : "After"),
+    node("span", "card-location-label", sideLabel(sideName)),
     renderPathCrumbs(
       operation[`${sideName}_path`],
       operation[`${sideName}_path_state`],
@@ -918,7 +958,7 @@ function renderChangeGroupHeader(group) {
 function renderSplitPreview(operations) {
   const preview = node("section", "split-diff");
   const headings = node("header", "diff-pane-headings");
-  headings.append(node("h2", "", "Now"), node("h2", "", "After (preview)"));
+  headings.append(node("h2", "", sideLabel("before")), node("h2", "", sideLabel("after")));
   preview.append(headings);
 
   let renderedCount = 0;
@@ -956,7 +996,7 @@ function renderStatePane(operations, sideName) {
   const pane = node("section", `preview-pane preview-pane-${sideName}`);
   const paneHeader = node("header", "preview-pane-header");
   paneHeader.append(
-    node("h2", "", sideName === "before" ? "Now" : "After (preview)"),
+    node("h2", "", sideLabel(sideName)),
   );
   pane.append(paneHeader);
 
@@ -1155,7 +1195,7 @@ function renderDaySectionGroup(group, sideName, operations) {
 function renderHierarchyPane(operations, sideName) {
   const pane = node("section", `hierarchy-pane hierarchy-pane-${sideName}`);
   const paneHeader = node("header", "preview-pane-header");
-  paneHeader.append(node("h2", "", sideName === "before" ? "Now" : "After (preview)"));
+  paneHeader.append(node("h2", "", sideLabel(sideName)));
   pane.append(paneHeader);
 
   const scroll = node("div", "hierarchy-scroll");
@@ -1214,7 +1254,7 @@ function comparisonQueue(selectedOperation) {
 function renderComparisonSide(operation, sideName) {
   const side = node("div", `comparison-side comparison-side-${sideName}`);
   side.append(
-    node("span", "comparison-side-label", sideName === "before" ? "Now" : "After (preview)"),
+    node("span", "comparison-side-label", sideLabel(sideName)),
     renderPathCrumbs(
       operation[`${sideName}_path`],
       operation[`${sideName}_path_state`],
@@ -1261,7 +1301,7 @@ function updateJumpDirections() {
     );
     if (!operation?.[sideName]) {
       button.disabled = true;
-      button.textContent = `No ${sideName === "before" ? "Now" : "After"} state`;
+      button.textContent = `No ${sideLabel(sideName)} state`;
       return;
     }
     button.disabled = false;
@@ -1277,7 +1317,7 @@ function updateJumpDirections() {
         direction = " · visible";
       }
     }
-    button.textContent = `Jump to ${sideName === "before" ? "Now" : "After"}${direction}`;
+    button.textContent = `Jump to ${sideLabel(sideName)}${direction}`;
   });
 }
 
@@ -1377,6 +1417,46 @@ function setSelectedOperation(operationId) {
   renderComparisonTray();
 }
 
+function wireCompactTitleControls() {
+  if (!elements.sections.classList.contains("compact-titles")) {
+    return;
+  }
+  elements.sections.querySelectorAll(".task-title").forEach((title) => {
+    if (title.scrollHeight <= title.clientHeight + 1) {
+      return;
+    }
+    const button = node("button", "title-expand", "Show full");
+    button.type = "button";
+    button.setAttribute("aria-expanded", "false");
+    button.addEventListener("click", () => {
+      const expanded = title.classList.toggle("title-expanded");
+      button.textContent = expanded ? "Show less" : "Show full";
+      button.setAttribute("aria-expanded", String(expanded));
+    });
+    title.after(button);
+  });
+}
+
+function selectedTitleText(selection) {
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+    return "";
+  }
+  const ranges = Array.from({ length: selection.rangeCount }, (_value, index) => (
+    selection.getRangeAt(index)
+  ));
+  return [...elements.sections.querySelectorAll("[data-copy-title]")]
+    .filter((title) => ranges.some((range) => {
+      try {
+        return range.intersectsNode(title);
+      } catch (_error) {
+        return false;
+      }
+    }))
+    .map((title) => title.dataset.copyTitle)
+    .filter(Boolean)
+    .join("\n");
+}
+
 function renderSections() {
   const operations = new Map(currentPlan.operations.map((operation) => [operation.operation_id, operation]));
   const fragment = document.createDocumentFragment();
@@ -1405,7 +1485,12 @@ function renderSections() {
     selectedMode === "changes" && selectedView !== "split",
   );
   elements.sections.classList.toggle("hierarchy-mode", selectedMode === "preview");
+  elements.sections.classList.toggle(
+    "compact-titles",
+    selectedTitleDensity === "compact" && selectedView === "split",
+  );
   elements.sections.replaceChildren(fragment);
+  wireCompactTitleControls();
   elements.emptyFilter.hidden = renderedCount !== 0;
   document.querySelectorAll("[data-operation-id]").forEach((element) => {
     element.classList.toggle(
@@ -1426,11 +1511,22 @@ function renderPlan(plan) {
   showDaySections = Boolean(plan.previews?.show_day_sections_by_default);
   syncDaySectionToggle();
   elements.summary.textContent = plan.summary;
+  const applied = plan.review_state === "applied";
+  elements.sections.dataset.reviewState = applied ? "applied" : "preview";
+  elements.reviewStatus.className = `status-badge ${applied ? "applied" : "preview"}`;
+  elements.reviewStatus.textContent = applied
+    ? "Applied plan — receipt verified"
+    : "Preview only — nothing has been applied";
+  elements.reviewStatus.title = applied && plan.receipt_id
+    ? `Verified receipt ${plan.receipt_id}`
+    : "";
   elements.fileName.textContent = plan.source_name || "Browser upload";
   elements.total.textContent = `${plan.total_operations} operation${plan.total_operations === 1 ? "" : "s"}`;
-  elements.hierarchySource.textContent = plan.hierarchy_source === "backup"
-    ? "Local backup + plan projection"
-    : "Plan metadata and references only";
+  elements.hierarchySource.textContent = plan.hierarchy_sources?.length
+    ? `${plan.hierarchy_sources.join(" + ")} + current plan projection`
+    : plan.hierarchy_source === "backup"
+      ? "Local hierarchy context + plan projection"
+      : "Plan metadata and references only";
   elements.planId.textContent = plan.plan_id;
   elements.digest.textContent = plan.digest;
   elements.createCount.textContent = plan.counts.create;
@@ -1519,6 +1615,8 @@ async function loadCurrentPlan() {
 setTheme(selectedTheme, false);
 setView(selectedView, false);
 setMode(selectedMode);
+setSelectionMode(selectedSelectionMode, false);
+setTitleDensity(selectedTitleDensity, false);
 wireRadioGroup("[data-theme-choice]", "themeChoice", setTheme);
 wireRadioGroup("[data-view-choice]", "viewChoice", setView);
 wireRadioGroup("[data-mode-choice]", "modeChoice", setMode);
@@ -1547,6 +1645,23 @@ elements.changesSearch.addEventListener("input", () => {
   if (currentPlan) {
     renderSections();
   }
+});
+elements.selectionMode.addEventListener("change", () => {
+  setSelectionMode(elements.selectionMode.value);
+});
+elements.titleDensity.addEventListener("change", () => {
+  setTitleDensity(elements.titleDensity.value);
+});
+elements.sections.addEventListener("copy", (event) => {
+  if (selectedSelectionMode !== "titles") {
+    return;
+  }
+  const titles = selectedTitleText(window.getSelection());
+  if (!titles || !event.clipboardData) {
+    return;
+  }
+  event.preventDefault();
+  event.clipboardData.setData("text/plain", titles);
 });
 elements.movedFilter.addEventListener("click", () => {
   movedOnly = !movedOnly;

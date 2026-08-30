@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="description" content="Offline, read-only visualization of a Marvin Pilot change plan.">
     <title>Marvin Pilot - Plan preview</title>
-    <link rel="icon" type="image/png" href="marvin-pilot.png">
+    <link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png">
     <link rel="stylesheet" href="styles.css">
     <script src="app.js" defer></script>
   </head>
@@ -61,7 +61,7 @@
           <div>
             <h1 id="plan-summary"></h1>
             <div class="status-badges">
-              <span class="status-badge preview">Preview only — nothing has been applied</span>
+              <span id="review-status" class="status-badge preview">Preview only — nothing has been applied</span>
             </div>
           </div>
           <div class="plan-actions">
@@ -84,6 +84,20 @@
                 <option value="before">Before location</option>
                 <option value="plan">Plan order</option>
                 <option value="day">Day section</option>
+              </select>
+            </label>
+            <label class="changes-control display-preference">
+              <span>Selection</span>
+              <select id="selection-mode">
+                <option value="titles">Titles only</option>
+                <option value="full">Full cards</option>
+              </select>
+            </label>
+            <label class="changes-control display-preference">
+              <span>Titles</span>
+              <select id="title-density">
+                <option value="compact">Compact</option>
+                <option value="full">Full</option>
               </select>
             </label>
             <button type="button" id="open-another" class="secondary-button"><span aria-hidden="true">📁</span> Open plan</button>

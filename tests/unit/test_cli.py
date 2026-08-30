@@ -11,11 +11,15 @@ from typer.testing import CliRunner
 
 import marvin_pilot.cli as cli_module
 import marvin_pilot.config as config_module
+from marvin_pilot import __version__
 from marvin_pilot.cli import app
 from marvin_pilot.errors import CredentialError, RemoteError
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.field_registry import FIELD_SPECS
+from marvin_pilot.history import receipt_file_bytes
 from marvin_pilot.marvin_client import ConnectionCheck
+from marvin_pilot.models.receipt_v1 import ReceiptOperationV1, ReceiptV1
+from marvin_pilot.plan_io import parse_plan_bytes, plan_digest
 
 runner = CliRunner()
 
@@ -299,10 +303,11 @@ def test_visualize_preloads_without_credentials_and_opens_browser(
     class FakeServer:
         url = "http://127.0.0.1:1234/session/"
 
-        def __init__(self, *, preloaded_plan, source_name, hierarchy):
+        def __init__(self, *, preloaded_plan, source_name, hierarchy, **kwargs):
             calls["plan"] = preloaded_plan
             calls["source_name"] = source_name
             calls["hierarchy"] = hierarchy
+            calls.update(kwargs)
 
         def serve_forever(self):
             calls["served"] = True
@@ -384,10 +389,11 @@ def test_visualize_loads_optional_backup_hierarchy_without_credentials(
     class FakeServer:
         url = "http://127.0.0.1:1234/session/"
 
-        def __init__(self, *, preloaded_plan, source_name, hierarchy):
+        def __init__(self, *, preloaded_plan, source_name, hierarchy, **kwargs):
             calls["plan"] = preloaded_plan
             calls["source_name"] = source_name
             calls["hierarchy"] = hierarchy
+            calls.update(kwargs)
 
         def serve_forever(self):
             calls["served"] = True
@@ -413,6 +419,164 @@ def test_visualize_loads_optional_backup_hierarchy_without_credentials(
     assert "Hierarchy: 1 active item(s) loaded locally from the backup." in result.stdout
     assert "omit typed paths" not in result.stdout
     assert "No Marvin credential or API connection" in result.stdout
+
+
+def _write_applied_receipt(path: Path, plan_dict: dict) -> ReceiptV1:
+    plan = parse_plan_bytes(json.dumps(plan_dict).encode())
+    operations = []
+    for operation in plan.operations:
+        before_document = None
+        if operation.target.id == "task-wash-dishes-id":
+            before_document = {
+                "_id": operation.target.id,
+                "db": "Tasks",
+                "title": operation.target.title,
+                "parentId": "receipt-parent",
+            }
+        operations.append(
+            ReceiptOperationV1(
+                operationId=operation.operationId,
+                action=operation.action,
+                targetId=operation.target.id,
+                targetType=operation.target.type,
+                targetTitle=getattr(operation.target, "title", None),
+                status="applied",
+                beforeDocument=before_document,
+            )
+        )
+    receipt = ReceiptV1(
+        receiptId="11111111-1111-4111-8111-111111111111",
+        kind="apply",
+        status="applied",
+        startedAt="2026-08-30T12:00:00Z",
+        endedAt="2026-08-30T12:01:00Z",
+        cliVersion=__version__,
+        sourcePlan=json.loads(json.dumps(plan_dict)),
+        sourcePlanText=json.dumps(plan_dict),
+        planId=plan.planId,
+        planDigest=plan_digest(plan),
+        apiBaseHost="https://marvin.test",
+        operations=operations,
+    )
+    path.write_bytes(receipt_file_bytes(receipt))
+    return receipt
+
+
+def test_visualize_verifies_exact_applied_receipt_and_marks_view_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan_path = tmp_path / "plan.json"
+    receipt_path = tmp_path / "receipt.json"
+    write_plan(plan_path)
+    receipt = _write_applied_receipt(receipt_path, EXAMPLE_PLAN)
+    calls: dict[str, object] = {}
+
+    class FakeServer:
+        url = "http://127.0.0.1:1234/session/"
+
+        def __init__(self, **kwargs):
+            calls.update(kwargs)
+
+        def serve_forever(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(cli_module, "VisualizerServer", FakeServer)
+
+    result = runner.invoke(
+        app,
+        ["visualize", str(plan_path), "--receipt", str(receipt_path), "--no-open"],
+    )
+
+    assert result.exit_code == 0
+    assert calls["review_state"] == "applied"
+    assert calls["receipt_id"] == receipt.receiptId
+    assert calls["hierarchy_sources"] == ("verified apply receipt",)
+    assert calls["hierarchy"].nodes["task-wash-dishes-id"].parent_id == "receipt-parent"
+    assert "Applied plan — verified receipt" in result.stdout
+
+
+def test_visualize_rejects_receipt_for_a_different_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan_path = tmp_path / "plan.json"
+    receipt_path = tmp_path / "receipt.json"
+    changed = copy.deepcopy(EXAMPLE_PLAN)
+    changed["summary"] = "A different exact plan."
+    write_plan(plan_path, changed)
+    _write_applied_receipt(receipt_path, EXAMPLE_PLAN)
+    monkeypatch.setattr(
+        cli_module,
+        "VisualizerServer",
+        lambda **_kwargs: pytest.fail("mismatch must fail before opening a server"),
+    )
+
+    result = runner.invoke(
+        app,
+        ["visualize", str(plan_path), "--receipt", str(receipt_path), "--no-open"],
+    )
+
+    assert result.exit_code == 3
+    assert "does not exactly match" in result.stderr
+
+
+def test_visualize_projects_repeatable_prerequisite_plans_locally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan_path = tmp_path / "plan.json"
+    context_path = tmp_path / "phase-one.json"
+    write_plan(plan_path)
+    project_id = "22222222-2222-4222-8222-222222222222"
+    write_plan(
+        context_path,
+        {
+            "schemaVersion": 1,
+            "planId": "33333333-3333-4333-8333-333333333333",
+            "createdAt": "2026-08-30T12:00:00-07:00",
+            "summary": "Create a prerequisite project.",
+            "operations": [
+                {
+                    "operationId": "create-project",
+                    "action": "create",
+                    "target": {"type": "project", "id": project_id},
+                    "reason": "Provide hierarchy context for the next phase.",
+                    "after": {"title": "Earlier phase project"},
+                }
+            ],
+        },
+    )
+    calls: dict[str, object] = {}
+
+    class FakeServer:
+        url = "http://127.0.0.1:1234/session/"
+
+        def __init__(self, **kwargs):
+            calls.update(kwargs)
+
+        def serve_forever(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(cli_module, "VisualizerServer", FakeServer)
+
+    result = runner.invoke(
+        app,
+        [
+            "visualize",
+            str(plan_path),
+            "--context-plan",
+            str(context_path),
+            "--no-open",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["hierarchy"].nodes[project_id].title == "Earlier phase project"
+    assert calls["hierarchy_sources"] == ("prerequisite plan projection",)
 
 
 def test_live_describe_requires_a_credential_before_network_access(

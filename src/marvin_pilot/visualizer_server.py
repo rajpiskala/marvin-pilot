@@ -7,7 +7,7 @@ import secrets
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import unquote
 
 from marvin_pilot.errors import MarvinPilotError
@@ -62,14 +62,21 @@ class VisualizerServer:
         source_name: str | None = None,
         session_token: str | None = None,
         hierarchy: HierarchyContext | None = None,
+        hierarchy_sources: tuple[str, ...] = (),
+        review_state: Literal["preview", "applied"] = "preview",
+        receipt_id: str | None = None,
     ) -> None:
         self.session_token = session_token or secrets.token_urlsafe(32)
         self._hierarchy = hierarchy
+        self._hierarchy_sources = hierarchy_sources
         self._current = (
             build_plan_view(
                 preloaded_plan,
                 source_name=_safe_source_name(source_name),
                 hierarchy=self._hierarchy,
+                hierarchy_sources=hierarchy_sources,
+                review_state=review_state,
+                receipt_id=receipt_id,
             ).to_dict()
             if preloaded_plan is not None
             else None
@@ -164,6 +171,12 @@ class VisualizerServer:
                         "image/png",
                         _asset_bytes("marvin-pilot.png"),
                     )
+                elif route == "favicon-64.png":
+                    self._send_bytes(
+                        HTTPStatus.OK,
+                        "image/png",
+                        _asset_bytes("favicon-64.png"),
+                    )
                 elif route == "api/current":
                     if owner._current is None:
                         self._send_json(HTTPStatus.OK, {"plan": None})
@@ -217,6 +230,7 @@ class VisualizerServer:
                         plan,
                         source_name=source_name,
                         hierarchy=owner._hierarchy,
+                        hierarchy_sources=owner._hierarchy_sources,
                     ).to_dict()
                 except MarvinPilotError as exc:
                     self._send_json(

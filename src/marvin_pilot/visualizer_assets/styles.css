@@ -468,6 +468,11 @@ a:focus-visible {
   color: var(--warning);
 }
 
+.status-badge.applied {
+  background: var(--complete-soft);
+  color: var(--complete);
+}
+
 .status-badge.local {
   background: var(--create-soft);
   color: var(--create);
@@ -1423,7 +1428,7 @@ footer {
 
 .subtask-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
+  grid-template-columns: 16px minmax(0, 1fr);
   min-width: 0;
   align-items: center;
   gap: 7px;
@@ -1451,15 +1456,23 @@ footer {
 }
 
 .subtask-source {
+  grid-column: 2;
+  width: max-content;
+  max-width: min(100%, 150px);
+  overflow: hidden;
   padding: 2px 5px;
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 8px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .subtask-loss {
+  grid-column: 2;
+  width: max-content;
+  max-width: 100%;
   padding: 2px 5px;
   border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
   border-radius: 999px;
@@ -2188,13 +2201,14 @@ footer {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: stretch;
+  align-items: start;
   gap: 0;
   margin-bottom: 10px;
 }
 
 .diff-cell {
   min-width: 0;
+  align-self: start;
 }
 
 .diff-cell-before {
@@ -2211,12 +2225,58 @@ footer {
 }
 
 .diff-row .task-card {
-  height: 100%;
+  height: auto;
   grid-template-columns: minmax(120px, 1fr) auto;
   padding-right: 17px;
   border-left: 7px solid var(--update-edge);
   border-radius: 0 9px 9px 0;
   box-shadow: var(--card-shadow);
+}
+
+.sections.compact-titles .task-title:not(.title-expanded) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.title-expand {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin: 1px 0 0;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--chip-background);
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.sections[data-selection-mode="titles"] :is(
+  .object-icon,
+  .action-badge,
+  .target-chain-badge,
+  .recurrence-marker,
+  .task-items,
+  .task-note,
+  .subtask-summary,
+  .subtask-source,
+  .subtask-loss,
+  .operation-details,
+  .hierarchy-context,
+  .tree-toggle,
+  .title-expand,
+  .location-breadcrumb
+) {
+  user-select: none;
+}
+
+.sections[data-selection-mode="titles"] :is(.task-title, .subtask-title) {
+  user-select: text;
 }
 
 .diff-row.action-create .task-card {
@@ -2312,6 +2372,14 @@ footer {
 
   .diff-cell-after::before {
     content: "After (preview)";
+  }
+
+  .sections[data-review-state="applied"] .diff-cell-before::before {
+    content: "Before";
+  }
+
+  .sections[data-review-state="applied"] .diff-cell-after::before {
+    content: "Applied result";
   }
 
   .diff-cell-empty {

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from marvin_pilot.visualizer_hierarchy import build_backup_hierarchy_context
+from marvin_pilot.visualizer_hierarchy import (
+    build_backup_hierarchy_context,
+    merge_hierarchy_contexts,
+)
 
 
 def test_backup_hierarchy_keeps_safe_active_metadata_and_latest_duplicate() -> None:
@@ -67,3 +70,35 @@ def test_backup_hierarchy_discards_invalid_optional_color() -> None:
         ]
     )
     assert context.nodes["project"].color is None
+
+
+def test_receipt_context_can_override_a_newer_post_apply_backup() -> None:
+    backup = build_backup_hierarchy_context(
+        [
+            {
+                "_id": "task",
+                "db": "Tasks",
+                "title": "Deleted task",
+                "parentId": "new-parent",
+                "deletedAt": 200,
+                "updatedAt": 200,
+            }
+        ]
+    )
+    receipt = build_backup_hierarchy_context(
+        [
+            {
+                "_id": "task",
+                "db": "Tasks",
+                "title": "Deleted task",
+                "parentId": "original-parent",
+                "updatedAt": 100,
+            }
+        ]
+    )
+
+    merged = merge_hierarchy_contexts(backup, receipt)
+
+    assert merged is not None
+    assert merged.nodes["task"].parent_id == "original-parent"
+    assert merged.input_document_count == 2

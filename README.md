@@ -322,7 +322,7 @@ a raw document browser, and an automatic plan-rewriting command.
 | `marvin-pilot validate PLAN`          | Strictly validate a plan offline           |
 | `marvin-pilot validate PLAN --live`   | Collect read-only live diagnostics         |
 | `marvin-pilot describe PLAN`          | Print a human-readable description         |
-| `marvin-pilot visualize PLAN`         | Open the local visual diff                 |
+| `marvin-pilot visualize PLAN`         | Open the local visual diff and history     |
 | `marvin-pilot apply PLAN`             | Preflight, confirm, apply, verify, receipt |
 | `marvin-pilot revert RECEIPT`         | Revert an applied receipt                  |
 | `marvin-pilot history list`           | List audit receipts                        |
@@ -347,6 +347,24 @@ fresh local Marvin backup to reconstruct the hierarchy:
 marvin-pilot visualize plan.json --backup MarvinBackup.json.lzma
 ```
 
+For a dependent phase, project each earlier plan locally in dependency order. This resolves
+projects created or renamed by prior phases without changing the current plan or calling Marvin:
+
+```console
+marvin-pilot visualize phase-2.json --context-plan phase-1.json
+```
+
+`--context-plan` is repeatable. For a plan that has already applied, supply its exact durable
+receipt to reconstruct deleted targets and label the result as historical rather than a preview:
+
+```console
+marvin-pilot visualize plan.json --receipt applied-20260830T120000Z--receipt-id.json
+```
+
+Pilot verifies the receipt hash, requires a fully applied apply receipt, and requires an exact
+plan ID and canonical-digest match. Receipt `beforeDocument` records override a newer post-apply
+backup for the affected items, while exact IDs remain available only in details/tooltips.
+
 This remains credential-free and makes no Marvin API calls. Pilot indexes active categories,
 projects, and tasks locally, combines that snapshot with project creates, renames, moves, and
 Trash operations from the plan, and sends only the hierarchy nodes needed by the rendered preview
@@ -355,9 +373,38 @@ Explicit `display.beforePath`/`display.afterPath` values—including an explicit
 over backup inference. Use a current backup: an item absent from the snapshot remains visibly
 unresolved rather than being guessed.
 
-The default **Preview** renders Marvin-like **Now** and **After (preview)** hierarchies. Inbox, categories, projects, tasks, recurrence definitions, occurrences, and subtasks have distinct Marvin-like visual treatment; projects visibly support create, rename, move, schedule, complete, and Trash transitions. A generated occurrence keeps its task circle and shows a compact recurrence-loop icon on the right, while a recurrence definition omits the task circle and uses the loop icon as its type marker. Tooltips and item details spell out whether a change affects one generated occurrence or the series template. Completed After cards show the exact marked-done timestamp using the reviewer's browser locale, time zone, and 12/24-hour convention. Moved items render under their truthful parent on each side and cross-highlight their counterpart, while shared hierarchy disclosure stays synchronized. When an explicit chain performs several operations on one item, Preview shows that item's initial and final boundary states once; compact `Step 1/3` badges identify the chain, while **Changes** retains every intermediate operation. Click any row to pin its two states in a sticky comparison tray; moved-item Previous/Next and Jump controls avoid hunting for a far-away destination. Deep hierarchies scroll horizontally within each pane, and single-state views provide the full content width.
+The default **Preview** renders Marvin-like **Now** and **After (preview)** hierarchies. With a
+verified `--receipt`, those labels become **Before** and **Applied result**, and the status badge
+identifies the receipt-backed view. Inbox, categories, projects, tasks, recurrence definitions,
+occurrences, and subtasks have distinct Marvin-like visual treatment; projects visibly support
+create, rename, move, schedule, complete, and Trash transitions. A generated occurrence keeps its
+task circle and shows a compact recurrence-loop icon on the right, while a recurrence definition
+omits the task circle and uses the loop icon as its type marker. Tooltips and item details spell out
+whether a change affects one generated occurrence or the series template. Completed After cards
+show the exact marked-done timestamp using the reviewer's browser locale, time zone, and 12/24-hour
+convention. Moved items render under their truthful parent on each side and cross-highlight their
+counterpart, while shared hierarchy disclosure stays synchronized. When an explicit chain performs
+several operations on one item, Preview shows that item's initial and final boundary states once;
+compact `Step 1/3` badges identify the chain, while **Changes** retains every intermediate
+operation. Click any row to pin its two states in a sticky comparison tray; moved-item Previous/Next
+and Jump controls avoid hunting for a far-away destination. Deep hierarchies scroll horizontally
+within each pane, and single-state views provide the full content width.
 
-Use **Day sections: Show/Hide** to layer explicit Today-list groupings over the hierarchy. Day sections such as Waiting or Main are visually distinct from categories and projects. Switch to **Changes** for an aligned operation diff grouped by typed After location, Now location, plan order, or supplied Today section. Search and the Moved filter keep large cleanups navigable. Action totals filter either mode, and item details expose the reason, identifiers, exact field diff, hierarchy path, supplied day-section context, and structured subtask changes.
+Use **Day sections: Show/Hide** to layer explicit Today-list groupings over the hierarchy. Day
+sections such as Waiting or Main are visually distinct from categories and projects. Switch to
+**Changes** for an aligned operation diff grouped by typed After location, Now location, plan order,
+or supplied Today section. Uneven before/after cards keep their natural heights, so a short loose
+task is not stretched to match a long checklist. Consolidated subtasks use a compact **From source
+task** chip; its tooltip retains the full source title and ID without squeezing the subtask title.
+Search and the Moved filter keep large cleanups navigable. Action totals filter either mode, and
+item details expose the reason, identifiers, exact field diff, hierarchy path, supplied day-section
+context, and structured subtask changes.
+
+**Selection: Titles only** is the default: dragging across cards copies complete task/subtask titles
+one per line and excludes badges, categories, durations, notes, and controls. Choose **Full cards**
+to restore native rich selection. **Titles: Compact** clamps very long titles to four lines in
+side-by-side review with an accessible **Show full** control; single-state and pinned comparisons
+always retain the full title. Both preferences are stored locally, but plan data is not.
 
 It does not load a Marvin credential, call the Marvin API, persist task data in browser storage, or provide mutation controls. The selected plan is passed through the same strict validator used by `apply`.
 
@@ -377,6 +424,11 @@ An update or Trash operation on an already-completed task may provide its origin
 The browser suite includes synthetic hierarchy, lifecycle, movement, and subtask cases. Maintainers
 can point `MARVIN_PILOT_PRIVATE_PLAN_DIR` at an ignored local regression corpus containing
 `01.json` through `04.json`; private fixtures must never be committed.
+
+The visible header keeps the full Marvin Pilot illustration, while the browser tab uses a dedicated
+64×64 favicon. Do not point the favicon link back at the large header artwork: Firefox persists tab
+icons in session-restore data, so oversized favicons can multiply storage and CPU costs across
+retained tabs.
 
 ## Plans and recovery
 

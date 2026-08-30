@@ -30,6 +30,26 @@ class HierarchyContext:
     input_document_count: int
 
 
+def merge_hierarchy_contexts(*contexts: HierarchyContext | None) -> HierarchyContext | None:
+    """Overlay compact hierarchy indexes from left to right.
+
+    Later contexts are intentionally authoritative.  This lets an exact apply receipt restore
+    a deleted item's pre-apply document on top of a newer backup without sending either source
+    to the browser.
+    """
+
+    present = [context for context in contexts if context is not None]
+    if not present:
+        return None
+    nodes: dict[str, HierarchyNode] = {}
+    for context in present:
+        nodes.update(context.nodes)
+    return HierarchyContext(
+        nodes=nodes,
+        input_document_count=sum(context.input_document_count for context in present),
+    )
+
+
 def _node_type(document: dict[str, Any]) -> HierarchyNodeType | None:
     if document.get("db") == "Categories" and document.get("type") in {
         "category",

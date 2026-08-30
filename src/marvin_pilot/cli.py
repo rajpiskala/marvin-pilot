@@ -76,7 +76,11 @@ from marvin_pilot.preflight import LiveValidationResult, preflight_plan, validat
 from marvin_pilot.reverter import execute_revert
 from marvin_pilot.schema import plan_schema_json
 from marvin_pilot.terminal_review import render_live_preflight_terminal
-from marvin_pilot.visualizer_hierarchy import build_backup_hierarchy_context
+from marvin_pilot.visualizer import project_hierarchy_context
+from marvin_pilot.visualizer_hierarchy import (
+    build_backup_hierarchy_context,
+    merge_hierarchy_contexts,
+)
 from marvin_pilot.visualizer_server import VisualizerServer
 
 SAFETY_CONTRACT = """This CLI separates AI-authored proposals from human-authorized
@@ -696,6 +700,26 @@ def visualize_command(
             ),
         ),
     ] = None,
+    receipt: Annotated[
+        Path | None,
+        typer.Option(
+            "--receipt",
+            help=(
+                "Verify an exact applied receipt and use its pre-apply documents for the "
+                "Before view. Requires PLAN."
+            ),
+        ),
+    ] = None,
+    context_plan: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--context-plan",
+            help=(
+                "Project an earlier prerequisite plan before rendering PLAN; repeat in "
+                "dependency order."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Open an offline, credential-free, read-only browser preview."""
 
@@ -705,22 +729,68 @@ def visualize_command(
         plan = _read_plan_argument(plan_path)
         source_name = "stdin" if plan_path == "-" else Path(plan_path).name
     hierarchy = None
+    hierarchy_sources: list[str] = []
     if backup is not None:
         try:
             documents, _source_format, _source_bytes = load_backup_documents(backup)
             hierarchy = build_backup_hierarchy_context(documents)
+            hierarchy_sources.append("local backup")
         except MarvinPilotError as exc:
             _fail(exc)
+    for prerequisite_path in context_plan or []:
+        try:
+            prerequisite, _source = load_plan(prerequisite_path)
+            hierarchy = project_hierarchy_context(prerequisite, hierarchy)
+            hierarchy_sources.append("prerequisite plan projection")
+        except MarvinPilotError as exc:
+            _fail(exc)
+    verified_receipt = None
+    if receipt is not None:
+        if plan is None:
+            _fail(PlanSemanticError("--receipt requires a preselected PLAN"))
+        try:
+            verified_receipt = HistoryStore(receipt.parent).load(receipt)
+        except MarvinPilotError as exc:
+            _fail(exc)
+        assert plan is not None
+        if verified_receipt.kind != "apply" or verified_receipt.status != "applied":
+            _fail(PlanSemanticError("--receipt requires a fully applied apply receipt"))
+        if verified_receipt.planId != plan.planId or verified_receipt.planDigest != plan_digest(
+            plan
+        ):
+            _fail(
+                PlanSemanticError(
+                    "receipt does not exactly match the selected plan ID and canonical digest"
+                )
+            )
+        receipt_documents = [
+            operation.beforeDocument
+            for operation in verified_receipt.operations
+            if operation.beforeDocument is not None and operation.status == "applied"
+        ]
+        receipt_hierarchy = build_backup_hierarchy_context(receipt_documents)
+        hierarchy = merge_hierarchy_contexts(hierarchy, receipt_hierarchy)
+        hierarchy_sources.append("verified apply receipt")
     server = VisualizerServer(
         preloaded_plan=plan,
         source_name=source_name,
         hierarchy=hierarchy,
+        hierarchy_sources=tuple(hierarchy_sources),
+        review_state="applied" if verified_receipt is not None else "preview",
+        receipt_id=verified_receipt.receiptId if verified_receipt is not None else None,
     )
     typer.echo(f"Visualizer: {server.url}")
-    typer.echo("Preview only — nothing has been applied.")
+    if verified_receipt is not None:
+        typer.echo(f"Applied plan — verified receipt {verified_receipt.receiptId}.")
+    else:
+        typer.echo("Preview only — nothing has been applied.")
     if hierarchy is not None:
+        source_summary = (
+            "the backup" if hierarchy_sources == ["local backup"] else " + ".join(hierarchy_sources)
+        )
         typer.echo(
-            f"Hierarchy: {len(hierarchy.nodes)} active item(s) loaded locally from the backup."
+            f"Hierarchy: {len(hierarchy.nodes)} active item(s) loaded locally from "
+            f"{source_summary}."
         )
     elif plan is not None:
         omitted_paths = sum(
