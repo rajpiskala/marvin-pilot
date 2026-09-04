@@ -22,6 +22,9 @@ def test_missing_config_uses_safe_defaults(tmp_path: Path) -> None:
     assert config.minimum_request_interval_ms == 750
     assert config.strict_concurrency is True
     assert config.max_operations == 500
+    assert config.unattended_enabled is False
+    assert config.unattended_max_impact == 10
+    assert config.unattended_account_user_id == ""
 
 
 def test_config_round_trip_contains_no_token(tmp_path: Path) -> None:
@@ -45,7 +48,10 @@ def test_config_renderer_is_stable_toml() -> None:
     assert rendered.startswith('api_base_url = "https://serv.amazingmarvin.com/api"\n')
     assert 'credential_mode = "keyring"' in rendered
     assert "strict_concurrency = true" in rendered
-    assert rendered.endswith("large_plan_warning_operations = 100\n")
+    assert "large_plan_warning_operations = 100\n" in rendered
+    assert "unattended_enabled = false\n" in rendered
+    assert "unattended_max_impact = 10\n" in rendered
+    assert rendered.endswith('unattended_account_user_id = ""\n')
 
 
 @pytest.mark.parametrize(
@@ -56,6 +62,9 @@ def test_config_renderer_is_stable_toml() -> None:
         'api_base_url = "https://attacker.invalid/api"\n',
         'credential_mode = "file"\nkey_file = ""\n',
         "max_operations = 10\nlarge_plan_warning_operations = 11\n",
+        "unattended_enabled = true\n",
+        'unattended_account_user_id = "not-numeric"\n',
+        "unattended_max_impact = 0\n",
     ],
 )
 def test_invalid_config_is_rejected(tmp_path: Path, text: str) -> None:

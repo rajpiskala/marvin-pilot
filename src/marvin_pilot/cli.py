@@ -32,10 +32,12 @@ from marvin_pilot import __version__
 from marvin_pilot.approval import (
     confirm_apply,
     confirm_revert,
+    confirm_unattended_enable,
     require_controlling_terminal,
 )
 from marvin_pilot.backup_context import load_backup_documents, project_context_json
 from marvin_pilot.config import (
+    DEFAULT_UNATTENDED_MAX_IMPACT,
     AppConfig,
     default_config_path,
     default_history_dir,
@@ -76,6 +78,12 @@ from marvin_pilot.preflight import LiveValidationResult, preflight_plan, validat
 from marvin_pilot.reverter import execute_revert
 from marvin_pilot.schema import plan_schema_json
 from marvin_pilot.terminal_review import render_live_preflight_terminal
+from marvin_pilot.unattended import (
+    assess_unattended,
+    blocked_unattended_error,
+    enforce_unattended,
+    unattended_plan_blockers,
+)
 from marvin_pilot.visualizer import project_hierarchy_context
 from marvin_pilot.visualizer_hierarchy import (
     build_backup_hierarchy_context,
@@ -83,16 +91,18 @@ from marvin_pilot.visualizer_hierarchy import (
 )
 from marvin_pilot.visualizer_server import VisualizerServer
 
-SAFETY_CONTRACT = """This CLI separates AI-authored proposals from human-authorized
-Marvin mutations.
-AI assistants: generate, validate, and describe plans. Do not invoke apply or revert.
-Humans: review the exact diff and digest, then run apply or revert in an interactive terminal.
+SAFETY_CONTRACT = """This CLI separates reviewed Marvin mutations from explicitly bounded
+automation.
+AI assistants: generate, validate, and describe plans. Invoke apply only when the user requested
+the change and has enabled the local unattended policy; never invoke revert without the user.
+Humans: review normal plans and run apply/revert interactively, or opt into a small unattended cap.
 """
 
 app = typer.Typer(
     name="marvin-pilot",
     help=(
-        "Safe, human-reviewed and reversible AI actions for Amazing Marvin.\n\n" + SAFETY_CONTRACT
+        "Safe, reversible, and policy-bounded AI actions for Amazing Marvin.\n\n"
+        + SAFETY_CONTRACT
     ),
     no_args_is_help=True,
     rich_markup_mode=None,
@@ -102,6 +112,7 @@ config_app = typer.Typer(
     help="Configure non-secret settings and the native OS keyring.",
     invoke_without_command=True,
 )
+unattended_config_app = typer.Typer(help="Configure account-pinned bounded unattended apply.")
 history_app = typer.Typer(help="Inspect and verify durable apply/revert receipts.")
 contract_tests_app = typer.Typer(
     help="Generate and verify reusable, isolated contract-test plan suites."
@@ -109,6 +120,7 @@ contract_tests_app = typer.Typer(
 context_app = typer.Typer(help="Build compact, read-only AI context from Marvin data.")
 app.add_typer(help_app, name="help")
 app.add_typer(config_app, name="config")
+config_app.add_typer(unattended_config_app, name="unattended")
 app.add_typer(history_app, name="history")
 app.add_typer(contract_tests_app, name="contract-tests")
 app.add_typer(context_app, name="context")
@@ -252,12 +264,21 @@ def _load_config_or_fail() -> AppConfig:
 
 
 def _config_summary(config: AppConfig) -> str:
+    if config.unattended_enabled:
+        unattended = (
+            f"on (maximum impact {config.unattended_max_impact}, "
+            f"account user ID {config.unattended_account_user_id})"
+        )
+    else:
+        unattended = "off"
     return (
         f"Config: {default_config_path()}\n"
         f"History: {effective_history_dir(config)}\n"
         f"Credential mode: {config.credential_mode}\n"
         f"Strict concurrency: {'on' if config.strict_concurrency else 'off'}\n"
-        f"Minimum request interval: {config.minimum_request_interval_ms} ms"
+        f"Minimum request interval: {config.minimum_request_interval_ms} ms\n"
+        f"Maximum operations: {config.max_operations}\n"
+        f"Unattended apply: {unattended}"
     )
 
 
@@ -842,16 +863,35 @@ def apply_command(
             ),
         ),
     ] = False,
+    unattended: Annotated[
+        bool,
+        typer.Option(
+            "--unattended",
+            help=(
+                "Apply without a terminal or prompt only when the account-pinned local policy "
+                "is enabled and this plan is within its impact limit."
+            ),
+        ),
+    ] = False,
 ) -> None:
-    """Human-review, apply, verify, and durably journal a complete plan."""
+    """Preflight, apply, verify, and durably journal a complete plan."""
 
     plan, raw = _read_plan_argument_with_bytes(plan_path)
+    if yes and unattended:
+        _fail(PlanSyntaxError("use either --yes or --unattended, not both"))
     if yes:
         try:
             require_controlling_terminal()
         except MarvinPilotError as exc:
             _fail(exc)
     config = _load_config_or_fail()
+    if unattended and not config.unattended_enabled:
+        _fail(
+            PlanSemanticError(
+                "unattended apply is disabled; a human can enable it with "
+                "'marvin-pilot config unattended enable --max-impact 10'"
+            )
+        )
     if len(plan.operations) > config.max_operations:
         _fail(
             PlanSemanticError(
@@ -859,7 +899,37 @@ def apply_command(
                 f"{config.max_operations}"
             )
         )
+    if unattended:
+        blockers = unattended_plan_blockers(plan)
+        if blockers:
+            _fail(blocked_unattended_error(blockers))
+        if len(plan.operations) > config.unattended_max_impact:
+            _fail(
+                PlanSemanticError(
+                    f"plan has at least {len(plan.operations)} impact from its operations; "
+                    "configured unattended maximum is "
+                    f"{config.unattended_max_impact}"
+                )
+            )
     client = _client_from_config(config, full_access_key_file)
+    unattended_account_email: str | None = None
+    if unattended:
+        try:
+            account = client.check_connection()
+        except MarvinPilotError as exc:
+            client.close()
+            _fail(exc)
+        if account.account_user_id != config.unattended_account_user_id:
+            client.close()
+            _fail(
+                PlanSemanticError(
+                    "unattended apply account mismatch: configured user ID "
+                    f"{config.unattended_account_user_id!r}, connected user ID "
+                    f"{account.account_user_id!r}; re-enable unattended apply intentionally "
+                    "for this account"
+                )
+            )
+        unattended_account_email = account.account_email
     preflight_display = _OperationProgress("Preflight", len(plan.operations))
     apply_display: _OperationProgress | None = None
     preflight_display.start()
@@ -867,8 +937,20 @@ def apply_command(
     def approve(result) -> bool:
         nonlocal apply_display
         preflight_display.stop()
+        assessment = assess_unattended(result)
+        if unattended:
+            assessment = enforce_unattended(
+                result,
+                max_impact=config.unattended_max_impact,
+            )
         console.print(render_live_preflight_terminal(result, encoding=console.encoding or "utf-8"))
         execution_notes = Text()
+        if unattended:
+            execution_notes.append("Authorization  ", style="bold bright_green")
+            execution_notes.append(
+                f"Unattended policy for {unattended_account_email} "
+                f"(impact {assessment.impact}/{config.unattended_max_impact})\n"
+            )
         execution_notes.append("Network path  ", style="bold bright_cyan")
         execution_notes.append(
             "live recheck -> mutation/response verification "
@@ -885,6 +967,18 @@ def apply_command(
         if len(result.operations) >= config.large_plan_warning_operations:
             execution_notes.append("\nLarge plan  ", style="bold bright_yellow")
             execution_notes.append(f"{len(result.operations)} operations will run sequentially.")
+        if (
+            not unattended
+            and not config.unattended_enabled
+            and assessment.eligible
+            and assessment.impact <= DEFAULT_UNATTENDED_MAX_IMPACT
+        ):
+            execution_notes.append("\nTip  ", style="bold bright_cyan")
+            execution_notes.append(
+                f"This small plan has impact {assessment.impact}. To let an AI apply future "
+                "plans this small without a prompt, a human can run: marvin-pilot config "
+                f"unattended enable --max-impact {DEFAULT_UNATTENDED_MAX_IMPACT}"
+            )
         console.print(
             Panel(
                 execution_notes,
@@ -894,7 +988,13 @@ def apply_command(
                 padding=(1, 2),
             )
         )
-        if yes:
+        if unattended:
+            console.print(
+                "[bold bright_green]UNATTENDED APPLY AUTHORIZED[/] "
+                "by the account-pinned local policy."
+            )
+            approved = True
+        elif yes:
             console.print(
                 "[bold bright_yellow]PROMPT SKIPPED[/] "
                 "Explicit --yes/-y supplied in an interactive terminal."
@@ -1392,6 +1492,124 @@ def config_show() -> None:
     """Show effective non-secret settings; never print token material."""
 
     typer.echo(_config_summary(_load_config_or_fail()))
+
+
+@config_app.command("set-max-operations")
+def config_set_max_operations(
+    maximum: Annotated[
+        int,
+        typer.Argument(min=1, max=500, help="Maximum operations accepted by apply or revert."),
+    ],
+) -> None:
+    """Set the general reviewed apply/revert operation ceiling."""
+
+    config = _load_config_or_fail()
+    updates = {
+        "max_operations": maximum,
+        "large_plan_warning_operations": min(config.large_plan_warning_operations, maximum),
+    }
+    updated = AppConfig.model_validate(config.model_copy(update=updates).model_dump())
+    try:
+        path = save_config(updated)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(f"Maximum operations: {maximum}")
+    typer.echo(f"Saved: {path}")
+
+
+@unattended_config_app.command("enable")
+def config_unattended_enable(
+    max_impact: Annotated[
+        int,
+        typer.Option(
+            "--max-impact",
+            min=1,
+            max=500,
+            help="Maximum explicit document/subtask impact for an unattended plan.",
+        ),
+    ] = DEFAULT_UNATTENDED_MAX_IMPACT,
+    full_access_key_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--full-access-key-file",
+            help="Read the secret from this file; the token itself is never a CLI argument.",
+        ),
+    ] = None,
+) -> None:
+    """Verify one account and enable bounded, receipt-backed unattended apply."""
+
+    config = _load_config_or_fail()
+    client = _client_from_config(config, full_access_key_file)
+    try:
+        account = client.check_connection()
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        client.close()
+    console.print(
+        f"Verified account: [bold]{account.account_email}[/] "
+        f"(user ID {account.account_user_id})"
+    )
+    console.print(
+        "Unattended apply retains full live preflight, concurrency checks, durable receipts, "
+        "and write verification. Project Trash and recurring-series changes remain interactive."
+    )
+    try:
+        approved = confirm_unattended_enable(account.account_email, max_impact)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    if not approved:
+        _fail(UserDeclinedError("unattended apply remains disabled; no configuration changed"))
+    updated = AppConfig.model_validate(
+        config.model_copy(
+            update={
+                "unattended_enabled": True,
+                "unattended_max_impact": max_impact,
+                "unattended_account_user_id": account.account_user_id,
+            }
+        ).model_dump()
+    )
+    try:
+        path = save_config(updated)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(
+        f"Unattended apply enabled for user ID {account.account_user_id} "
+        f"with maximum impact {max_impact}."
+    )
+    typer.echo(f"Saved: {path}")
+
+
+@unattended_config_app.command("disable")
+def config_unattended_disable() -> None:
+    """Disable unattended apply and remove its pinned account ID."""
+
+    config = _load_config_or_fail()
+    updated = AppConfig.model_validate(
+        config.model_copy(
+            update={
+                "unattended_enabled": False,
+                "unattended_account_user_id": "",
+            }
+        ).model_dump()
+    )
+    try:
+        path = save_config(updated)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo("Unattended apply disabled.")
+    typer.echo(f"Saved: {path}")
+
+
+@unattended_config_app.command("show")
+def config_unattended_show() -> None:
+    """Show the effective non-secret unattended apply policy."""
+
+    config = _load_config_or_fail()
+    typer.echo(f"Enabled: {'yes' if config.unattended_enabled else 'no'}")
+    typer.echo(f"Maximum impact: {config.unattended_max_impact}")
+    account_id = config.unattended_account_user_id or "not pinned"
+    typer.echo(f"Account user ID: {account_id}")
 
 
 @config_app.command("set-history-dir")

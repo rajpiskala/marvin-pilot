@@ -8,6 +8,7 @@ import marvin_pilot.approval as approval
 from marvin_pilot.approval import (
     confirm_apply,
     confirm_revert,
+    confirm_unattended_enable,
     require_controlling_terminal,
 )
 from marvin_pilot.errors import PlanSyntaxError
@@ -64,6 +65,20 @@ def test_revert_uses_an_explicit_revert_prompt() -> None:
     output = StringIO()
     assert confirm_revert(2, input_stream=StringIO("yes\n"), output_stream=output)
     assert output.getvalue() == "Revert these 2 operations? [y = revert, n = cancel] "
+
+
+def test_unattended_enable_names_the_verified_account_and_limit() -> None:
+    output = StringIO()
+    assert confirm_unattended_enable(
+        "pilot@example.com",
+        10,
+        input_stream=StringIO("yes\n"),
+        output_stream=output,
+    )
+    assert output.getvalue() == (
+        "Enable unattended apply for pilot@example.com with maximum impact 10? "
+        "[y = enable, n = cancel] "
+    )
 
 
 def test_terminal_requirement_accepts_standard_input_tty(

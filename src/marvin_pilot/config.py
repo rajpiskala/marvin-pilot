@@ -26,6 +26,7 @@ from marvin_pilot.errors import PlanSyntaxError
 
 DEFAULT_API_BASE_URL = "https://serv.amazingmarvin.com/api"
 APP_NAME = "marvin-pilot"
+DEFAULT_UNATTENDED_MAX_IMPACT = 10
 
 
 class AppConfig(BaseModel):
@@ -42,6 +43,11 @@ class AppConfig(BaseModel):
     minimum_request_interval_ms: StrictInt = Field(default=750, ge=0, le=60_000)
     max_operations: StrictInt = Field(default=500, ge=1, le=500)
     large_plan_warning_operations: StrictInt = Field(default=100, ge=1, le=500)
+    unattended_enabled: StrictBool = False
+    unattended_max_impact: StrictInt = Field(
+        default=DEFAULT_UNATTENDED_MAX_IMPACT, ge=1, le=500
+    )
+    unattended_account_user_id: StrictStr = ""
 
     @field_validator("api_base_url")
     @classmethod
@@ -60,12 +66,23 @@ class AppConfig(BaseModel):
             raise ValueError("paths must not contain NUL bytes")
         return value
 
+    @field_validator("unattended_account_user_id")
+    @classmethod
+    def validate_unattended_account_user_id(cls, value: str) -> str:
+        if value and (len(value) > 100 or not value.isdigit()):
+            raise ValueError("unattended_account_user_id must be an Amazing Marvin numeric user ID")
+        return value
+
     @model_validator(mode="after")
     def validate_warning_threshold(self) -> AppConfig:
         if self.large_plan_warning_operations > self.max_operations:
             raise ValueError("large_plan_warning_operations must not exceed max_operations")
         if self.credential_mode == "file" and not self.key_file:
             raise ValueError("key_file is required when credential_mode is 'file'")
+        if self.unattended_enabled and not self.unattended_account_user_id:
+            raise ValueError(
+                "unattended_account_user_id is required when unattended apply is enabled"
+            )
         return self
 
 
@@ -132,6 +149,9 @@ def config_as_toml(config: AppConfig) -> str:
         f"minimum_request_interval_ms = {values['minimum_request_interval_ms']}",
         f"max_operations = {values['max_operations']}",
         f"large_plan_warning_operations = {values['large_plan_warning_operations']}",
+        f"unattended_enabled = {str(values['unattended_enabled']).lower()}",
+        f"unattended_max_impact = {values['unattended_max_impact']}",
+        f"unattended_account_user_id = {_toml_string(values['unattended_account_user_id'])}",
     ]
     return "\n".join(lines) + "\n"
 

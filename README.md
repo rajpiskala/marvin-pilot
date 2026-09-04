@@ -1,20 +1,20 @@
 # Marvin Pilot
 
-**Your AI plans. You approve. Marvin Pilot applies.**
+**Your AI plans. You approve—or preauthorize a small limit. Marvin Pilot applies.**
 
 Marvin Pilot is a local approval CLI for [Amazing Marvin](https://amazingmarvin.com/) that lets an AI reorganize your tasks and projects **without giving it your full-access API token**.
 
-The AI reads your workload through the limited-access [Amazing Marvin MCP](https://github.com/bgheneti/Amazing-Marvin-MCP) and writes a strict JSON change plan. You review the diff, then run the mutation yourself.
+The AI reads your workload through the limited-access [Amazing Marvin MCP](https://github.com/bgheneti/Amazing-Marvin-MCP) and writes a strict JSON change plan. You can review and run the mutation yourself, or explicitly enable account-pinned unattended apply for small plans.
 
 ```text
-Amazing Marvin MCP       AI             You              Marvin Pilot
-  limited token   ->   plan.json   ->  review  ->  apply with full token
-                                                       |
-                                                       +-> receipt
-                                                       +-> revert
+Amazing Marvin MCP       AI                    Authorization             Marvin Pilot
+  limited token   ->   plan.json   ->  human review or bounded policy  ->  apply
+                                                                          |
+                                                                          +-> receipt
+                                                                          +-> revert
 ```
 
-Marvin Pilot validates the plan against live state, asks for confirmation, applies operations one at a time, verifies the result, and writes an integrity-checked receipt that can be fully or selectively reverted.
+Marvin Pilot validates the plan against live state, enforces configured limits, applies operations one at a time, verifies the result, and writes an integrity-checked receipt that can be fully or selectively reverted. Normal apply asks for confirmation; bounded unattended apply uses a policy that a human enabled in advance.
 
 > [!WARNING]
 > **Marvin Pilot is pre-alpha.** The task lifecycle and a 200-operation scale run were verified on 2026-08-08, project CRUD plus historical completion on 2026-08-11, ordered subtask CRUD/consolidation/revert on 2026-08-14, and recurrence-series plus explicit-occurrence CRUD/revert on 2026-08-15, against a dedicated development account. The client has not yet seen enough real-world account shapes and upstream conditions for production use. Back up Marvin and evaluate it with non-critical data first.
@@ -28,9 +28,9 @@ Marvin Pilot keeps that credential on the human side of the workflow.
 |                     | AI / MCP                                   | Marvin Pilot                     |
 | ------------------- | ------------------------------------------ | -------------------------------- |
 | Credential          | `API_TOKEN`                                | `FULL_ACCESS_TOKEN`              |
-| Purpose             | Read workload through Marvin's limited API | Apply reviewed changes           |
-| Can run unattended? | Yes                                        | No                               |
-| Mutation approval   | —                                          | Explicit interactive `y` or `n`  |
+| Purpose             | Read workload through Marvin's limited API | Apply reviewed or bounded changes |
+| Can run unattended? | Yes                                        | Only within an enabled local cap  |
+| Mutation approval   | —                                          | Interactive or preauthorized cap  |
 | Recovery            | —                                          | Receipts + conflict-aware revert |
 
 The full-access token is never placed in a plan, MCP configuration, AI prompt, command-line argument, or environment variable.
@@ -164,10 +164,10 @@ marvin-pilot config
 * `prompt` — enter the token at every live command
 * `file` — read it from a carefully permissioned local file
 
-Marvin Pilot intentionally provides no token environment variable, `--full-access-key VALUE`, or
-fully non-interactive mutation mode. `apply --yes` is a reviewed power-user shortcut: it skips only
-the final approval question, after live preflight, and still refuses to run without an interactive
-controlling terminal.
+Marvin Pilot intentionally provides no token environment variable or `--full-access-key VALUE`.
+`apply --yes` is a reviewed power-user shortcut: it skips only the final approval question, after
+live preflight, and still refuses to run without an interactive controlling terminal. Separately,
+a human can opt into tightly bounded unattended apply as described below.
 
 ## Your first plan
 
@@ -248,6 +248,60 @@ decision.
 `revert` deliberately continues to require its explicit prompt. Apply and revert use a separate
 progress bar, so their elapsed time and ETA cover only that phase instead of including the
 preflight wait.
+
+### Bounded unattended apply
+
+For routine changes such as creating one project and four tasks, a human can authorize a local
+maximum once:
+
+```console
+marvin-pilot config unattended enable --max-impact 10
+```
+
+Pilot verifies the currently connected account, shows its email and user ID, explains the retained
+safety checks, and asks the human for confirmation. The saved non-secret policy pins unattended
+apply to that exact account ID. Swapping credentials to another account makes unattended apply fail
+before any plan document is read or changed.
+
+An AI acting on an explicit user request can then use a plan file or pipe the same strict JSON plan
+through stdin:
+
+```console
+marvin-pilot apply --unattended plans/small-change.json
+Get-Content plans/small-change.json -Raw | marvin-pilot apply --unattended -
+```
+
+Unattended apply skips only the controlling-terminal requirement and approval prompt. Schema and
+semantic validation, the general operation ceiling, full live preflight, account verification,
+strict concurrency, pending receipt creation, per-operation rechecks, mutation verification, and
+failure journaling remain mandatory.
+
+Impact counts each plan operation plus every embedded subtask involved in a task create, subtask
+update, or task Trash. For example, creating one project and four plain tasks has impact 5; creating
+one task with four subtasks also has impact 5. This prevents a one-operation task from concealing a
+very large checklist mutation. The command cannot raise the configured maximum.
+
+Project Trash and every recurring-series create, update, or Trash remain interactive-only because
+one container or template operation can have a much larger apparent or future effect. Operations
+on an explicitly identified generated recurrence occurrence are ordinary task operations and can
+qualify. Revert always remains interactive.
+
+Disable or inspect the policy with:
+
+```console
+marvin-pilot config unattended show
+marvin-pilot config unattended disable
+```
+
+When unattended apply is disabled, an eligible reviewed plan with impact 10 or less prints a short
+setup tip. Nothing is enabled automatically.
+
+The plan schema allows at most 500 operations, and the default general runtime ceiling is also 500.
+Set a lower ceiling for both reviewed apply and revert with:
+
+```console
+marvin-pilot config set-max-operations 100
+```
 
 The default client starts requests at least 750 ms apart. A normal operation needs one live
 concurrency recheck plus one mutation whose returned document is verified directly. If Marvin
@@ -506,6 +560,11 @@ Marvin's native Trash is client-side: the app saves a copy in browser-local stor
 
 Pilot recovery is receipt-backed rather than Marvin-native. `marvin-pilot revert RECEIPT.json` recreates the same ID from the stored document after removing stale CouchDB `_rev`/`_deleted` fields. Reverting a Pilot `create` likewise deletes the created document instead of leaving a hidden live record. Neither deletion appears in Marvin's native Trash UI.
 
+Unattended mode never trashes a project. A project Trash receipt contains the project document
+itself, not an independently enumerated snapshot of every descendant, so this container-level
+operation continues to require interactive review even when the configured unattended limit would
+otherwise permit one operation.
+
 Every live apply writes audit state before the first mutation and records field-scoped before/after data and per-operation outcomes. Trash receipts include the full original task, project, or recurrence-template document—including notes and other personal content—because that snapshot is the recovery source. Keep the history directory private and do not commit or share receipts casually.
 
 Revert is conflict-aware: updates and completions restore only fields changed by the original apply and preserve unrelated later edits. A trashed document is restored only while its ID remains absent. A created document is deleted on revert only when its complete post-create snapshot is unchanged.
@@ -514,20 +573,27 @@ Receipts include a SHA-256 integrity hash to detect accidental modification. The
 
 ## Safety model
 
-The intended boundary is simple:
+The intended boundary is explicit:
 
-**AI:** read tasks, draft plans, validate plans, explain plans.
+**AI:** read tasks, draft/validate/explain plans, and apply only a user-requested change through an
+already enabled unattended policy.
 
-**Human:** review plans, run `apply`, run `revert`.
+**Human:** review normal plans, run `apply`/`revert`, and choose whether to enable or disable an
+account-pinned unattended cap.
 
-`apply` and `revert` require an interactive controlling terminal and an explicit `y` or `n` decision;
-empty input is never approval or decline. A human may opt into `apply --yes` after reviewing a plan;
-it skips the final decision but not the terminal requirement or any safety check. Revert has no
+Normal `apply` and every `revert` require an interactive controlling terminal and an explicit `y`
+or `n` decision; empty input is never approval or decline. A human may opt into `apply --yes` after
+reviewing a plan; it skips the final decision but not the terminal requirement or any safety check.
+`apply --unattended` works only within the locally enabled account and impact policy. Revert has no
 equivalent bypass.
 
 The full-access credential is retrieved only when a live command needs it and is never written into plans or receipts.
 
-This is a workflow and credential boundary, not an operating-system sandbox. Software running as the same user may still be able to invoke the CLI or interact with the system credential service. Use `prompt` or carefully permissioned `file` mode if that threat matters to you.
+This is a workflow and credential boundary, not an operating-system sandbox. Software running as
+the same user may still be able to invoke the CLI, edit its non-secret policy file, or interact with
+the system credential service. The unattended cap protects against accidental oversized plans; it
+is not a security boundary against malicious local software. Use `prompt` or carefully permissioned
+`file` mode if that threat matters to you.
 
 ## Development
 

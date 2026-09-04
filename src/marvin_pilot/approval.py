@@ -102,3 +102,42 @@ def confirm_revert(
         input_stream=input_stream,
         output_stream=output_stream,
     )
+
+
+def confirm_unattended_enable(
+    account_email: str,
+    max_impact: int,
+    *,
+    input_stream: TextIO | None = None,
+    output_stream: TextIO | None = None,
+) -> bool:
+    """Ask a human to pin bounded unattended apply to one verified account."""
+
+    with ExitStack() as stack:
+        if input_stream is None:
+            if sys.stdin.isatty():
+                input_stream = sys.stdin
+                output_stream = output_stream or sys.stderr
+            else:
+                input_stream, terminal_output = _open_controlling_terminal(stack)
+                output_stream = output_stream or terminal_output
+        if output_stream is None:
+            output_stream = sys.stderr
+        prompt = (
+            f"Enable unattended apply for {account_email} with maximum impact "
+            f"{max_impact}? [y = enable, n = cancel] "
+        )
+        while True:
+            output_stream.write(prompt)
+            output_stream.flush()
+            answer = input_stream.readline()
+            if answer == "":
+                output_stream.write("\nNo response received; cancelling safely.\n")
+                output_stream.flush()
+                return False
+            normalized = answer.strip().lower()
+            if normalized in {"y", "yes"}:
+                return True
+            if normalized in {"n", "no"}:
+                return False
+            output_stream.write("Please answer y or n; empty input is not a decision.\n")

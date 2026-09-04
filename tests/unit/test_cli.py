@@ -169,8 +169,8 @@ def test_main_help_leads_with_safety_contract() -> None:
     result = runner.invoke(app, ["--help"])
     normalized = " ".join(result.stdout.split())
     assert result.exit_code == 0
-    assert "separates AI-authored proposals" in normalized
-    assert "Do not invoke apply or revert" in normalized
+    assert "separates reviewed Marvin mutations from explicitly bounded automation" in normalized
+    assert "has enabled the local unattended policy" in normalized
 
 
 def test_version() -> None:
@@ -854,6 +854,68 @@ def test_config_history_directory_round_trip(isolated_app_dirs: Path) -> None:
     assert str(history) in paths.stdout
 
 
+def test_config_max_operations_round_trip_and_clamps_warning(
+    isolated_app_dirs: Path,
+) -> None:
+    result = runner.invoke(app, ["config", "set-max-operations", "25"])
+    show = runner.invoke(app, ["config", "show"])
+    config = config_module.load_config(
+        isolated_app_dirs / "roaming" / "marvin-pilot" / "config.toml"
+    )
+    assert result.exit_code == 0
+    assert "Maximum operations: 25" in show.stdout
+    assert config.max_operations == 25
+    assert config.large_plan_warning_operations == 25
+
+
+def test_config_unattended_enable_pins_verified_account(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = CliMarvinClient({})
+    confirmations: list[tuple[str, int]] = []
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    monkeypatch.setattr(
+        cli_module,
+        "confirm_unattended_enable",
+        lambda email, limit: confirmations.append((email, limit)) or True,
+    )
+
+    result = runner.invoke(
+        app,
+        ["config", "unattended", "enable", "--max-impact", "7"],
+    )
+    shown = runner.invoke(app, ["config", "unattended", "show"])
+
+    assert result.exit_code == 0
+    assert confirmations == [("pilot@example.com", 7)]
+    assert client.connection_checks == 1
+    assert client.closed
+    assert "Verified account: pilot@example.com" in result.stdout
+    assert "Enabled: yes" in shown.stdout
+    assert "Maximum impact: 7" in shown.stdout
+    assert "Account user ID: 123456" in shown.stdout
+
+    disabled = runner.invoke(app, ["config", "unattended", "disable"])
+    shown_after = runner.invoke(app, ["config", "unattended", "show"])
+    assert disabled.exit_code == 0
+    assert "Enabled: no" in shown_after.stdout
+    assert "Account user ID: not pinned" in shown_after.stdout
+
+
+def test_config_unattended_decline_changes_nothing(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = CliMarvinClient({})
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    monkeypatch.setattr(cli_module, "confirm_unattended_enable", lambda *_args: False)
+    result = runner.invoke(app, ["config", "unattended", "enable"])
+    config = config_module.load_config(
+        isolated_app_dirs / "roaming" / "marvin-pilot" / "config.toml"
+    )
+    assert result.exit_code == 6
+    assert config.unattended_enabled is False
+
+
 def test_config_token_command_never_echoes_secret(
     isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1069,6 +1131,235 @@ def test_apply_enforces_configured_operation_limit_before_credentials(
     result = runner.invoke(app, ["apply", str(path)])
     assert result.exit_code == 3
     assert "configured maximum is 1" in result.stderr
+
+
+def test_apply_unattended_requires_human_enabled_policy_before_credentials(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, one_operation_plan())
+    monkeypatch.setattr(
+        cli_module,
+        "_client_from_config",
+        lambda *_args: pytest.fail("disabled unattended mode must fail before credentials"),
+    )
+    result = runner.invoke(app, ["apply", str(path), "--unattended"])
+    assert result.exit_code == 3
+    assert "unattended apply is disabled" in result.stderr
+    assert "config unattended enable --max-impact 10" in result.stderr
+
+
+def test_apply_unattended_rejects_minimum_impact_before_credentials(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, EXAMPLE_PLAN)
+    cli_module.save_config(
+        config_module.AppConfig(
+            unattended_enabled=True,
+            unattended_max_impact=3,
+            unattended_account_user_id="123456",
+        )
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_client_from_config",
+        lambda *_args: pytest.fail("minimum impact must fail before credentials"),
+    )
+    result = runner.invoke(app, ["apply", str(path), "--unattended"])
+    assert result.exit_code == 3
+    assert "at least 4 impact" in result.stderr
+    assert "maximum is 3" in result.stderr
+
+
+def test_apply_unattended_blocks_project_trash_before_credentials(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = {
+        "schemaVersion": 1,
+        "planId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "createdAt": "2026-09-04T12:00:00-07:00",
+        "summary": "Exercise unattended project deletion boundary.",
+        "operations": [
+            {
+                "operationId": "trash-project",
+                "action": "trash",
+                "target": {
+                    "type": "project",
+                    "id": "project-1",
+                    "title": "Important project",
+                },
+                "reason": "Exercise the safety boundary.",
+            }
+        ],
+    }
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, plan)
+    cli_module.save_config(
+        config_module.AppConfig(
+            unattended_enabled=True,
+            unattended_account_user_id="123456",
+        )
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_client_from_config",
+        lambda *_args: pytest.fail("blocked container operation must fail before credentials"),
+    )
+    result = runner.invoke(app, ["apply", str(path), "--unattended"])
+    assert result.exit_code == 3
+    assert "trashes a project" in result.stderr
+    assert "interactive review" in result.stderr
+
+
+def test_apply_unattended_accepts_piped_plan_without_terminal_or_prompt(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = config_module.AppConfig(
+        unattended_enabled=True,
+        unattended_max_impact=1,
+        unattended_account_user_id="123456",
+    )
+    cli_module.save_config(config)
+    client = CliMarvinClient(
+        {
+            "_id": "task-wash-dishes-id",
+            "_rev": "1-task",
+            "db": "Tasks",
+            "title": "Wash the dishes",
+            "day": "2026-08-08",
+            "firstScheduled": "2026-01-01",
+            "updatedAt": 1,
+        }
+    )
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    monkeypatch.setattr(
+        cli_module,
+        "confirm_apply",
+        lambda _count: pytest.fail("unattended mode must not prompt"),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "require_controlling_terminal",
+        lambda: pytest.fail("unattended mode must not require a terminal"),
+    )
+
+    result = runner.invoke(
+        app,
+        ["apply", "-", "--unattended"],
+        input=json.dumps(one_operation_plan()),
+    )
+
+    assert result.exit_code == 0
+    assert "UNATTENDED APPLY AUTHORIZED" in result.stdout
+    assert "impact 1/1" in result.stdout
+    assert "Receipt:" in result.stdout
+    assert client.connection_checks == 1
+    assert client.document["day"] == "2026-08-09"
+    assert client.mutations == 1
+
+
+def test_apply_unattended_rejects_account_mismatch_before_plan_reads(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, one_operation_plan())
+    cli_module.save_config(
+        config_module.AppConfig(
+            unattended_enabled=True,
+            unattended_account_user_id="999999",
+        )
+    )
+    client = CliMarvinClient({})
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    result = runner.invoke(app, ["apply", str(path), "--unattended"])
+    assert result.exit_code == 3
+    assert "account mismatch" in result.stderr
+    assert client.connection_checks == 1
+    assert client.mutations == 0
+    assert client.closed
+
+
+def test_apply_unattended_counts_deleted_task_subtasks_in_impact(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = {
+        "schemaVersion": 1,
+        "planId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "createdAt": "2026-09-04T12:00:00-07:00",
+        "summary": "Exercise unattended checklist impact.",
+        "operations": [
+            {
+                "operationId": "trash-task",
+                "action": "trash",
+                "target": {"type": "task", "id": "task-1", "title": "Checklist"},
+                "reason": "Remove a disposable checklist.",
+            }
+        ],
+    }
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, plan)
+    cli_module.save_config(
+        config_module.AppConfig(
+            unattended_enabled=True,
+            unattended_max_impact=1,
+            unattended_account_user_id="123456",
+        )
+    )
+    client = CliMarvinClient(
+        {
+            "_id": "task-1",
+            "_rev": "1-task",
+            "db": "Tasks",
+            "title": "Checklist",
+            "done": False,
+            "updatedAt": 1,
+            "subtasks": {"step-1": {"_id": "step-1", "title": "One"}},
+        }
+    )
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    result = runner.invoke(app, ["apply", str(path), "--unattended"])
+    assert result.exit_code == 3
+    assert "plan impact is 2; configured unattended maximum is 1" in result.stderr
+    assert client.mutations == 0
+
+
+def test_small_reviewed_apply_shows_unattended_setup_tip(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, one_operation_plan())
+    client = CliMarvinClient(
+        {
+            "_id": "task-wash-dishes-id",
+            "db": "Tasks",
+            "title": "Wash the dishes",
+            "day": "2026-08-08",
+        }
+    )
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    monkeypatch.setattr(cli_module, "confirm_apply", lambda _count: False)
+    result = runner.invoke(app, ["apply", str(path)])
+    assert result.exit_code == 6
+    normalized = " ".join(result.stdout.split())
+    assert "This small plan has impact 1" in normalized
+    assert "config unattended" in normalized
+    assert "enable --max-impact 10" in normalized
+
+
+def test_apply_rejects_yes_with_unattended_before_credentials(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = isolated_app_dirs / "plan.json"
+    write_plan(path, one_operation_plan())
+    monkeypatch.setattr(
+        cli_module,
+        "_client_from_config",
+        lambda *_args: pytest.fail("conflicting options must fail before credentials"),
+    )
+    result = runner.invoke(app, ["apply", str(path), "--yes", "--unattended"])
+    assert result.exit_code == 2
+    assert "either --yes or --unattended" in result.stderr
 
 
 def test_apply_rejects_inline_token_and_documents_reviewed_yes(
