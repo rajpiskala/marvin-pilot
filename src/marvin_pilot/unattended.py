@@ -91,9 +91,7 @@ def assess_unattended(preflight: PreflightResult) -> UnattendedAssessment:
     )
 
 
-def enforce_unattended(
-    preflight: PreflightResult, *, max_impact: int
-) -> UnattendedAssessment:
+def enforce_unattended(preflight: PreflightResult, *, max_impact: int) -> UnattendedAssessment:
     """Fail closed when a preflight result exceeds its human-configured policy."""
 
     assessment = assess_unattended(preflight)

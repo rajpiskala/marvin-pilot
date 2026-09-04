@@ -44,9 +44,7 @@ class AppConfig(BaseModel):
     max_operations: StrictInt = Field(default=500, ge=1, le=500)
     large_plan_warning_operations: StrictInt = Field(default=100, ge=1, le=500)
     unattended_enabled: StrictBool = False
-    unattended_max_impact: StrictInt = Field(
-        default=DEFAULT_UNATTENDED_MAX_IMPACT, ge=1, le=500
-    )
+    unattended_max_impact: StrictInt = Field(default=DEFAULT_UNATTENDED_MAX_IMPACT, ge=1, le=500)
     unattended_account_user_id: StrictStr = ""
 
     @field_validator("api_base_url")

@@ -101,8 +101,7 @@ Humans: review normal plans and run apply/revert interactively, or opt into a sm
 app = typer.Typer(
     name="marvin-pilot",
     help=(
-        "Safe, reversible, and policy-bounded AI actions for Amazing Marvin.\n\n"
-        + SAFETY_CONTRACT
+        "Safe, reversible, and policy-bounded AI actions for Amazing Marvin.\n\n" + SAFETY_CONTRACT
     ),
     no_args_is_help=True,
     rich_markup_mode=None,
@@ -1547,8 +1546,7 @@ def config_unattended_enable(
     finally:
         client.close()
     console.print(
-        f"Verified account: [bold]{account.account_email}[/] "
-        f"(user ID {account.account_user_id})"
+        f"Verified account: [bold]{account.account_email}[/] (user ID {account.account_user_id})"
     )
     console.print(
         "Unattended apply retains full live preflight, concurrency checks, durable receipts, "

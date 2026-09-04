@@ -45,8 +45,7 @@ def task_create(*, subtasks: int = 0) -> dict:
         "after": {
             "title": "Prepare dinner",
             "subtasks": [
-                {"id": f"step-{index}", "title": f"Step {index}"}
-                for index in range(subtasks)
+                {"id": f"step-{index}", "title": f"Step {index}"} for index in range(subtasks)
             ],
         },
     }
