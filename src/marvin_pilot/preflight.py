@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -34,6 +36,37 @@ class DocumentReader(Protocol):
 
     def get_labels(self) -> list[dict[str, Any]]: ...
 
+    def check_connection(self) -> Any: ...
+
+    def get_children(self, parent_id: str) -> list[dict[str, Any]]: ...
+
+
+def verify_expected_account(plan: ChangePlanV1, reader: DocumentReader) -> Any | None:
+    """Verify the plan's stable account binding before any document reads."""
+
+    expected = plan.expectedAccount
+    if expected is None:
+        return None
+    account = reader.check_connection()
+    if account.account_user_id != expected.userId:
+        raise LivePreconditionError(
+            "plan account mismatch: expected Marvin user ID "
+            f"{expected.userId!r} ({expected.email}), connected user ID "
+            f"{account.account_user_id!r} ({account.account_email})",
+            check="expected-account",
+            expected=expected.userId,
+            found=account.account_user_id,
+        )
+    if account.account_email.casefold() != expected.email.casefold():
+        raise LivePreconditionError(
+            "plan account email mismatch for the expected user ID: expected "
+            f"{expected.email!r}, connected {account.account_email!r}",
+            check="expected-account-email",
+            expected=expected.email,
+            found=account.account_email,
+        )
+    return account
+
 
 @dataclass(frozen=True, slots=True)
 class PreflightOperation:
@@ -63,6 +96,9 @@ class PreflightResult:
     checked_at_ms: int
     strict_concurrency: bool
     warnings: tuple[PreflightDiagnostic, ...] = ()
+    unique_documents_checked: int = 0
+    metadata_collections_checked: int = 0
+    elapsed_ms: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +109,9 @@ class LiveValidationResult:
     selected_indices: tuple[int, ...]
     checked_at_ms: int
     strict_concurrency: bool
+    unique_documents_checked: int = 0
+    metadata_collections_checked: int = 0
+    elapsed_ms: int = 0
 
     @property
     def errors(self) -> tuple[PreflightDiagnostic, ...]:
@@ -124,7 +163,10 @@ def coupled_task_reasons(
         "reminder",
     )
     if any(_meaningful(document.get(field)) for field in reminder_fields):
-        reasons.append("reminder server state")
+        reasons.append(
+            "reminder server state (Pilot cannot yet preserve the separate reminder record; "
+            "remove/recreate the reminder in Marvin or make this change by hand)"
+        )
     if any(_meaningful(document.get(field)) for field in ("calId", "calURL", "etag", "calData")):
         reasons.append("calendar synchronization")
     return reasons
@@ -149,16 +191,21 @@ def _check_existing_preconditions(
     expected_db = {
         "task": "Tasks",
         "project": "Categories",
+        "category": "Categories",
         "recurringTask": "RecurringTasks",
     }[operation.target.type]
     if (
         document.get("db") != expected_db
-        or (operation.target.type == "project" and document.get("type") != "project")
+        or (
+            operation.target.type in {"project", "category"}
+            and document.get("type") != operation.target.type
+        )
         or (operation.target.type == "recurringTask" and document.get("recurringType") != "task")
     ):
         document_kind = {
             "task": "a non-Task",
             "project": "not a live project",
+            "category": "not a live category",
             "recurringTask": "not a live recurring-task series",
         }[operation.target.type]
         raise LivePreconditionError(
@@ -373,7 +420,7 @@ def _verify_reference(
         return None
     planned = planned_creates.get(reference_id)
     if planned is not None:
-        if kind == "parent" and planned.target.type != "project":
+        if kind == "parent" and planned.target.type not in {"project", "category"}:
             raise LivePreconditionError(
                 f"operation {operation_id!r} references newly created non-project parent "
                 f"{reference_id!r}"
@@ -396,6 +443,13 @@ def _verify_reference(
     if document is None:
         raise LivePreconditionError(
             f"operation {operation_id!r} references missing {kind} ID {reference_id!r}"
+        )
+    if kind == "parent" and (
+        document.get("db") != "Categories"
+        or document.get("type") not in {None, "category", "project"}
+    ):
+        raise LivePreconditionError(
+            f"operation {operation_id!r} references non-container parent ID {reference_id!r}"
         )
     if title_hint is not None and document.get("title") != title_hint:
         return _OperationWarning(
@@ -612,7 +666,7 @@ def _verify_project_parent_hierarchy(
     cache: dict[str, dict[str, Any] | None],
     planned_creates: dict[str, CreateOperation],
 ) -> None:
-    if operation.target.type != "project" or not isinstance(
+    if operation.target.type not in {"project", "category"} or not isinstance(
         operation, (UpdateOperation, CreateOperation)
     ):
         return
@@ -659,6 +713,120 @@ def _verify_project_parent_hierarchy(
         current_id = document.get("parentId") or "unassigned"
 
 
+def _verify_container_empty_before_trash(
+    operation: Operation,
+    reader: DocumentReader,
+    cache: dict[str, dict[str, Any] | None],
+) -> None:
+    if not isinstance(operation, TrashOperation) or operation.target.type not in {
+        "project",
+        "category",
+    }:
+        return
+    child_reader = getattr(reader, "get_children", None)
+    if callable(child_reader):
+        children = child_reader(operation.target.id)
+    else:
+        # In-memory test/dry-run readers commonly expose their complete document map.
+        # The production MarvinClient always uses the documented /children endpoint.
+        documents = getattr(reader, "documents", {})
+        children = [
+            document
+            for document in documents.values()
+            if document.get("parentId") == operation.target.id
+        ]
+    remaining = []
+    for child in children:
+        identifier = child.get("_id")
+        if not isinstance(identifier, str):
+            continue
+        projected = cache.get(identifier, child)
+        if (
+            projected is not None
+            and projected.get("parentId") == operation.target.id
+            and not _meaningful(projected.get("deletedAt"))
+        ):
+            remaining.append(str(projected.get("title") or identifier))
+    if remaining:
+        preview = ", ".join(remaining[:5])
+        suffix = f" (+{len(remaining) - 5} more)" if len(remaining) > 5 else ""
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} cannot trash a non-empty "
+            f"{operation.target.type}; move or trash every direct child first: {preview}{suffix}"
+        )
+
+
+def _resolved_sibling_order(
+    operation: Operation,
+    document: dict[str, Any] | None,
+    reader: DocumentReader,
+    cache: dict[str, dict[str, Any] | None],
+) -> tuple[str, float] | None:
+    if not isinstance(operation, UpdateOperation) or operation.siblingOrder is None:
+        return None
+    assert document is not None
+    order = operation.siblingOrder
+    after = operation.after.model_dump(exclude_unset=True, mode="json")
+    final_day = after.get("scheduledDate", document.get("day"))
+    final_parent = (
+        (after["parent"]["id"] if after.get("parent") is not None else document.get("parentId"))
+        if "parent" in after
+        else document.get("parentId")
+    )
+    uses_rank = operation.target.type in {"project", "category"} or (
+        operation.target.type == "task"
+        and final_day
+        not in {
+            None,
+            "",
+            "unassigned",
+        }
+    )
+    rank_field = "rank" if uses_rank else "masterRank"
+    if order.position is not None:
+        return rank_field, -1e15 if order.position == "first" else 1e15
+    anchor_id = order.beforeId or order.afterId
+    assert anchor_id is not None
+    if anchor_id == operation.target.id:
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} cannot order an item relative to itself"
+        )
+    if anchor_id not in cache:
+        cache[anchor_id] = reader.get_doc(anchor_id)
+    anchor = cache[anchor_id]
+    if anchor is None or anchor.get("deletedAt") not in {None, ""}:
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} sibling-order anchor {anchor_id!r} is absent"
+        )
+    if operation.target.type == "task" and uses_rank:
+        if anchor.get("db") != "Tasks" or anchor.get("day") != final_day:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} sibling-order anchor is not on the same day"
+            )
+    elif anchor.get("parentId") != final_parent:
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} sibling-order anchor is not under the same parent"
+        )
+    elif operation.target.type in {"project", "category"} and (
+        anchor.get("db") != "Categories" or anchor.get("type") != operation.target.type
+    ):
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} sibling-order anchor is not a sibling "
+            f"{operation.target.type}"
+        )
+    anchor_rank = anchor.get(rank_field)
+    if (
+        isinstance(anchor_rank, bool)
+        or not isinstance(anchor_rank, (int, float))
+        or not math.isfinite(anchor_rank)
+    ):
+        raise LivePreconditionError(
+            f"operation {operation.operationId!r} sibling-order anchor has no finite {rank_field}"
+        )
+    direction = -math.inf if order.beforeId is not None else math.inf
+    return rank_field, math.nextafter(float(anchor_rank), direction)
+
+
 def validate_plan_live(
     plan: ChangePlanV1,
     reader: DocumentReader,
@@ -671,6 +839,8 @@ def validate_plan_live(
 ) -> LiveValidationResult:
     """Collect live diagnostics for selected 1-based plan entries without mutating Marvin."""
 
+    started = time.perf_counter()
+    verify_expected_account(plan, reader)
     cache: dict[str, dict[str, Any] | None] = {}
     metadata_cache: dict[str, Any] = {}
     planned_creates = {
@@ -735,7 +905,14 @@ def validate_plan_live(
             source_warnings = _verify_subtask_sources(operation, reader, cache, planned_creates)
             operation_warnings = reference_warnings + source_warnings
             _verify_project_parent_hierarchy(operation, reader, cache, planned_creates)
-            compiled = compile_operation(operation, live, now_ms)
+            _verify_container_empty_before_trash(operation, reader, cache)
+            resolved_order = _resolved_sibling_order(operation, live, reader, cache)
+            compiled = compile_operation(
+                operation,
+                live,
+                now_ms,
+                resolved_sibling_order=resolved_order,
+            )
             checked.append(
                 PreflightOperation(
                     operation=operation,
@@ -786,6 +963,9 @@ def validate_plan_live(
         selected_indices=indices,
         checked_at_ms=now_ms,
         strict_concurrency=strict_concurrency,
+        unique_documents_checked=len(cache),
+        metadata_collections_checked=len(metadata_cache),
+        elapsed_ms=round((time.perf_counter() - started) * 1_000),
     )
 
 
@@ -825,6 +1005,9 @@ def preflight_plan(
         checked_at_ms=now_ms,
         strict_concurrency=strict_concurrency,
         warnings=validation.warnings,
+        unique_documents_checked=validation.unique_documents_checked,
+        metadata_collections_checked=validation.metadata_collections_checked,
+        elapsed_ms=validation.elapsed_ms,
     )
 
 

@@ -30,6 +30,7 @@ from marvin_pilot.preflight import (
     preflight_plan,
     recheck_operation,
     revision_snapshot,
+    verify_expected_account,
 )
 
 MAX_RECONCILED_MUTATION_RETRIES = 3
@@ -37,6 +38,8 @@ MAX_RECONCILED_MUTATION_RETRIES = 3
 
 class MutationClient(Protocol):
     api_base_host: str
+
+    def check_connection(self) -> Any: ...
 
     def get_doc(self, item_id: str) -> dict[str, Any] | None: ...
 
@@ -204,10 +207,16 @@ def execute_apply(
     if not approve(checked_plan):
         raise UserDeclinedError("apply declined; no Marvin changes were made")
 
+    # Approval can take arbitrarily long. Recheck the immutable account identity
+    # immediately before journaling and the first possible mutation.
+    account = verify_expected_account(plan, client)
+
     handle = history.begin_apply(
         checked_plan,
         source_plan_bytes,
         api_base_host=client.api_base_host,
+        account_user_id=account.account_user_id if account is not None else None,
+        account_email=account.account_email if account is not None else None,
     )
     handle.receipt.status = "applying"
     history.persist(handle)

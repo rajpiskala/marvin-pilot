@@ -76,6 +76,7 @@ def test_registry_covers_exact_plan_field_allowlist() -> None:
         "snoozedUntil",
         "permanentSnoozeUntil",
         "dependencies",
+        "orbit",
     ]
     assert list(FIELD_SPECS) == list(TaskFields.model_fields)
 

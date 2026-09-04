@@ -208,6 +208,7 @@ def synthetic_regression_plan(number: str) -> dict:
                     "id": "99999999-9999-4999-8999-999999999999",
                 },
                 "reason": "Add an explicit verification step.",
+                "dependsOnOperations": ["rename-monitoring"],
                 "after": {
                     "title": "Verify the release candidate",
                     "parent": {

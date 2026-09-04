@@ -131,7 +131,11 @@ def _merge_subtasks(
 
 
 def compile_update(
-    operation: UpdateOperation, live_document: dict[str, Any], now_ms: int
+    operation: UpdateOperation,
+    live_document: dict[str, Any],
+    now_ms: int,
+    *,
+    resolved_sibling_order: tuple[str, float] | None = None,
 ) -> CompiledMutation:
     """Compile one item update, including first-scheduling metadata when necessary."""
 
@@ -154,6 +158,16 @@ def compile_update(
                 ]
             )
             desired["firstScheduled"] = new_day
+
+    if resolved_sibling_order is not None:
+        rank_field, rank_value = resolved_sibling_order
+        setters.extend(
+            [
+                {"key": rank_field, "val": rank_value},
+                {"key": f"fieldUpdates.{rank_field}", "val": now_ms},
+            ]
+        )
+        desired[rank_field] = rank_value
 
     setters.append({"key": "updatedAt", "val": now_ms})
     touched = {field: field_snapshot(live_document, field) for field in desired}
@@ -223,17 +237,18 @@ def compile_create(operation: CreateOperation, now_ms: int) -> CompiledMutation:
         )
 
     is_project = operation.target.type == "project"
+    is_container = operation.target.type in {"project", "category"}
     document: dict[str, Any] = {
         "_id": operation.target.id,
-        "db": "Categories" if is_project else "Tasks",
+        "db": "Categories" if is_container else "Tasks",
         "done": False,
         "day": None if is_project else "unassigned",
         "parentId": "unassigned",
         "createdAt": now_ms,
         "updatedAt": now_ms,
     }
-    if is_project:
-        document["type"] = "project"
+    if is_container:
+        document["type"] = operation.target.type
     field_updates: dict[str, int] = {}
     for plan_field, plan_value in after.items():
         marvin_field, marvin_value = compile_plan_field(plan_field, plan_value)
@@ -330,6 +345,8 @@ def compile_operation(
     operation: UpdateOperation | CreateOperation | TrashOperation | CompleteOperation,
     live_document: dict[str, Any] | None,
     now_ms: int,
+    *,
+    resolved_sibling_order: tuple[str, float] | None = None,
 ) -> CompiledMutation:
     """Dispatch one discriminated operation to its pure compiler."""
 
@@ -338,7 +355,12 @@ def compile_operation(
     if live_document is None:
         raise ValueError("existing-item compilation requires a live document")
     if isinstance(operation, UpdateOperation):
-        return compile_update(operation, live_document, now_ms)
+        return compile_update(
+            operation,
+            live_document,
+            now_ms,
+            resolved_sibling_order=resolved_sibling_order,
+        )
     if isinstance(operation, CompleteOperation):
         return compile_complete(operation, live_document, now_ms)
     return compile_trash(operation, live_document, now_ms)

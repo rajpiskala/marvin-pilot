@@ -231,6 +231,18 @@ def preflight_revert(
 ) -> RevertPreflight:
     """Resolve a selection and verify every inverse before any write or approval."""
 
+    if source.accountUserId is not None:
+        account = client.check_connection()
+        if account.account_user_id != source.accountUserId or (
+            source.accountEmail is not None
+            and account.account_email.casefold() != source.accountEmail.casefold()
+        ):
+            raise LivePreconditionError(
+                "receipt account mismatch: expected Marvin user ID "
+                f"{source.accountUserId!r} ({source.accountEmail or 'email not recorded'}), "
+                f"connected {account.account_user_id!r} ({account.account_email})"
+            )
+
     if source.apiBaseHost != client.api_base_host:
         raise LivePreconditionError(
             f"receipt belongs to {source.apiBaseHost}, but the configured API is "
@@ -278,13 +290,14 @@ def preflight_revert(
         expected_db = {
             "task": "Tasks",
             "project": "Categories",
+            "category": "Categories",
             "recurringTask": "RecurringTasks",
         }[source_operation.targetType]
         if (
             identity_document.get("db") != expected_db
             or (
-                source_operation.targetType == "project"
-                and identity_document.get("type") != "project"
+                source_operation.targetType in {"project", "category"}
+                and identity_document.get("type") != source_operation.targetType
             )
             or (
                 source_operation.targetType == "recurringTask"
@@ -556,6 +569,13 @@ def execute_revert(
     )
     if not approve(checked):
         raise UserDeclinedError("revert declined; no Marvin changes were made")
+    if source.accountUserId is not None:
+        account = client.check_connection()
+        if account.account_user_id != source.accountUserId or (
+            source.accountEmail is not None
+            and account.account_email.casefold() != source.accountEmail.casefold()
+        ):
+            raise LivePreconditionError("receipt account changed after approval; refusing to write")
     handle = history.begin_revert(
         source,
         source_path,

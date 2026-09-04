@@ -40,6 +40,13 @@ class FakeReader:
             if document.get("db") == "Labels"
         ]
 
+    def get_children(self, parent_id: str) -> list[dict[str, Any]]:
+        return [
+            copy.deepcopy(document)
+            for document in self.documents.values()
+            if document.get("parentId") == parent_id and not document.get("deletedAt")
+        ]
+
 
 @pytest.fixture
 def documents() -> dict[str, dict[str, Any]]:
@@ -261,6 +268,144 @@ def test_later_reference_checks_see_an_earlier_project_rename(documents: dict) -
 
     assert result.warnings == ()
     assert result.operations[1].compiled.desired_fields["parentId"] == "project-release"
+
+
+def test_rename_move_and_project_completion_compose_in_one_plan(documents: dict) -> None:
+    documents["project-release"] = {
+        "_id": "project-release",
+        "_rev": "1-project",
+        "db": "Categories",
+        "type": "project",
+        "title": "Old release name",
+        "parentId": "root",
+        "updatedAt": 300,
+    }
+    value = {
+        "schemaVersion": 1,
+        "planId": "aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff",
+        "createdAt": "2026-08-08T14:45:00-07:00",
+        "summary": "Rename, populate, and complete one project atomically.",
+        "operations": [
+            {
+                "operationId": "rename-release",
+                "action": "update",
+                "target": {"type": "project", "id": "project-release", "title": "Old release name"},
+                "reason": "Use the final name.",
+                "before": {"title": "Old release name"},
+                "after": {"title": "Release archive"},
+                "expectedUpdatedAt": 300,
+            },
+            {
+                "operationId": "move-dinner",
+                "action": "update",
+                "target": {
+                    "type": "task",
+                    "id": "task-dinner-id",
+                    "title": "Eat dinner with Jacob",
+                },
+                "reason": "File the task.",
+                "dependsOnOperations": ["rename-release"],
+                "before": {"parent": None},
+                "after": {"parent": {"id": "project-release", "title": "Release archive"}},
+            },
+            {
+                "operationId": "complete-release",
+                "action": "complete",
+                "target": {"type": "project", "id": "project-release", "title": "Release archive"},
+                "reason": "The archive is now complete.",
+                "dependsOnOperations": ["rename-release", "move-dinner"],
+                "completedAt": "2026-08-08T14:00:00-07:00",
+            },
+        ],
+    }
+
+    result = preflight_plan(
+        parse_plan_bytes(json.dumps(value).encode()), FakeReader(documents), now_ms=NOW_MS
+    )
+
+    assert [item.operation.operationId for item in result.operations] == [
+        "rename-release",
+        "move-dinner",
+        "complete-release",
+    ]
+    assert result.operations[-1].live_document["title"] == "Release archive"
+
+
+def test_relative_today_order_resolves_next_float_and_orbit_is_allowlisted(
+    documents: dict,
+) -> None:
+    documents["task-wash-dishes-id"]["rank"] = 10.0
+    documents["task-wash-dishes-id"]["orbit"] = False
+    documents["anchor"] = {
+        "_id": "anchor",
+        "db": "Tasks",
+        "title": "Anchor",
+        "day": "2026-08-08",
+        "rank": 20.0,
+    }
+    value = {
+        "schemaVersion": 1,
+        "planId": "aaaaaaaa-bbbb-4ccc-8ddd-aaaaaaaaaaaa",
+        "createdAt": "2026-08-08T14:45:00-07:00",
+        "summary": "Orbit and position one task.",
+        "operations": [
+            {
+                "operationId": "orbit-and-order",
+                "action": "update",
+                "target": {
+                    "type": "task",
+                    "id": "task-wash-dishes-id",
+                    "title": "Wash the dishes",
+                },
+                "reason": "Put it after its prerequisite.",
+                "before": {"orbit": False},
+                "after": {"orbit": True},
+                "siblingOrder": {"afterId": "anchor"},
+            }
+        ],
+    }
+    result = preflight_plan(
+        parse_plan_bytes(json.dumps(value).encode()), FakeReader(documents), now_ms=NOW_MS
+    )
+    compiled = result.operations[0].compiled
+    assert compiled.desired_fields["orbit"] is True
+    assert compiled.desired_fields["rank"] > 20.0
+    assert compiled.before_fields["rank"] == {"present": True, "value": 10.0}
+
+
+def test_relative_order_requires_anchor_in_same_day(documents: dict) -> None:
+    documents["anchor"] = {
+        "_id": "anchor",
+        "db": "Tasks",
+        "title": "Anchor",
+        "day": "2026-08-09",
+        "rank": 20.0,
+    }
+    value = {
+        "schemaVersion": 1,
+        "planId": "aaaaaaaa-bbbb-4ccc-8ddd-bbbbbbbbbbbb",
+        "createdAt": "2026-08-08T14:45:00-07:00",
+        "summary": "Reject a cross-day relative order.",
+        "operations": [
+            {
+                "operationId": "bad-order",
+                "action": "update",
+                "target": {
+                    "type": "task",
+                    "id": "task-wash-dishes-id",
+                    "title": "Wash the dishes",
+                },
+                "reason": "Exercise the boundary.",
+                "before": {},
+                "after": {},
+                "siblingOrder": {"beforeId": "anchor"},
+            }
+        ],
+    }
+    with pytest.raises(LivePreconditionError, match="not on the same day"):
+        preflight_plan(
+            parse_plan_bytes(json.dumps(value).encode()), FakeReader(documents), now_ms=NOW_MS
+        )
 
 
 @pytest.mark.parametrize(

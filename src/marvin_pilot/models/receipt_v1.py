@@ -55,7 +55,7 @@ class ReceiptOperationV1(ReceiptModel):
     operationId: str
     action: Literal["update", "create", "trash", "complete"]
     targetId: str
-    targetType: Literal["task", "project", "recurringTask"] = "task"
+    targetType: Literal["task", "project", "category", "recurringTask"] = "task"
     targetTitle: str | None = None
     recurrence: ReceiptRecurrenceV1 | None = None
     status: OperationStatus = "not-started"
@@ -87,6 +87,8 @@ class ReceiptV1(ReceiptModel):
     planId: str
     planDigest: str
     apiBaseHost: str
+    accountUserId: str | None = None
+    accountEmail: str | None = None
     sourceApplyReceiptId: str | None = None
     sourceApplyReceiptPath: str | None = None
     selectedOperationIds: list[str] = Field(default_factory=list)

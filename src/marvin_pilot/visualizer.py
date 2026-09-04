@@ -108,7 +108,7 @@ class OperationView:
     original_index: int
     operation_id: str
     action: Action
-    target_type: Literal["task", "project", "recurringTask"]
+    target_type: Literal["task", "project", "category", "recurringTask"]
     recurrence_scope: Literal["occurrence", "series"] | None
     recurrence_series_id: str | None
     recurrence_series_title: str | None
@@ -121,6 +121,7 @@ class OperationView:
     target_chain_position: int
     target_chain_length: int
     depends_on_operations: tuple[str, ...]
+    sibling_order: dict[str, str] | None
     before: TaskCardView | None
     after: TaskCardView | None
     before_empty_label: str | None
@@ -841,6 +842,11 @@ def _operation_view(
         "target_chain_position": target_chain_position,
         "target_chain_length": target_chain_length,
         "depends_on_operations": tuple(operation.dependsOnOperations),
+        "sibling_order": (
+            operation.siblingOrder.model_dump(mode="json", exclude_none=True)
+            if isinstance(operation, UpdateOperation) and operation.siblingOrder is not None
+            else None
+        ),
         "warnings": _display_warnings(operation),
         "change_kinds": _change_kinds(
             operation,

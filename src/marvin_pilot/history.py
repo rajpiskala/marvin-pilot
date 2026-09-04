@@ -148,6 +148,8 @@ class HistoryStore:
         source_plan_bytes: bytes,
         *,
         api_base_host: str,
+        account_user_id: str | None = None,
+        account_email: str | None = None,
     ) -> ReceiptHandle:
         """Exclusively create the pending apply journal before the first mutation."""
 
@@ -207,6 +209,8 @@ class HistoryStore:
             planId=preflight.plan.planId,
             planDigest=plan_digest(preflight.plan),
             apiBaseHost=api_base_host,
+            accountUserId=account_user_id,
+            accountEmail=account_email,
             operations=operations,
         )
         path = self._pending_path(receipt)
@@ -235,6 +239,8 @@ class HistoryStore:
             planId=source_receipt.planId,
             planDigest=source_receipt.planDigest,
             apiBaseHost=api_base_host,
+            accountUserId=source_receipt.accountUserId,
+            accountEmail=source_receipt.accountEmail,
             sourceApplyReceiptId=source_receipt.receiptId,
             sourceApplyReceiptPath=str(source_receipt_path.resolve()),
             selectedOperationIds=[operation.operationId for operation in operations],

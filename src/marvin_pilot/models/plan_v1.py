@@ -35,6 +35,28 @@ class ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+class ExpectedAccount(ClosedModel):
+    """Stable account identity that every live command must verify first."""
+
+    userId: StrictStr
+    email: StrictStr
+
+    @field_validator("userId")
+    @classmethod
+    def validate_user_id(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("expectedAccount.userId must be a numeric Marvin user ID")
+        return _non_empty(value, "expectedAccount.userId", maximum=100)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        value = _non_empty(value, "expectedAccount.email", maximum=320)
+        if "@" not in value or any(ord(character) < 32 for character in value):
+            raise ValueError("expectedAccount.email must be a valid email address")
+        return value
+
+
 def _non_empty(value: str, field_name: str, *, maximum: int) -> str:
     if not value.strip():
         raise ValueError(f"{field_name} must not be empty")
@@ -302,6 +324,7 @@ class TaskFields(ClosedModel):
     snoozedUntil: StrictStr | None = None
     permanentSnoozeUntil: StrictStr | None = None
     dependencies: list[StrictStr] | None = None
+    orbit: StrictBool | None = None
 
     @field_validator("title")
     @classmethod
@@ -527,7 +550,7 @@ class RecurringOccurrenceRef(ClosedModel):
 
 
 class ExistingItemTarget(ClosedModel):
-    type: Literal["task", "project", "recurringTask"]
+    type: Literal["task", "project", "category", "recurringTask"]
     id: StrictStr
     title: StrictStr
     recurrence: RecurringOccurrenceRef | None = None
@@ -550,7 +573,7 @@ class ExistingItemTarget(ClosedModel):
 
 
 class NewItemTarget(ClosedModel):
-    type: Literal["task", "project", "recurringTask"]
+    type: Literal["task", "project", "category", "recurringTask"]
     id: StrictStr
 
     @field_validator("id")
@@ -669,6 +692,28 @@ class OperationDisplay(ClosedModel):
         return _rfc3339_with_offset(value, "display.existingCompletedAt")
 
 
+class SiblingOrder(ClosedModel):
+    """Relative list placement resolved to a native rank during live preflight."""
+
+    beforeId: StrictStr | None = None
+    afterId: StrictStr | None = None
+    position: Literal["first", "last"] | None = None
+
+    @field_validator("beforeId", "afterId")
+    @classmethod
+    def validate_anchor_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _non_empty(value, "siblingOrder anchor ID", maximum=500)
+
+    @model_validator(mode="after")
+    def validate_one_selector(self) -> SiblingOrder:
+        selected = sum(value is not None for value in (self.beforeId, self.afterId, self.position))
+        if selected != 1:
+            raise ValueError("siblingOrder requires exactly one of beforeId, afterId, or position")
+        return self
+
+
 class BaseOperation(ClosedModel):
     operationId: StrictStr
     reason: StrictStr
@@ -717,6 +762,7 @@ class UpdateOperation(BaseOperation):
     before: ItemFields
     after: ItemFields
     expectedUpdatedAt: Annotated[StrictInt, Field(ge=0)] | None = None
+    siblingOrder: SiblingOrder | None = None
 
 
 class CreateOperation(BaseOperation):
@@ -742,6 +788,12 @@ class CompleteOperation(BaseOperation):
     def validate_completed_at(cls, value: str) -> str:
         return _rfc3339_with_offset(value, "completedAt")
 
+    @model_validator(mode="after")
+    def reject_category_completion(self) -> CompleteOperation:
+        if self.target.type == "category":
+            raise ValueError("categories cannot be completed; only tasks and projects can")
+        return self
+
 
 Operation = Annotated[
     UpdateOperation | CreateOperation | TrashOperation | CompleteOperation,
@@ -755,6 +807,7 @@ class ChangePlanV1(ClosedModel):
     planId: StrictStr
     createdAt: StrictStr
     summary: StrictStr
+    expectedAccount: ExpectedAccount | None = None
     reviewDisplay: ReviewDisplay | None = None
     operations: Annotated[list[Operation], Field(min_length=1, max_length=500)]
 

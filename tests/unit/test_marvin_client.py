@@ -167,6 +167,36 @@ def test_get_labels_rejects_malformed_metadata(value: object) -> None:
         client.get_labels()
 
 
+def test_children_and_today_use_documented_read_endpoints() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return json_response(200, [{"_id": "item-1", "title": "Item"}])
+
+    with client_for(handler) as client:
+        assert client.get_children("project-1")[0]["_id"] == "item-1"
+        assert client.get_today_items("2026-09-04")[0]["_id"] == "item-1"
+
+    assert seen[0].url.path == "/api/children"
+    assert seen[0].url.params["parentId"] == "project-1"
+    assert seen[1].url.path == "/api/todayItems"
+    assert seen[1].url.params["date"] == "2026-09-04"
+    assert all(request.headers["X-Full-Access-Token"] == "full-secret-token" for request in seen)
+
+
+@pytest.mark.parametrize("method", ["children", "today"])
+def test_children_and_today_reject_malformed_arrays(method: str) -> None:
+    with (
+        client_for(lambda _request: json_response(200, {"items": []})) as client,
+        pytest.raises(RemoteError, match="malformed"),
+    ):
+        if method == "children":
+            client.get_children("project-1")
+        else:
+            client.get_today_items("2026-09-04")
+
+
 def test_update_sends_one_item_with_all_setters() -> None:
     seen: list[dict] = []
 

@@ -100,7 +100,7 @@ def test_project_trash_and_recurring_series_require_interactive_review() -> None
     }
     project = assess_unattended(checked([project_trash], project_live))
     assert not project.eligible
-    assert "trashes a project" in project.blockers[0]
+    assert "trashes a container" in project.blockers[0]
 
     recurring_create = {
         "operationId": "create-series",

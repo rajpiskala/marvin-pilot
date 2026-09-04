@@ -486,6 +486,7 @@ def test_every_task_field_has_an_exact_diff_and_card_fallback() -> None:
         "snoozedUntil": "2026-08-09T09:00:00-07:00",
         "permanentSnoozeUntil": "09:00",
         "dependencies": ["task-a"],
+        "orbit": False,
     }
     after = {
         "title": "New title",
@@ -517,6 +518,7 @@ def test_every_task_field_has_an_exact_diff_and_card_fallback() -> None:
         "snoozedUntil": "2026-08-10T10:00:00-07:00",
         "permanentSnoozeUntil": "10:00",
         "dependencies": ["task-b"],
+        "orbit": True,
     }
     value = {
         "schemaVersion": 1,

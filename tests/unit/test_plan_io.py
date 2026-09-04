@@ -32,6 +32,20 @@ def test_example_is_valid_and_preserves_explicit_nulls() -> None:
     assert len(plan.operations) == 4
 
 
+def test_expected_account_is_closed_and_strict(example_plan_dict: dict) -> None:
+    example_plan_dict["expectedAccount"] = {
+        "userId": "123456",
+        "email": "pilot@example.com",
+    }
+    plan = parse_plan_bytes(encode(example_plan_dict))
+    assert plan.expectedAccount is not None
+    assert plan.expectedAccount.userId == "123456"
+
+    example_plan_dict["expectedAccount"]["token"] = "never allowed"
+    with pytest.raises(PlanSyntaxError, match="Extra inputs are not permitted"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
 def test_unsupported_schema_version_has_an_upgrade_error(example_plan_dict: dict) -> None:
     example_plan_dict["schemaVersion"] = 2
     with pytest.raises(

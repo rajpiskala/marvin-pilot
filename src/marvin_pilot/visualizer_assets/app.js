@@ -682,6 +682,17 @@ function renderOperationDetails(operation) {
     identity.append(document.createTextNode(" · Depends on operations: "));
     identity.append(document.createTextNode(operation.depends_on_operations.join(", ")));
   }
+  if (operation.sibling_order) {
+    identity.append(document.createElement("br"));
+    identity.append(node("strong", "", "Relative order: "));
+    if (operation.sibling_order.beforeId) {
+      identity.append(document.createTextNode(`Immediately before ${operation.sibling_order.beforeId}`));
+    } else if (operation.sibling_order.afterId) {
+      identity.append(document.createTextNode(`Immediately after ${operation.sibling_order.afterId}`));
+    } else {
+      identity.append(document.createTextNode(operation.sibling_order.position));
+    }
+  }
   body.append(identity);
 
   const locations = node("dl", "location-details");

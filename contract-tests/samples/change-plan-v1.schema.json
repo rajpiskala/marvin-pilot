@@ -483,6 +483,18 @@
           "default": null,
           "title": "Note"
         },
+        "orbit": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Orbit"
+        },
         "parent": {
           "anyOf": [
             {
@@ -795,6 +807,7 @@
           "enum": [
             "task",
             "project",
+            "category",
             "recurringTask"
           ],
           "title": "Type",
@@ -807,6 +820,26 @@
         "title"
       ],
       "title": "ExistingItemTarget",
+      "type": "object"
+    },
+    "ExpectedAccount": {
+      "additionalProperties": false,
+      "description": "Stable account identity that every live command must verify first.",
+      "properties": {
+        "email": {
+          "title": "Email",
+          "type": "string"
+        },
+        "userId": {
+          "title": "Userid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "userId",
+        "email"
+      ],
+      "title": "ExpectedAccount",
       "type": "object"
     },
     "HierarchyPathNode": {
@@ -1002,6 +1035,7 @@
           "enum": [
             "task",
             "project",
+            "category",
             "recurringTask"
           ],
           "title": "Type",
@@ -1511,6 +1545,54 @@
       "title": "ReviewDisplay",
       "type": "object"
     },
+    "SiblingOrder": {
+      "additionalProperties": false,
+      "description": "Relative list placement resolved to a native rank during live preflight.",
+      "properties": {
+        "afterId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Afterid"
+        },
+        "beforeId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Beforeid"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "enum": [
+                "first",
+                "last"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        }
+      },
+      "title": "SiblingOrder",
+      "type": "object"
+    },
     "SubtaskFields": {
       "additionalProperties": false,
       "description": "Ordered, reviewable subset of one Marvin embedded subtask.",
@@ -1780,6 +1862,18 @@
           ],
           "default": null,
           "title": "Note"
+        },
+        "orbit": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Orbit"
         },
         "parent": {
           "anyOf": [
@@ -2066,6 +2160,17 @@
           "title": "Reason",
           "type": "string"
         },
+        "siblingOrder": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SiblingOrder"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "target": {
           "$ref": "#/$defs/ExistingItemTarget"
         }
@@ -2139,6 +2244,17 @@
     "createdAt": {
       "title": "Createdat",
       "type": "string"
+    },
+    "expectedAccount": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExpectedAccount"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "operations": {
       "items": {

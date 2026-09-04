@@ -64,9 +64,12 @@ def unattended_plan_blockers(plan: ChangePlanV1) -> tuple[str, ...]:
                 f"[{operation.operationId}] targets a recurring-task series; series changes "
                 "require interactive review"
             )
-        if isinstance(operation, TrashOperation) and operation.target.type == "project":
+        if isinstance(operation, TrashOperation) and operation.target.type in {
+            "project",
+            "category",
+        }:
             blockers.append(
-                f"[{operation.operationId}] trashes a project; project deletion requires "
+                f"[{operation.operationId}] trashes a container; container deletion requires "
                 "interactive review"
             )
     return tuple(blockers)

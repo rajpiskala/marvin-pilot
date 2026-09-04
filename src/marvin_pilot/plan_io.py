@@ -96,6 +96,7 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
     first_target_operations: dict[str, Operation] = {}
     current_target_titles: dict[str, str] = {}
     prior_operation_ids: set[str] = set()
+    prior_container_mutations: dict[str, set[str]] = {}
     prior_creates: dict[str, CreateOperation] = {}
     all_creates = {
         operation.target.id: operation
@@ -348,7 +349,7 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                     f"update operation {operation.operationId!r} must use identical before/after "
                     f"field sets ({'; '.join(detail)})"
                 )
-            if not before_keys:
+            if not before_keys and operation.siblingOrder is None:
                 raise PlanSemanticError(
                     f"update operation {operation.operationId!r} must change at least one field"
                 )
@@ -363,9 +364,14 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
             after = operation.after.model_dump(exclude_unset=True, mode="json")
             semantic_before = compile_fields_for_target(operation.target.type, before)
             semantic_after = compile_fields_for_target(operation.target.type, after)
-            if semantic_before == semantic_after:
+            if semantic_before == semantic_after and operation.siblingOrder is None:
                 raise PlanSemanticError(
                     f"update operation {operation.operationId!r} does not change any values"
+                )
+            if operation.siblingOrder is not None and ({"dayRank", "masterRank"} & after_keys):
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} cannot combine siblingOrder with raw "
+                    "dayRank/masterRank fields"
                 )
 
         if (
@@ -509,14 +515,37 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                     + ", ".join(unsupported)
                 )
 
+        if operation.target.type == "category" and isinstance(
+            operation, (UpdateOperation, CreateOperation)
+        ):
+            fields = (
+                operation.after.model_fields_set
+                if isinstance(operation, CreateOperation)
+                else operation.after.model_fields_set | operation.before.model_fields_set
+            )
+            unsupported = sorted(fields - {"title", "parent"})
+            if unsupported:
+                raise PlanSemanticError(
+                    f"operation {operation.operationId!r} uses unsupported category field(s): "
+                    + ", ".join(unsupported)
+                )
+
         field_sets = []
-        if isinstance(operation, UpdateOperation):
-            field_sets.extend((operation.before, operation.after))
-        elif isinstance(operation, CreateOperation):
+        if isinstance(operation, (UpdateOperation, CreateOperation)):
             field_sets.append(operation.after)
         for fields in field_sets:
             dumped = fields.model_dump(exclude_unset=True, mode="json")
             parent = dumped.get("parent")
+            if parent is not None:
+                prior_parent_mutation = prior_target_operations.get(parent["id"])
+                if (
+                    prior_parent_mutation is not None
+                    and prior_parent_mutation.operationId not in operation.dependsOnOperations
+                ):
+                    raise PlanSemanticError(
+                        f"operation {operation.operationId!r} references parent changed by "
+                        f"{prior_parent_mutation.operationId!r}; add it to dependsOnOperations"
+                    )
             if parent is None or parent["id"] not in all_creates:
                 continue
             if parent["id"] not in prior_creates:
@@ -525,7 +554,7 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                     "the plan; create parents before their children"
                 )
             parent_create = prior_creates[parent["id"]]
-            if parent_create.target.type != "project":
+            if parent_create.target.type not in {"project", "category"}:
                 raise PlanSemanticError(
                     f"operation {operation.operationId!r} uses newly created non-project "
                     f"{parent['id']!r} as its parent"
@@ -543,6 +572,14 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                     f"complete operation {operation.operationId!r} completedAt is later than "
                     "the plan's createdAt"
                 )
+            if operation.target.type == "project":
+                required = prior_container_mutations.get(operation.target.id, set())
+                missing = sorted(required - set(operation.dependsOnOperations))
+                if missing:
+                    raise PlanSemanticError(
+                        f"project completion {operation.operationId!r} must depend on earlier "
+                        "child membership changes: " + ", ".join(missing)
+                    )
 
         if isinstance(operation, UpdateOperation) and "title" in operation.after.model_fields_set:
             assert operation.after.title is not None
@@ -553,6 +590,23 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
         prior_operation_ids.add(operation.operationId)
         if isinstance(operation, CreateOperation):
             prior_creates[operation.target.id] = operation
+        if isinstance(operation, (UpdateOperation, CreateOperation)):
+            related_parents: set[str] = set()
+            if isinstance(operation, UpdateOperation):
+                before_parent = (
+                    operation.before.parent
+                    if "parent" in operation.before.model_fields_set
+                    else None
+                )
+                if before_parent is not None:
+                    related_parents.add(before_parent.id)
+            after_parent = (
+                operation.after.parent if "parent" in operation.after.model_fields_set else None
+            )
+            if after_parent is not None:
+                related_parents.add(after_parent.id)
+            for parent_id in related_parents:
+                prior_container_mutations.setdefault(parent_id, set()).add(operation.operationId)
 
 
 def load_plan(path: Path) -> tuple[ChangePlanV1, bytes]:

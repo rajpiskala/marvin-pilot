@@ -175,6 +175,7 @@ FIELD_SPECS: dict[str, FieldSpec] = {
     "dependencies": FieldSpec(
         "dependencies", "dependsOn", _dependencies_to_marvin, _dependencies_live
     ),
+    "orbit": FieldSpec("orbit", "orbit"),
 }
 
 

@@ -348,6 +348,24 @@ class MarvinClient:
             raise RemoteError("Amazing Marvin returned malformed label metadata")
         return value
 
+    def get_children(self, parent_id: str) -> list[dict[str, Any]]:
+        """Fetch direct open children of one category/project."""
+
+        response = self._request("GET", "children", params={"parentId": parent_id})
+        value = self._json_value(response, required_object=False)
+        if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+            raise RemoteError("Amazing Marvin returned malformed child metadata")
+        return value
+
+    def get_today_items(self, day: str) -> list[dict[str, Any]]:
+        """Fetch Marvin's authoritative Today selection, including rollover rules."""
+
+        response = self._request("GET", "todayItems", params={"date": day})
+        value = self._json_value(response, required_object=False)
+        if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+            raise RemoteError("Amazing Marvin returned malformed Today items")
+        return value
+
     def update_doc(self, item_id: str, setters: list[dict[str, Any]]) -> Any:
         """Update multiple fields on exactly one document."""
 
