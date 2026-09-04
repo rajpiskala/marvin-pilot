@@ -4,20 +4,19 @@
 
 Marvin Pilot is a local approval CLI for [Amazing Marvin](https://amazingmarvin.com/) that lets an AI reorganize your tasks and projects **without giving it your full-access API token**.
 
-The AI reads your workload through the limited-access [Amazing Marvin MCP](https://github.com/bgheneti/Amazing-Marvin-MCP) and writes a strict JSON change plan. You can review and run the mutation yourself, or explicitly enable account-pinned unattended apply for small plans.
+The AI can read current work through the limited-access [Amazing Marvin MCP](https://github.com/bgheneti/Amazing-Marvin-MCP), ask Pilot for verified live Today context, or analyze a local Marvin backup. It may write a full strict plan or a compact intent draft that Pilot expands into the locked review artifact. You can review and run the mutation yourself, or explicitly enable account-pinned unattended apply for small plans.
 
 ```text
-Amazing Marvin MCP       AI                    Authorization             Marvin Pilot
-  limited token   ->   plan.json   ->  human review or bounded policy  ->  apply
-                                                                          |
-                                                                          +-> receipt
-                                                                          +-> revert
+MCP / Pilot context       AI                 Marvin Pilot                  Marvin
+ read-only discovery  -> draft/plan -> prepare + validate + review -> apply
+                                              |                         |
+                                              +-> exact plan            +-> receipt -> revert
 ```
 
 Marvin Pilot validates the plan against live state, enforces configured limits, applies operations one at a time, verifies the result, and writes an integrity-checked receipt that can be fully or selectively reverted. Normal apply asks for confirmation; bounded unattended apply uses a policy that a human enabled in advance.
 
 > [!WARNING]
-> **Marvin Pilot is pre-alpha.** The task lifecycle and a 200-operation scale run were verified on 2026-08-08, project CRUD plus historical completion on 2026-08-11, ordered subtask CRUD/consolidation/revert on 2026-08-14, and recurrence-series plus explicit-occurrence CRUD/revert on 2026-08-15, against a dedicated development account. The client has not yet seen enough real-world account shapes and upstream conditions for production use. Back up Marvin and evaluate it with non-critical data first.
+> **Marvin Pilot is alpha software.** Task, project, category, subtask, recurrence, historical-completion, dependency-chain, and receipt-backed recovery paths have automated coverage and extensive development-account use. The client still cannot preserve every coupled Marvin feature. Back up Marvin and evaluate it with non-critical data first.
 
 ## Why Marvin Pilot?
 
@@ -179,11 +178,31 @@ Ask your AI:
 
 `plans/` is ignored by this repository because plans can contain private task data.
 
+For new plans, include `expectedAccount: {"userId":"…","email":"…"}` from a verified context
+or `doctor` result. Live validation checks the account before reading target documents, and apply
+checks it again immediately before any write. Bounded unattended apply requires this binding.
+
+For small or repetitive changes, the AI can author a compact closed-schema draft and let Pilot
+fill titles, before-state, concurrency locks, create UUIDs, and hierarchy metadata:
+
+```console
+marvin-pilot context search "Project title" --backup MarvinBackup.json.lzma
+marvin-pilot prepare draft.json --backup MarvinBackup.json.lzma --output plan.json
+# Add --live to overlay current target documents on the backup before compiling.
+```
+
+`prepare` never chooses desired titles, dates, parents, actions, or completion times. Existing
+targets can be exact IDs or a title that uniquely matches after conservative Unicode/emoji
+normalization in the backup. Ambiguous matches stop and list IDs. To refresh only generated locks
+and paths in an already reviewed plan, use `prepare PLAN --live --rebase-live -o NEW-PLAN`; semantic
+drift stops the rebase and requires review.
+
 Validate and inspect the plan:
 
 ```console
 marvin-pilot validate plans/first-plan.json
 marvin-pilot describe plans/first-plan.json
+marvin-pilot describe plans/first-plan.json --format markdown --output plans/first-plan.md
 marvin-pilot visualize plans/first-plan.json
 ```
 
@@ -198,6 +217,9 @@ non-blocking hint warning in one run, and returns nonzero when any error is pres
 a mutation endpoint. Use `--json` for stable diagnostics containing the plan index, operation ID,
 target ID, check name, expected value, and live value. Progress remains on stderr, leaving stdout
 machine-readable.
+The summary reports unique documents/metadata collections checked and elapsed time. Within a plan,
+and across projected phases in a plan set, reads are cached by stable ID; apply still performs an
+uncached concurrency recheck immediately before each write.
 
 For a large plan, narrow only the advisory live scan:
 
@@ -281,7 +303,7 @@ update, or task Trash. For example, creating one project and four plain tasks ha
 one task with four subtasks also has impact 5. This prevents a one-operation task from concealing a
 very large checklist mutation. The command cannot raise the configured maximum.
 
-Project Trash and every recurring-series create, update, or Trash remain interactive-only because
+Project/category Trash and every recurring-series create, update, or Trash remain interactive-only because
 one container or template operation can have a much larger apparent or future effect. Operations
 on an explicitly identified generated recurrence occurrence are ordinary task operations and can
 qualify. Revert always remains interactive.
@@ -325,6 +347,20 @@ marvin-pilot revert path/to/applied-receipt.json \
   --only operation-two
 ```
 
+Before reusing old artifacts, inspect their receipt-backed local state:
+
+```console
+marvin-pilot history status plans/ --recursive
+marvin-pilot history status cleanup.plan-set.json --json
+marvin-pilot history audit path/to/applied-receipt.json --live
+```
+
+Status distinguishes never applied, applied, partial/ambiguous, fully reverted, selectively
+reverted, and changed artifacts without calling Marvin. `history audit --live` then compares each
+verified receipt post-state with current full documents, separating a still-matching result from a
+later edit, missing document, or unexpectedly present deleted target. It notes that Marvin UI
+caches can lag behind the document API.
+
 For large reorganizations, prefer reviewed batches over one enormous plan.
 
 ## Historical project context from a backup
@@ -357,32 +393,63 @@ so a later plan builder can establish exact live locks. Trash subtrees are omitt
 > snapshot, not current authority; `validate --live`/`apply` must still fetch each selected target
 > and reject stale titles, parents, completion timestamps, or `updatedAt` values before writing.
 
-This deliberately avoids a persistent cache and invalidation service. For a fresh historical audit,
-provide a fresh backup; Pilot parses it directly and leaves no expanded copy behind.
+Backup reads use a private content-addressed cache of parsed documents. The key is the SHA-256 of
+the backup bytes, so a changed backup cannot reuse stale data; Pilot never stores the source path.
+Only five entries are retained by least-recent use. Inspect or clear it with:
 
-Pilot also deliberately does not reconstruct Marvin's Today view from a backup. Today includes
-client-side rollover and section behavior that a snapshot cannot reproduce faithfully. Use the
-limited-access Amazing Marvin MCP for current Today/inbox discovery, backup context for complete
-historical project analysis, and `validate --live` to check the resulting exact proposal against
-current write-side state. This keeps one small interface instead of adding a stale persistent cache,
-a raw document browser, and an automatic plan-rewriting command.
+```console
+marvin-pilot context backup-info MarvinBackup.json.lzma
+marvin-pilot context cache-clear
+```
+
+The cache removes repeated decompression/parsing, not freshness checks. Supply a new backup when
+you need newer state. Search and bounded extraction avoid emitting an entire private account:
+
+```console
+marvin-pilot context search "Project Atlas" --backup MarvinBackup.json.lzma
+marvin-pilot context project "Project Atlas" --backup MarvinBackup.json.lzma --summary
+marvin-pilot context project PROJECT_ID --backup MarvinBackup.json.lzma --max-depth 2 --state open
+marvin-pilot context project PROJECT_ID --backup MarvinBackup.json.lzma --state completed --since 2026-06-01
+```
+
+Amazing Marvin's `/categories` endpoint returns category documents, not the complete project tree.
+Pilot builds the full category/project hierarchy from one backup instead of probing projects one at
+a time. `context project` includes open and completed descendants, which supports historical
+reclustering of hundreds of completed tasks.
+
+A backup cannot reproduce Marvin's Today view: Today also includes rollover and strategy/automatic
+scheduling. Use the authoritative read-only endpoint instead:
+
+```console
+marvin-pilot context today --live --date 2026-09-04 --timezone America/Los_Angeles
+```
+
+That response includes exact IDs, full-document `updatedAt`, ancestor paths, recurrence template
+identity, and a conservative reason (`scheduled-date`, `rollover`, or
+`strategy-or-auto-schedule`). `context scheduled-day DATE --backup …` is intentionally narrower:
+it returns documents whose stored day equals DATE and explicitly does not claim to be Today.
 
 ## Core commands
 
 | Command                               | What it does                               |
 | ------------------------------------- | ------------------------------------------ |
 | `marvin-pilot doctor`                 | Show account, HTTP, and full-token health  |
-| `marvin-pilot context project …`      | Extract full project history from a backup |
+| `marvin-pilot context project …`      | Extract bounded project history from backup |
+| `marvin-pilot context search …`       | Resolve normalized candidates and exact IDs |
+| `marvin-pilot context today --live`   | Get authoritative Today context and ancestry |
+| `marvin-pilot prepare INPUT …`        | Compile intent or safely rebase plan metadata |
 | `marvin-pilot validate PLAN`          | Strictly validate a plan offline           |
 | `marvin-pilot validate PLAN --live`   | Collect read-only live diagnostics         |
-| `marvin-pilot describe PLAN`          | Print a human-readable description         |
+| `marvin-pilot describe PLAN`          | Describe as text, Markdown, or JSON         |
 | `marvin-pilot visualize PLAN`         | Open the local visual diff and history     |
 | `marvin-pilot apply PLAN`             | Preflight, confirm, apply, verify, receipt |
 | `marvin-pilot revert RECEIPT`         | Revert an applied receipt                  |
 | `marvin-pilot history list`           | List audit receipts                        |
+| `marvin-pilot history status SOURCE`  | Report local apply/revert status            |
+| `marvin-pilot history audit R --live` | Compare a receipt with current documents    |
 | `marvin-pilot history show latest`    | Inspect the newest receipt                 |
 | `marvin-pilot history verify RECEIPT` | Verify receipt integrity                   |
-| `marvin-pilot schema --output FILE`   | Export the plan schema                     |
+| `marvin-pilot schema --output FILE`   | Export plan/draft/plan-set JSON Schema      |
 | `marvin-pilot example --output FILE`  | Generate an example plan                   |
 | `marvin-pilot help plan-format`       | Explain the v1 plan format                 |
 
@@ -486,23 +553,36 @@ retained tabs.
 
 ## Plans and recovery
 
-Plans are versioned, closed-schema JSON documents containing stable `operationId` values and typed `create`, `update`, `complete`, or `trash` operations. Targets can be tasks, projects, entire recurring-task series, or explicitly identified generated occurrences. A recurrence series cannot itself be completed; complete one generated occurrence or Trash the series instead.
+Plans are versioned, closed-schema JSON documents containing stable `operationId` values and typed `create`, `update`, `complete`, or `trash` operations. Targets can be tasks, projects, categories, entire recurring-task series, or explicitly identified generated occurrences. A category or recurrence series cannot itself be completed; complete a project or one generated occurrence instead.
 
 Generate the authoritative schema and example directly from the installed CLI:
 
 ```console
 marvin-pilot schema --output change-plan.schema.json
+marvin-pilot schema --kind draft --output change-draft.schema.json
+marvin-pilot schema --kind plan-set --output plan-set.schema.json
 marvin-pilot example --output plan.json
 marvin-pilot help plan-format
 ```
 
-V1 supports common task and project fields including titles, parents/categories, dates and scheduling, labels, estimates, notes, ranks, sections, priorities, backburner state, review dates, and snooze values. Tasks additionally support star priority, `masterRank`, dependencies, and ordered embedded `subtasks`. JSON `null` clears a supported value.
+V1 supports common task and project fields including titles, parents/categories, dates and scheduling, labels, estimates, notes, ranks, sections, priorities, backburner state, review dates, and snooze values. Tasks additionally support star priority, `masterRank`, dependencies, ordered embedded `subtasks`, and the Orbit toggle. JSON `null` clears a supported value. Category edits intentionally support only title and parent.
 
 Existing targets use exact IDs plus required title safety hints. Target, recurrence-series, and
 `sourceTask` titles remain hard live preconditions. Optional `parent.title` and label titles are
 review hints: stale values produce prominent warnings containing the exact live replacement but do
 not block an otherwise identity- and concurrency-safe plan. Pilot never applies fuzzy emoji or
-whitespace normalization.
+whitespace normalization during live identity checks. Backup candidate search may normalize Unicode,
+leading emoji/decorations, case, and whitespace only to list candidates; ambiguity never selects an ID.
+
+An update can express stable relative ordering with `siblingOrder: {"beforeId":"…"}`,
+`{"afterId":"…"}`, or `{"position":"first|last"}`. Live preflight verifies that the anchor is a
+compatible sibling on the task's final scheduled day or under its final parent, then writes Marvin's
+native rank. Revert restores the original rank. Raw rank edits and `siblingOrder` cannot be mixed.
+
+Reminder records are separate coupled server state. Pilot does not currently mutate or promise to
+preserve them, so live preflight blocks affected documents with an explicit instruction to remove
+and recreate the reminder in Marvin or make that change by hand. Calendar synchronization,
+active time tracking, reward side effects, and pinned-task copying remain similar hard blockers.
 
 One plan may intentionally apply several operations to the same existing target—for example
 rename, move, then complete—when every later step directly lists the immediately preceding same-target
@@ -519,6 +599,13 @@ Each subtask has a stable `id`, exact `title`, and `done` state; array order bec
 
 Project creates write native `Categories` documents with `type: "project"`; updates can rename, move, or edit allowlisted fields; completion records an explicit historical RFC 3339 timestamp; and Trash uses the same receipt-backed deletion as tasks. Planned project ancestry is checked before writes, including parents created earlier in the same plan and cycle prevention.
 
+Category creates use the same database with `type: "category"`. Categories can be created,
+renamed, moved, reordered, and deleted, but not completed. Before deleting any project or category,
+live preflight calls Marvin's direct-children endpoint and refuses while a child remains. Child
+moves/deletions earlier in the same dependency chain are projected, so a plan can explicitly empty
+then delete a container. Container Trash remains blocked from unattended apply regardless of the
+nominal one-operation impact.
+
 Task completion backdates both Marvin's `doneAt` value and the completion field-update timestamps
 that Marvin uses to place the item in completion-day views. Project completion similarly backdates
 `doneDate` and its completion field-update timestamps. `updatedAt` still records the actual apply
@@ -526,6 +613,31 @@ time, preserving an honest concurrency lock. This prevents an item marked done f
 from appearing under **Completed Today** merely because the plan was applied today.
 
 Completed tasks remain ordinary task documents addressable by exact ID. Pilot can rename or reparent them without reopening them, but the plan must include the verified `display.existingCompletedAt` timestamp so the historical state is visible during review. This supports backup-assisted historical reorganization while retaining a fresh live-state and concurrency check before every write.
+
+### Dependency-ordered plan sets
+
+For a cleanup that must remain in several reviewable files, a `planSetVersion: 1` manifest lists
+safe relative child paths and optional `dependsOn` phase paths. Every child has the same exact
+`expectedAccount`, and operation IDs are unique across the set. The usual `validate`, `describe`,
+`visualize`, `apply`, `history status`, and `revert` commands accept the manifest directly.
+
+```json
+{
+  "planSetVersion": 1,
+  "planSetId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "summary": "Create the structure, then reorganize it.",
+  "expectedAccount": {"userId": "123456", "email": "account@example.com"},
+  "plans": [
+    {"path": "01-structure.json"},
+    {"path": "02-reorganize.json", "dependsOn": ["01-structure.json"]}
+  ]
+}
+```
+
+Live validation projects successful earlier phases over a shared read cache, apply asks once and
+runs phases forward, and revert uses the recorded child receipts in reverse dependency order.
+Plan-set parent receipts are integrity checked and link every child receipt. `revert --only` can
+select operation IDs across phases.
 
 ### Recurring tasks
 
@@ -560,7 +672,7 @@ Marvin's native Trash is client-side: the app saves a copy in browser-local stor
 
 Pilot recovery is receipt-backed rather than Marvin-native. `marvin-pilot revert RECEIPT.json` recreates the same ID from the stored document after removing stale CouchDB `_rev`/`_deleted` fields. Reverting a Pilot `create` likewise deletes the created document instead of leaving a hidden live record. Neither deletion appears in Marvin's native Trash UI.
 
-Unattended mode never trashes a project. A project Trash receipt contains the project document
+Unattended mode never trashes a project or category. A container Trash receipt contains that document
 itself, not an independently enumerated snapshot of every descendant, so this container-level
 operation continues to require interactive review even when the configured unattended limit would
 otherwise permit one operation.
