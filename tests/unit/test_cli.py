@@ -99,6 +99,64 @@ class ReadOnlyCliMarvinClient:
         self.closed = True
 
 
+class MultiCliMarvinClient:
+    api_base_host = "https://marvin.test"
+
+    def __init__(self, documents: dict[str, dict]) -> None:
+        self.documents = copy.deepcopy(documents)
+        self.revision = 1
+        self.closed = False
+
+    def check_connection(self) -> ConnectionCheck:
+        return ConnectionCheck(
+            account_email="pilot@example.com",
+            account_user_id="123456",
+            method="GET",
+            request_url="https://marvin.test/api/me",
+            status_code=200,
+            reason_phrase="OK",
+        )
+
+    def get_doc(self, item_id: str):
+        document = self.documents.get(item_id)
+        return copy.deepcopy(document) if document is not None else None
+
+    def get_labels(self):
+        return []
+
+    def get_children(self, parent_id: str):
+        return [
+            copy.deepcopy(document)
+            for document in self.documents.values()
+            if document.get("parentId") == parent_id
+        ]
+
+    def update_doc(self, item_id: str, setters: list[dict]):
+        document = self.documents[item_id]
+        for setter in setters:
+            key = setter["key"]
+            if key.startswith("fieldUpdates."):
+                document.setdefault("fieldUpdates", {})[key.split(".", 1)[1]] = setter["val"]
+            else:
+                document[key] = setter["val"]
+        self.revision += 1
+        document["_rev"] = f"{self.revision}-updated"
+        return copy.deepcopy(document)
+
+    def create_doc(self, document: dict):
+        created = copy.deepcopy(document)
+        created["_rev"] = "1-created"
+        self.documents[created["_id"]] = created
+        return copy.deepcopy(created)
+
+    def delete_doc(self, item_id: str):
+        self.documents.pop(item_id)
+        return {"ok": True}
+
+    def close(self) -> None:
+        self.closed = True
+
+
 @pytest.fixture
 def isolated_app_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     config_path = tmp_path / "roaming" / "marvin-pilot" / "config.toml"
@@ -291,6 +349,102 @@ def test_describe_is_offline_and_readable(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert 'UPDATE "Wash the dishes"' in result.stdout
     assert "Totals: 1 create, 2 updates, 1 trash" in result.stdout
+
+
+def test_describe_supports_markdown_json_and_create_only_output(tmp_path: Path) -> None:
+    path = tmp_path / "plan.json"
+    write_plan(path)
+    markdown_path = tmp_path / "plan.md"
+    markdown = runner.invoke(
+        app,
+        ["describe", str(path), "--format", "markdown", "--output", str(markdown_path)],
+    )
+    json_result = runner.invoke(app, ["describe", str(path), "--format", "json"])
+
+    assert markdown.exit_code == 0
+    assert markdown_path.read_text(encoding="utf-8").startswith(
+        "# Refocus today on math and make the dinner task concrete."
+    )
+    payload = json.loads(json_result.stdout)
+    assert payload["kind"] == "plan"
+    assert payload["operations"][0]["operationId"] == "reschedule-wash-dishes"
+    refused = runner.invoke(
+        app,
+        ["describe", str(path), "--format", "markdown", "--output", str(markdown_path)],
+    )
+    assert refused.exit_code == 2
+    assert "refusing to overwrite" in refused.stderr
+
+
+def test_plan_set_applies_reports_status_and_reverts_in_reverse_order(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    account = {"userId": "123456", "email": "pilot@example.com"}
+    for index, task_id in enumerate(("task-one", "task-two"), start=1):
+        write_plan(
+            isolated_app_dirs / f"phase-{index}.json",
+            {
+                "schemaVersion": 1,
+                "planId": (
+                    f"{index}{index}{index}{index}{index}{index}{index}{index}"
+                    "-1111-4111-8111-111111111111"
+                ),
+                "createdAt": "2026-09-04T12:00:00-07:00",
+                "summary": f"Rename phase {index}.",
+                "expectedAccount": account,
+                "operations": [
+                    {
+                        "operationId": f"rename-{task_id}",
+                        "action": "update",
+                        "target": {"type": "task", "id": task_id, "title": f"Old {index}"},
+                        "before": {"title": f"Old {index}"},
+                        "after": {"title": f"New {index}"},
+                        "reason": "Exercise dependency-ordered plan-set execution.",
+                    }
+                ],
+            },
+        )
+    manifest = isolated_app_dirs / "cleanup.plan-set.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "planSetVersion": 1,
+                "planSetId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "summary": "Apply two phases together.",
+                "expectedAccount": account,
+                "plans": [
+                    {"path": "phase-1.json"},
+                    {"path": "phase-2.json", "dependsOn": ["phase-1.json"]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = MultiCliMarvinClient(
+        {
+            "task-one": {"_id": "task-one", "_rev": "1-a", "db": "Tasks", "title": "Old 1"},
+            "task-two": {"_id": "task-two", "_rev": "1-b", "db": "Tasks", "title": "Old 2"},
+        }
+    )
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    monkeypatch.setattr(cli_module, "confirm_apply", lambda _count: True)
+    monkeypatch.setattr(cli_module, "confirm_revert", lambda _count: True)
+
+    applied = runner.invoke(app, ["apply", str(manifest)])
+    applied_titles = [client.documents[item]["title"] for item in ("task-one", "task-two")]
+    status = runner.invoke(app, ["history", "status", str(manifest), "--json"])
+    reverted = runner.invoke(app, ["revert", str(manifest)])
+    reverted_status = runner.invoke(app, ["history", "status", str(manifest), "--json"])
+
+    assert applied.exit_code == 0, applied.output
+    assert applied_titles == ["New 1", "New 2"]
+    assert [client.documents[item]["title"] for item in ("task-one", "task-two")] == [
+        "Old 1",
+        "Old 2",
+    ]
+    assert json.loads(status.stdout)["results"][0]["status"] == "applied"
+    assert reverted.exit_code == 0, reverted.output
+    assert json.loads(reverted_status.stdout)["results"][0]["status"] == "reverted"
 
 
 def test_visualize_preloads_without_credentials_and_opens_browser(
@@ -1208,7 +1362,7 @@ def test_apply_unattended_blocks_project_trash_before_credentials(
     )
     result = runner.invoke(app, ["apply", str(path), "--unattended"])
     assert result.exit_code == 3
-    assert "trashes a project" in result.stderr
+    assert "trashes a container" in result.stderr
     assert "interactive review" in result.stderr
 
 
@@ -1244,17 +1398,19 @@ def test_apply_unattended_accepts_piped_plan_without_terminal_or_prompt(
         lambda: pytest.fail("unattended mode must not require a terminal"),
     )
 
+    plan = one_operation_plan()
+    plan["expectedAccount"] = {"userId": "123456", "email": "pilot@example.com"}
     result = runner.invoke(
         app,
         ["apply", "-", "--unattended"],
-        input=json.dumps(one_operation_plan()),
+        input=json.dumps(plan),
     )
 
     assert result.exit_code == 0
     assert "UNATTENDED APPLY AUTHORIZED" in result.stdout
     assert "impact 1/1" in result.stdout
     assert "Receipt:" in result.stdout
-    assert client.connection_checks == 1
+    assert client.connection_checks == 3
     assert client.document["day"] == "2026-08-09"
     assert client.mutations == 1
 
@@ -1263,7 +1419,9 @@ def test_apply_unattended_rejects_account_mismatch_before_plan_reads(
     isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = isolated_app_dirs / "plan.json"
-    write_plan(path, one_operation_plan())
+    plan = one_operation_plan()
+    plan["expectedAccount"] = {"userId": "999999", "email": "other@example.com"}
+    write_plan(path, plan)
     cli_module.save_config(
         config_module.AppConfig(
             unattended_enabled=True,
@@ -1288,6 +1446,7 @@ def test_apply_unattended_counts_deleted_task_subtasks_in_impact(
         "planId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         "createdAt": "2026-09-04T12:00:00-07:00",
         "summary": "Exercise unattended checklist impact.",
+        "expectedAccount": {"userId": "123456", "email": "pilot@example.com"},
         "operations": [
             {
                 "operationId": "trash-task",

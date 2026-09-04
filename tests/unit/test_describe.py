@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
-from marvin_pilot.describe import render_plan_description
+from marvin_pilot.describe import (
+    plan_description_payload,
+    render_plan_description,
+    render_plan_markdown,
+)
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.plan_io import parse_plan_bytes
 from marvin_pilot.preflight import preflight_plan
@@ -121,3 +125,20 @@ def test_live_description_surfaces_preflight_and_compiler_managed_fields() -> No
     assert "Live preflight: PASSED for 1 operation(s)" in rendered
     assert "Strict concurrency recheck: on" in rendered
     assert "Compiler-managed [reschedule-wash-dishes]: firstScheduled=2026-08-09" in rendered
+
+
+def test_markdown_and_json_descriptions_preserve_reviewed_structure() -> None:
+    value = json.loads(json.dumps(EXAMPLE_PLAN))
+    value["expectedAccount"] = {"userId": "123456", "email": "pilot@example.com"}
+    value["operations"][0]["siblingOrder"] = {"beforeId": "task-anchor"}
+    plan = parse_plan_bytes(json.dumps(value).encode())
+
+    markdown = render_plan_markdown(plan)
+    payload = plan_description_payload(plan)
+
+    assert markdown.startswith("# Refocus today on math and make the dinner task concrete.")
+    assert "Expected account: pilot@example.com (`123456`)" in markdown
+    assert 'Relative order: `{"beforeId": "task-anchor"}`' in markdown
+    assert payload["expectedAccount"]["userId"] == "123456"
+    assert payload["operations"][0]["siblingOrder"] == {"beforeId": "task-anchor"}
+    assert payload["counts"] == {"create": 1, "update": 2, "trash": 1}

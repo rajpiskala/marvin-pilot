@@ -44,6 +44,7 @@ FIELD_LABELS = {
     "snoozedUntil": "snoozed until",
     "permanentSnoozeUntil": "permanent snooze until",
     "dependencies": "dependencies",
+    "orbit": "Orbit",
 }
 
 
@@ -90,8 +91,15 @@ def render_plan_description(plan: ChangePlanV1) -> str:
         f"Plan: {plan.summary}",
         f"Plan ID: {plan.planId}",
         f"Digest: {plan_digest(plan)}",
-        "",
     ]
+    if plan.expectedAccount is not None:
+        lines.append(
+            f"Expected account: {plan.expectedAccount.email} "
+            f"(user ID {plan.expectedAccount.userId})"
+        )
+    else:
+        lines.append("Expected account: not pinned")
+    lines.append("")
     counts: Counter[str] = Counter()
 
     for index, operation in enumerate(plan.operations, start=1):
@@ -121,6 +129,14 @@ def render_plan_description(plan: ChangePlanV1) -> str:
                     f"{format_plan_value(field, new_value)}"
                 )
             lines.extend(_accepted_source_loss_lines(after))
+            if operation.siblingOrder is not None:
+                order = operation.siblingOrder
+                if order.beforeId is not None:
+                    lines.append(f"   order: immediately before [{order.beforeId}]")
+                elif order.afterId is not None:
+                    lines.append(f"   order: immediately after [{order.afterId}]")
+                else:
+                    lines.append(f"   order: {order.position}")
         elif isinstance(operation, CreateOperation):
             after = operation.after.model_dump(exclude_unset=True, mode="json")
             for field, new_value in after.items():
@@ -146,6 +162,119 @@ def render_plan_description(plan: ChangePlanV1) -> str:
     return "\n".join(lines) + "\n"
 
 
+def plan_description_payload(plan: ChangePlanV1) -> dict[str, Any]:
+    """Return a stable, machine-readable description without live data."""
+
+    counts = Counter(operation.action for operation in plan.operations)
+    operations: list[dict[str, Any]] = []
+    for index, operation in enumerate(plan.operations, start=1):
+        value: dict[str, Any] = {
+            "index": index,
+            "operationId": operation.operationId,
+            "action": operation.action,
+            "target": operation.target.model_dump(mode="json", exclude_none=True),
+            "reason": operation.reason,
+            "dependsOnOperations": operation.dependsOnOperations,
+        }
+        if isinstance(operation, UpdateOperation):
+            value["before"] = operation.before.model_dump(exclude_unset=True, mode="json")
+            value["after"] = operation.after.model_dump(exclude_unset=True, mode="json")
+            if operation.siblingOrder is not None:
+                value["siblingOrder"] = operation.siblingOrder.model_dump(
+                    mode="json", exclude_none=True
+                )
+        elif isinstance(operation, CreateOperation):
+            value["after"] = operation.after.model_dump(exclude_unset=True, mode="json")
+        elif isinstance(operation, CompleteOperation):
+            value["completedAt"] = operation.completedAt
+        if operation.display is not None:
+            value["display"] = operation.display.model_dump(
+                mode="json", exclude_none=True, exclude_unset=True
+            )
+        expected_updated_at = getattr(operation, "expectedUpdatedAt", None)
+        if expected_updated_at is not None:
+            value["expectedUpdatedAt"] = expected_updated_at
+        operations.append(value)
+    return {
+        "kind": "plan",
+        "schemaVersion": plan.schemaVersion,
+        "planId": plan.planId,
+        "summary": plan.summary,
+        "createdAt": plan.createdAt,
+        "digest": plan_digest(plan),
+        "expectedAccount": (
+            plan.expectedAccount.model_dump(mode="json")
+            if plan.expectedAccount is not None
+            else None
+        ),
+        "counts": {
+            action: counts[action]
+            for action in ("create", "update", "complete", "trash")
+            if counts[action]
+        },
+        "operations": operations,
+    }
+
+
+def render_plan_markdown(plan: ChangePlanV1) -> str:
+    """Render a compact Markdown review artifact suitable for sharing privately."""
+
+    payload = plan_description_payload(plan)
+    account = payload["expectedAccount"]
+    account_text = (
+        f"{account['email']} (`{account['userId']}`)" if account is not None else "Not pinned"
+    )
+    totals = ", ".join(f"{count} {action}" for action, count in payload["counts"].items())
+    lines = [
+        f"# {plan.summary}",
+        "",
+        f"- Plan ID: `{plan.planId}`",
+        f"- Digest: `{payload['digest']}`",
+        f"- Created: {plan.createdAt}",
+        f"- Expected account: {account_text}",
+        f"- Changes: {totals}",
+        "",
+        "## Operations",
+        "",
+    ]
+    for operation in payload["operations"]:
+        target = operation["target"]
+        title = target.get("title") or target["id"]
+        lines.extend(
+            [
+                f"### {operation['index']}. {operation['action'].title()}: {title}",
+                "",
+                f"- Target: `{target['type']}:{target['id']}`",
+                f"- Operation ID: `{operation['operationId']}`",
+                f"- Reason: {operation['reason']}",
+            ]
+        )
+        if operation["dependsOnOperations"]:
+            dependencies = ", ".join(f"`{item}`" for item in operation["dependsOnOperations"])
+            lines.append(f"- Depends on: {dependencies}")
+        if "completedAt" in operation:
+            lines.append(f"- Completed at: {operation['completedAt']}")
+        if "siblingOrder" in operation:
+            lines.append(
+                "- Relative order: `"
+                + json.dumps(operation["siblingOrder"], ensure_ascii=False, sort_keys=True)
+                + "`"
+            )
+        for field in ("before", "after", "display"):
+            if field in operation:
+                lines.extend(
+                    [
+                        f"- {field.title()}:",
+                        "",
+                        "```json",
+                        json.dumps(operation[field], ensure_ascii=False, indent=2, sort_keys=True),
+                        "```",
+                    ]
+                )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_live_preflight(result: PreflightResult) -> str:
     """Add live-state and compiler-managed changes to the offline reviewed diff."""
 
@@ -155,6 +284,11 @@ def render_live_preflight(result: PreflightResult) -> str:
         "",
         f"Live preflight: PASSED for {len(result.operations)} operation(s)",
         f"Strict concurrency recheck: {'on' if result.strict_concurrency else 'off'}",
+        (
+            f"Reads: {result.unique_documents_checked} unique document(s), "
+            f"{result.metadata_collections_checked} metadata collection(s); "
+            f"elapsed {result.elapsed_ms / 1000:.1f}s"
+        ),
     ]
     if result.warnings:
         lines.append(f"Warnings: {len(result.warnings)}")

@@ -9,8 +9,9 @@ import webbrowser
 from datetime import UTC, date, datetime
 from http import HTTPStatus
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
 from rich import box
@@ -35,7 +36,17 @@ from marvin_pilot.approval import (
     confirm_unattended_enable,
     require_controlling_terminal,
 )
-from marvin_pilot.backup_context import load_backup_documents, project_context_json
+from marvin_pilot.backup_cache import (
+    backup_cache_dir,
+    clear_backup_cache,
+    load_cached_backup_documents,
+)
+from marvin_pilot.backup_context import (
+    project_context_json,
+    scheduled_day_context,
+    search_backup_context,
+)
+from marvin_pilot.compiler import project_compiled_mutation
 from marvin_pilot.config import (
     DEFAULT_UNATTENDED_MAX_IMPACT,
     AppConfig,
@@ -58,8 +69,10 @@ from marvin_pilot.credentials import (
     store_keyring_token,
 )
 from marvin_pilot.describe import (
+    plan_description_payload,
     render_live_preflight,
     render_plan_description,
+    render_plan_markdown,
     render_revert_preflight,
 )
 from marvin_pilot.errors import (
@@ -72,11 +85,39 @@ from marvin_pilot.errors import (
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.executor import execute_apply, unix_milliseconds
 from marvin_pilot.history import HistoryStore
+from marvin_pilot.history_status import audit_receipt_live, plan_history_status
+from marvin_pilot.live_context import build_live_today_context
 from marvin_pilot.marvin_client import MarvinClient
+from marvin_pilot.models.plan_v1 import ChangePlanV1
+from marvin_pilot.models.receipt_v1 import ReceiptV1
 from marvin_pilot.plan_io import MAX_PLAN_BYTES, load_plan, parse_plan_bytes, plan_digest
+from marvin_pilot.plan_set import (
+    LoadedPlanSet,
+    PlanSetChildReceipt,
+    PlanSetReceiptV1,
+    ProjectedReader,
+    combined_preview_plan,
+    find_latest_plan_set_receipt,
+    find_latest_plan_set_revert,
+    load_plan_set,
+    load_plan_set_receipt,
+    new_plan_set_receipt,
+    new_plan_set_revert_receipt,
+    persist_plan_set_receipt,
+    plan_set_digest,
+    verify_manifest_account,
+)
 from marvin_pilot.preflight import LiveValidationResult, preflight_plan, validate_plan_live
-from marvin_pilot.reverter import execute_revert
-from marvin_pilot.schema import plan_schema_json
+from marvin_pilot.prepare import (
+    SnapshotReader,
+    backup_snapshot_reader,
+    parse_draft_bytes,
+    prepare_draft,
+    prepared_plan_json,
+    rebase_plan_live,
+)
+from marvin_pilot.reverter import execute_revert, preflight_revert
+from marvin_pilot.schema import draft_schema_json, plan_schema_json, plan_set_schema_json
 from marvin_pilot.terminal_review import render_live_preflight_terminal
 from marvin_pilot.unattended import (
     assess_unattended,
@@ -203,6 +244,143 @@ def _read_plan_argument(path: str):
     return _read_plan_argument_with_bytes(path)[0]
 
 
+def _read_change_input(path: str):
+    """Return (kind, parsed value, raw), accepting plans and path-based plan sets."""
+
+    if path == "-":
+        plan, raw = _read_plan_argument_with_bytes(path)
+        return "plan", plan, raw
+    candidate = Path(path)
+    try:
+        preview = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        plan, raw = _read_plan_argument_with_bytes(path)
+        return "plan", plan, raw
+    if isinstance(preview, dict) and "planSetVersion" in preview:
+        try:
+            loaded = load_plan_set(candidate)
+        except MarvinPilotError as exc:
+            _fail(exc)
+        return "plan-set", loaded, loaded.raw
+    plan, raw = _read_plan_argument_with_bytes(path)
+    return "plan", plan, raw
+
+
+def _render_plan_set_description(loaded: LoadedPlanSet) -> str:
+    lines = [
+        f"Plan set: {loaded.manifest.summary}",
+        f"Plan-set ID: {loaded.manifest.planSetId}",
+        f"Expected account: {loaded.manifest.expectedAccount.email} "
+        f"(user ID {loaded.manifest.expectedAccount.userId})",
+        f"Phases: {len(loaded.plans)}",
+        "",
+    ]
+    for index, item in enumerate(loaded.plans, start=1):
+        dependencies = ", ".join(item.entry.dependsOn) or "none"
+        lines.extend(
+            [
+                f"PHASE {index}: {item.entry.path}",
+                f"Depends on phases: {dependencies}",
+                render_plan_description(item.plan).rstrip(),
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _plan_set_description_payload(loaded: LoadedPlanSet) -> dict[str, object]:
+    return {
+        "kind": "plan-set",
+        "planSetVersion": loaded.manifest.planSetVersion,
+        "planSetId": loaded.manifest.planSetId,
+        "summary": loaded.manifest.summary,
+        "expectedAccount": loaded.manifest.expectedAccount.model_dump(mode="json"),
+        "phases": [
+            {
+                "path": item.entry.path,
+                "dependsOn": item.entry.dependsOn,
+                "plan": plan_description_payload(item.plan),
+            }
+            for item in loaded.plans
+        ],
+    }
+
+
+def _render_plan_set_markdown(loaded: LoadedPlanSet) -> str:
+    lines = [
+        f"# {loaded.manifest.summary}",
+        "",
+        f"- Plan-set ID: `{loaded.manifest.planSetId}`",
+        f"- Expected account: {loaded.manifest.expectedAccount.email} "
+        f"(`{loaded.manifest.expectedAccount.userId}`)",
+        f"- Phases: {len(loaded.plans)}",
+        "",
+    ]
+    for index, item in enumerate(loaded.plans, start=1):
+        dependencies = ", ".join(f"`{value}`" for value in item.entry.dependsOn) or "None"
+        lines.extend(
+            [
+                f"## Phase {index}: `{item.entry.path}`",
+                "",
+                f"Depends on: {dependencies}",
+                "",
+                render_plan_markdown(item.plan).rstrip(),
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _format_description(
+    change_input: ChangePlanV1 | LoadedPlanSet,
+    input_kind: str,
+    output_format: Literal["text", "markdown", "json"],
+) -> str:
+    if input_kind == "plan-set":
+        loaded = change_input
+        assert isinstance(loaded, LoadedPlanSet)
+        if output_format == "text":
+            return _render_plan_set_description(loaded)
+        if output_format == "markdown":
+            return _render_plan_set_markdown(loaded)
+        return (
+            json.dumps(_plan_set_description_payload(loaded), ensure_ascii=False, indent=2) + "\n"
+        )
+    plan = change_input
+    if output_format == "text":
+        return render_plan_description(plan)
+    if output_format == "markdown":
+        return render_plan_markdown(plan)
+    return json.dumps(plan_description_payload(plan), ensure_ascii=False, indent=2) + "\n"
+
+
+def _validate_plan_set_live(
+    loaded: LoadedPlanSet,
+    client: MarvinClient,
+    *,
+    strict_concurrency: bool,
+) -> list[LiveValidationResult]:
+    verify_manifest_account(loaded, client)
+    reader = ProjectedReader(client)
+    results: list[LiveValidationResult] = []
+    for item in loaded.plans:
+        result = validate_plan_live(
+            item.plan,
+            reader,
+            now_ms=unix_milliseconds(),
+            strict_concurrency=strict_concurrency,
+        )
+        results.append(result)
+        if not result.valid:
+            continue
+        for checked in result.operations:
+            reader.project(
+                checked.operation.target.id,
+                project_compiled_mutation(checked.live_document, checked.compiled),
+            )
+    return results
+
+
 def _write_or_print(content: str, output: Path | None) -> None:
     if output is None:
         typer.echo(content, nl=False)
@@ -215,6 +393,95 @@ def _write_or_print(content: str, output: Path | None) -> None:
     except OSError as exc:
         _fail(PlanSyntaxError(f"could not write {output}: {exc}"))
     typer.echo(str(output))
+
+
+def _read_limited_argument(path: str, *, label: str) -> bytes:
+    try:
+        raw = sys.stdin.buffer.read(MAX_PLAN_BYTES + 1) if path == "-" else Path(path).read_bytes()
+    except OSError as exc:
+        _fail(PlanSyntaxError(f"could not read {label} {path}: {exc}"))
+    if len(raw) > MAX_PLAN_BYTES:
+        _fail(PlanSyntaxError(f"{label} exceeds the {MAX_PLAN_BYTES}-byte safety limit"))
+    return raw
+
+
+@app.command("prepare")
+def prepare_command(
+    source_path: Annotated[
+        str,
+        typer.Argument(help="Compact draft or full plan JSON path, or - for stdin."),
+    ],
+    backup: Annotated[
+        Path | None,
+        typer.Option("--backup", help="Local Marvin backup used for exact identity and context."),
+    ] = None,
+    live: Annotated[
+        bool,
+        typer.Option("--live", help="Use current Marvin state for exact locks and identity."),
+    ] = False,
+    rebase_live: Annotated[
+        bool,
+        typer.Option(
+            "--rebase-live",
+            help="Refresh only locks/generated metadata in a full plan; stop on semantic drift.",
+        ),
+    ] = False,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output", "-o", help="Create this plan file; default writes JSON to stdout."
+        ),
+    ] = None,
+    full_access_key_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--full-access-key-file",
+            help="Read the secret from this file; the token itself is never a CLI argument.",
+        ),
+    ] = None,
+) -> None:
+    """Compile a strict compact draft, or safely rebase locks in a reviewed full plan."""
+
+    if rebase_live and not live:
+        _fail(PlanSyntaxError("--rebase-live requires --live"))
+    if not live and backup is None:
+        _fail(PlanSyntaxError("prepare requires --backup and/or --live"))
+    raw = _read_limited_argument(source_path, label="prepare input")
+    config = _load_config_or_fail() if live else None
+    client = _client_from_config(config, full_access_key_file) if config is not None else None
+    try:
+        if backup is not None:
+            reader = backup_snapshot_reader(backup, live=client)
+        else:
+            reader = SnapshotReader([], live=client)
+        now_ms = unix_milliseconds()
+        if rebase_live:
+            plan = parse_plan_bytes(raw)
+            assert client is not None
+            prepared = rebase_plan_live(plan, reader, account_reader=client, now_ms=now_ms)
+        else:
+            draft = parse_draft_bytes(raw)
+            if client is not None:
+                # Account identity is the only read allowed before target discovery.
+                account = client.check_connection()
+                if (
+                    account.account_user_id != draft.expectedAccount.userId
+                    or account.account_email.casefold() != draft.expectedAccount.email.casefold()
+                ):
+                    raise LivePreconditionError(
+                        "draft account mismatch: expected "
+                        f"{draft.expectedAccount.email} ({draft.expectedAccount.userId}), "
+                        "connected "
+                        f"{account.account_email} ({account.account_user_id})"
+                    )
+            prepared = prepare_draft(draft, reader, now_ms=now_ms)
+        content = prepared_plan_json(prepared)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        if client is not None:
+            client.close()
+    _write_or_print(content, output)
 
 
 @context_app.command("project")
@@ -245,14 +512,167 @@ def context_project_command(
             help="Include descendants currently in Marvin Trash; excluded by default.",
         ),
     ] = False,
+    max_depth: Annotated[
+        int | None,
+        typer.Option("--max-depth", min=1, help="Return descendants only through this depth."),
+    ] = None,
+    state: Annotated[
+        Literal["all", "open", "completed"],
+        typer.Option("--state", help="Filter returned descendants by completion state."),
+    ] = "all",
+    since: Annotated[
+        str | None,
+        typer.Option("--since", help="Keep completions on/after YYYY-MM-DD."),
+    ] = None,
+    summary: Annotated[
+        bool,
+        typer.Option("--summary", help="Return counts and direct children without full items."),
+    ] = False,
 ) -> None:
     """Return every open and completed descendant of one category/project."""
 
     try:
-        content = project_context_json(backup, project, include_trash=include_trash)
+        since_date = date.fromisoformat(since) if since is not None else None
+        content = project_context_json(
+            backup,
+            project,
+            include_trash=include_trash,
+            max_depth=max_depth,
+            state=state,
+            since=since_date,
+            summary=summary,
+        )
+    except ValueError:
+        _fail(PlanSyntaxError("--since must use YYYY-MM-DD"))
     except MarvinPilotError as exc:
         _fail(exc)
     _write_or_print(content, output)
+
+
+@context_app.command("search")
+def context_search_command(
+    query: Annotated[str, typer.Argument(help="Title text to rank across tasks and containers.")],
+    backup: Annotated[Path, typer.Option("--backup", help="Local Marvin backup.")],
+    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+) -> None:
+    """Rank exact/normalized title candidates with IDs and hierarchy paths."""
+
+    try:
+        documents, _format, _size, digest, cache_hit = load_cached_backup_documents(backup)
+        value = search_backup_context(documents, query)
+        value["source"] = {"sha256": digest, "cacheHit": cache_hit}
+    except MarvinPilotError as exc:
+        _fail(exc)
+    _write_or_print(json.dumps(value, ensure_ascii=False, indent=2) + "\n", output)
+
+
+@context_app.command("scheduled-day")
+def context_scheduled_day_command(
+    day: Annotated[str, typer.Argument(help="Exact scheduled day in YYYY-MM-DD form.")],
+    backup: Annotated[Path, typer.Option("--backup", help="Local Marvin backup.")],
+    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+) -> None:
+    """Return backup tasks with this exact day field (honestly not a live Today claim)."""
+
+    try:
+        parsed_day = date.fromisoformat(day)
+        documents, _format, _size, digest, cache_hit = load_cached_backup_documents(backup)
+        value = scheduled_day_context(documents, parsed_day)
+        value["source"] = {"sha256": digest, "cacheHit": cache_hit}
+    except ValueError:
+        _fail(PlanSyntaxError("DAY must use YYYY-MM-DD"))
+    except MarvinPilotError as exc:
+        _fail(exc)
+    _write_or_print(json.dumps(value, ensure_ascii=False, indent=2) + "\n", output)
+
+
+@context_app.command("today")
+def context_today_command(
+    live: Annotated[
+        bool,
+        typer.Option("--live", help="Required acknowledgement: use Marvin's live Today endpoint."),
+    ] = False,
+    day: Annotated[
+        str | None,
+        typer.Option("--date", help="Today date in YYYY-MM-DD; defaults in --timezone."),
+    ] = None,
+    timezone: Annotated[
+        str,
+        typer.Option("--timezone", help="IANA timezone, e.g. America/Los_Angeles."),
+    ] = "America/Los_Angeles",
+    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+    full_access_key_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--full-access-key-file",
+            help="Read the secret from this file; the token itself is never a CLI argument.",
+        ),
+    ] = None,
+) -> None:
+    """Return verified live Today items, ancestors, recurrence identity, and rollover reason."""
+
+    if not live:
+        _fail(PlanSyntaxError("context today requires --live"))
+    try:
+        zone = ZoneInfo(timezone)
+        effective_day = date.fromisoformat(day) if day is not None else datetime.now(zone).date()
+    except ZoneInfoNotFoundError:
+        _fail(PlanSyntaxError(f"unknown IANA timezone: {timezone}"))
+    except ValueError:
+        _fail(PlanSyntaxError("--date must use YYYY-MM-DD"))
+    config = _load_config_or_fail()
+    client = _client_from_config(config, full_access_key_file)
+    try:
+        value = build_live_today_context(client, effective_day)
+        value["timezone"] = timezone
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        client.close()
+    _write_or_print(json.dumps(value, ensure_ascii=False, indent=2) + "\n", output)
+
+
+@context_app.command("backup-info")
+def context_backup_info_command(
+    backup: Annotated[Path, typer.Argument(help="Local Marvin .json or .json.lzma backup.")],
+) -> None:
+    """Hash, index, and summarize a backup without exposing its path in output."""
+
+    try:
+        documents, source_format, source_bytes, digest, cache_hit = load_cached_backup_documents(
+            backup
+        )
+    except MarvinPilotError as exc:
+        _fail(exc)
+    counts: dict[str, int] = {}
+    for document in documents:
+        database = str(document.get("db", "unknown"))
+        counts[database] = counts.get(database, 0) + 1
+    typer.echo(
+        json.dumps(
+            {
+                "sha256": digest,
+                "format": source_format,
+                "inputBytes": source_bytes,
+                "documentCount": len(documents),
+                "databases": counts,
+                "cacheHit": cache_hit,
+                "cachePolicy": "private content-addressed LRU; source path is not stored",
+            },
+            indent=2,
+        )
+    )
+
+
+@context_app.command("cache-clear")
+def context_cache_clear_command() -> None:
+    """Delete Pilot's private parsed-backup cache; original backups are untouched."""
+
+    try:
+        count, size = clear_backup_cache()
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(f"Cleared {count} cached backup(s), {size} byte(s), from {backup_cache_dir()}.")
 
 
 def _load_config_or_fail() -> AppConfig:
@@ -331,6 +751,28 @@ def _resolve_revert_source(store: HistoryStore, path: Path):
             f"multiple apply receipts match this plan; use one directly: {paths}"
         )
     return matches[0]
+
+
+def _resolve_plan_set_revert_source(
+    store: HistoryStore, path: Path, raw: dict[str, object]
+) -> tuple[Path, PlanSetReceiptV1] | None:
+    """Resolve a plan-set receipt/manifest, or report that the input is not one."""
+
+    if "planSetReceiptVersion" in raw:
+        return path, load_plan_set_receipt(path)
+    if "planSetVersion" not in raw:
+        return None
+    loaded = load_plan_set(path)
+    match = find_latest_plan_set_receipt(
+        store.root,
+        loaded.manifest.planSetId,
+        manifest_digest_value=plan_set_digest(loaded),
+    )
+    if match is None:
+        raise PlanSemanticError(
+            "no applied plan-set receipt exactly matches this manifest ID and digest"
+        )
+    return match
 
 
 def _doctor_http_description(status_code: int | None, reason_phrase: str = "") -> str:
@@ -528,6 +970,9 @@ def _live_validation_payload(result: LiveValidationResult) -> dict[str, object]:
         "selectedOperations": len(result.selected_indices),
         "processedOperations": processed,
         "strictConcurrency": result.strict_concurrency,
+        "uniqueDocumentsChecked": result.unique_documents_checked,
+        "metadataCollectionsChecked": result.metadata_collections_checked,
+        "elapsedMs": result.elapsed_ms,
         "errors": len(result.errors),
         "warnings": len(result.warnings),
         "diagnostics": [
@@ -558,6 +1003,11 @@ def _render_live_validation(result: LiveValidationResult) -> str:
             f"operation(s); processed {processed}"
         ),
         f"Diagnostics: {len(result.errors)} error(s), {len(result.warnings)} warning(s)",
+        (
+            f"Reads: {result.unique_documents_checked} unique document(s), "
+            f"{result.metadata_collections_checked} metadata collection(s); "
+            f"elapsed {result.elapsed_ms / 1000:.1f}s"
+        ),
     ]
     for item in result.diagnostics:
         lines.append(
@@ -606,7 +1056,83 @@ def validate_command(
 ) -> None:
     """Validate offline by default, or collect read-only live diagnostics with --live."""
 
-    plan = _read_plan_argument(plan_path)
+    input_kind, change_input, _raw = _read_change_input(plan_path)
+    if input_kind == "plan-set":
+        loaded: LoadedPlanSet = change_input
+        live_only_options = (
+            from_index is not None or from_operation is not None or bool(target) or fail_fast
+        )
+        if live_only_options:
+            _fail(
+                PlanSyntaxError(
+                    "--from-index, --from-operation, --target, and --fail-fast currently select "
+                    "entries only in a single plan"
+                )
+            )
+        if not live:
+            total = sum(len(item.plan.operations) for item in loaded.plans)
+            if json_output:
+                typer.echo(
+                    json.dumps(
+                        {
+                            "valid": True,
+                            "kind": "plan-set",
+                            "planSetId": loaded.manifest.planSetId,
+                            "phases": len(loaded.plans),
+                            "operations": total,
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                typer.echo(
+                    f"Valid Marvin Pilot plan set: {len(loaded.plans)} phase(s), "
+                    f"{total} operation(s)\nPlan-set ID: {loaded.manifest.planSetId}"
+                )
+            return
+        config = _load_config_or_fail()
+        client = _client_from_config(config, full_access_key_file)
+        try:
+            results = _validate_plan_set_live(
+                loaded, client, strict_concurrency=config.strict_concurrency
+            )
+        except MarvinPilotError as exc:
+            _fail(exc)
+        finally:
+            client.close()
+        valid = all(result.valid for result in results)
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "valid": valid,
+                        "kind": "plan-set",
+                        "planSetId": loaded.manifest.planSetId,
+                        "phases": [
+                            {
+                                "path": item.entry.path,
+                                "result": _live_validation_payload(result),
+                            }
+                            for item, result in zip(loaded.plans, results, strict=True)
+                        ],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(
+                f"Live plan-set validation: {'PASSED' if valid else 'FAILED'}\n",
+                nl=False,
+            )
+            for item, result in zip(loaded.plans, results, strict=True):
+                typer.echo(
+                    f"\nPhase: {item.entry.path}\n{_render_live_validation(result)}", nl=False
+                )
+        if not valid:
+            raise typer.Exit(code=LivePreconditionError.exit_code)
+        return
+    plan = change_input
     live_only_options = (
         from_index is not None
         or from_operation is not None
@@ -662,6 +1188,14 @@ def validate_command(
 @app.command("describe")
 def describe_command(
     plan_path: Annotated[str, typer.Argument(help="Plan JSON path, or - for stdin.")],
+    output_format: Annotated[
+        Literal["text", "markdown", "json"],
+        typer.Option("--format", help="Description format for humans or tooling."),
+    ] = "text",
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Create this file instead of writing to stdout."),
+    ] = None,
     live: Annotated[
         bool,
         typer.Option("--live", help="Also check current Marvin state (requires a credential)."),
@@ -674,11 +1208,54 @@ def describe_command(
         ),
     ] = None,
 ) -> None:
-    """Render an exact, deterministic human-readable plan diff."""
+    """Render an exact deterministic plan diff as text, Markdown, or JSON."""
 
-    plan = _read_plan_argument(plan_path)
+    input_kind, change_input, _raw = _read_change_input(plan_path)
+    base_description = _format_description(change_input, input_kind, output_format)
+    if input_kind == "plan-set":
+        loaded: LoadedPlanSet = change_input
+        if not live:
+            _write_or_print(base_description, output)
+            return
+        config = _load_config_or_fail()
+        client = _client_from_config(config, full_access_key_file)
+        try:
+            results = _validate_plan_set_live(
+                loaded, client, strict_concurrency=config.strict_concurrency
+            )
+        except MarvinPilotError as exc:
+            _fail(exc)
+        finally:
+            client.close()
+        if any(not result.valid for result in results):
+            typer.echo(base_description, nl=False)
+            for item, result in zip(loaded.plans, results, strict=True):
+                typer.echo(
+                    f"\nPhase: {item.entry.path}\n{_render_live_validation(result)}", nl=False
+                )
+            raise typer.Exit(code=LivePreconditionError.exit_code)
+        if output_format == "json":
+            value = _plan_set_description_payload(loaded)
+            value["live"] = {
+                "valid": True,
+                "phases": [
+                    {
+                        "path": item.entry.path,
+                        "result": _live_validation_payload(result),
+                    }
+                    for item, result in zip(loaded.plans, results, strict=True)
+                ],
+            }
+            content = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+        elif output_format == "markdown":
+            content = base_description + "\n## Live preflight\n\nPassed.\n"
+        else:
+            content = base_description + "\nLive plan-set preflight: PASSED\n"
+        _write_or_print(content, output)
+        return
+    plan = change_input
     if not live:
-        typer.echo(render_plan_description(plan), nl=False)
+        _write_or_print(base_description, output)
         return
     config = _load_config_or_fail()
     client = _client_from_config(config, full_access_key_file)
@@ -697,7 +1274,29 @@ def describe_command(
     finally:
         preflight_display.stop()
         client.close()
-    typer.echo(render_live_preflight(result), nl=False)
+    if output_format == "json":
+        value = plan_description_payload(plan)
+        value["live"] = {
+            "valid": True,
+            "strictConcurrency": result.strict_concurrency,
+            "warnings": [
+                {
+                    "operationIndex": warning.operation_index,
+                    "operationId": warning.operation_id,
+                    "message": warning.message,
+                }
+                for warning in result.warnings
+            ],
+        }
+        content = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    elif output_format == "markdown":
+        warning_lines = [f"- {warning.message}" for warning in result.warnings]
+        content = base_description + "\n## Live preflight\n\nPassed.\n"
+        if warning_lines:
+            content += "\n### Warnings\n\n" + "\n".join(warning_lines) + "\n"
+    else:
+        content = render_live_preflight(result)
+    _write_or_print(content, output)
 
 
 @app.command("visualize")
@@ -744,15 +1343,23 @@ def visualize_command(
     """Open an offline, credential-free, read-only browser preview."""
 
     plan = None
+    loaded_plan_set: LoadedPlanSet | None = None
     source_name = None
     if plan_path is not None:
-        plan = _read_plan_argument(plan_path)
+        input_kind, change_input, _raw = _read_change_input(plan_path)
+        if input_kind == "plan-set":
+            loaded_plan_set = change_input
+            plan = combined_preview_plan(loaded_plan_set)
+        else:
+            plan = change_input
         source_name = "stdin" if plan_path == "-" else Path(plan_path).name
     hierarchy = None
     hierarchy_sources: list[str] = []
     if backup is not None:
         try:
-            documents, _source_format, _source_bytes = load_backup_documents(backup)
+            documents, _source_format, _source_bytes, _digest, _cache_hit = (
+                load_cached_backup_documents(backup)
+            )
             hierarchy = build_backup_hierarchy_context(documents)
             hierarchy_sources.append("local backup")
         except MarvinPilotError as exc:
@@ -764,8 +1371,14 @@ def visualize_command(
             hierarchy_sources.append("prerequisite plan projection")
         except MarvinPilotError as exc:
             _fail(exc)
+    if loaded_plan_set is not None:
+        hierarchy_sources.append(
+            f"plan-set projection ({len(loaded_plan_set.plans)} dependency-ordered phases)"
+        )
     verified_receipt = None
     if receipt is not None:
+        if loaded_plan_set is not None:
+            _fail(PlanSemanticError("--receipt currently requires a single plan, not a plan set"))
         if plan is None:
             _fail(PlanSemanticError("--receipt requires a preselected PLAN"))
         try:
@@ -841,6 +1454,282 @@ def visualize_command(
         server.shutdown()
 
 
+def _apply_loaded_plan_set(
+    loaded: LoadedPlanSet,
+    *,
+    full_access_key_file: Path | None,
+    yes: bool,
+    unattended: bool,
+) -> None:
+    """Apply dependency-ordered child plans with one approval and one parent receipt."""
+
+    config = _load_config_or_fail()
+    total = sum(len(item.plan.operations) for item in loaded.plans)
+    if total > config.max_operations:
+        _fail(
+            PlanSemanticError(
+                f"plan set has {total} operations; configured maximum is {config.max_operations}"
+            )
+        )
+    combined = combined_preview_plan(loaded)
+    if unattended:
+        if not config.unattended_enabled:
+            _fail(
+                PlanSemanticError(
+                    "unattended apply is disabled; enable it with 'marvin-pilot config "
+                    "unattended enable --max-impact 10'"
+                )
+            )
+        if loaded.manifest.expectedAccount.userId != config.unattended_account_user_id:
+            _fail(PlanSemanticError("plan-set account does not match the unattended policy"))
+        blockers = unattended_plan_blockers(combined)
+        if blockers:
+            _fail(blocked_unattended_error(blockers))
+        assessment = assess_unattended(combined)
+        if assessment.impact > config.unattended_max_impact:
+            _fail(
+                PlanSemanticError(
+                    f"plan-set impact is {assessment.impact}; configured unattended maximum is "
+                    f"{config.unattended_max_impact}"
+                )
+            )
+    history = _history_store(config)
+    prior = find_latest_plan_set_receipt(history.root, loaded.manifest.planSetId)
+    if prior is not None and prior[1].status in {"applying", "applied", "partial"}:
+        _fail(
+            PlanSemanticError(f"plan set was already recorded as {prior[1].status!r} in {prior[0]}")
+        )
+    client = _client_from_config(config, full_access_key_file)
+    try:
+        results = _validate_plan_set_live(
+            loaded, client, strict_concurrency=config.strict_concurrency
+        )
+        errors = [diagnostic for result in results for diagnostic in result.errors]
+        if errors:
+            details = "\n".join(f"  [{item.operation_id}] {item.message}" for item in errors)
+            raise LivePreconditionError(
+                f"plan-set live preflight found {len(errors)} error(s):\n{details}"
+            )
+        console.print(_render_plan_set_description(loaded), markup=False)
+        if unattended:
+            approved = True
+            console.print("[bold bright_green]UNATTENDED PLAN-SET APPLY AUTHORIZED[/]")
+        elif yes:
+            approved = True
+            console.print("[bold bright_yellow]PROMPT SKIPPED[/] Explicit --yes/-y supplied.")
+        else:
+            approved = confirm_apply(total)
+        if not approved:
+            raise UserDeclinedError("apply declined; no Marvin changes were made")
+
+        parent = new_plan_set_receipt(loaded)
+        parent_path = persist_plan_set_receipt(history.root, parent)
+        completed = 0
+        try:
+            for phase_index, item in enumerate(loaded.plans, start=1):
+                console.print(
+                    f"Applying phase {phase_index}/{len(loaded.plans)}: {item.entry.path}",
+                    markup=False,
+                )
+                child_result = execute_apply(
+                    item.plan,
+                    item.raw,
+                    client=client,
+                    history=history,
+                    approve=lambda _result: True,
+                    strict_concurrency=config.strict_concurrency,
+                )
+                parent.children.append(
+                    PlanSetChildReceipt(
+                        planPath=item.entry.path,
+                        planId=item.plan.planId,
+                        planDigest=plan_digest(item.plan),
+                        receiptPath=child_result.receipt_path,
+                        status=child_result.receipt.status,
+                    )
+                )
+                completed += 1
+                persist_plan_set_receipt(history.root, parent)
+        except MarvinPilotError:
+            parent.status = "partial"
+            parent.endedAt = (
+                datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            )
+            persist_plan_set_receipt(history.root, parent)
+            raise
+        parent.status = "applied"
+        parent.endedAt = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        parent_path = persist_plan_set_receipt(history.root, parent)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        client.close()
+    console.print(f"[bold bright_green]Applied:[/] {completed} phase(s), {total} operation(s)")
+    console.print(f"[bold bright_cyan]Plan-set receipt:[/] {parent_path}", soft_wrap=True)
+
+
+def _revert_plan_set(
+    source_path: Path,
+    source: PlanSetReceiptV1,
+    *,
+    only: list[str],
+    config: AppConfig,
+    history: HistoryStore,
+    full_access_key_file: Path | None,
+) -> None:
+    """Preflight and reverse a plan set's child receipts in reverse phase order."""
+
+    if source.kind != "apply" or source.status not in {"applied", "partial"}:
+        _fail(PlanSemanticError("plan-set revert requires an applied or partial apply receipt"))
+    directory = history.root / "plan-sets"
+    if directory.exists():
+        for candidate in directory.glob("*.json"):
+            receipt = load_plan_set_receipt(candidate)
+            if (
+                receipt.kind == "revert"
+                and receipt.sourcePlanSetReceiptId == source.receiptId
+                and receipt.status in {"reverting", "reverted", "partial"}
+            ):
+                _fail(
+                    PlanSemanticError(f"plan set is already claimed by revert receipt {candidate}")
+                )
+
+    children: list[tuple[PlanSetChildReceipt, Path, ReceiptV1]] = []
+    for child in reversed(source.children):
+        child_path = Path(child.receiptPath)
+        if not child_path.is_absolute():
+            child_path = (source_path.parent / child_path).resolve()
+        children.append((child, child_path, history.load(child_path)))
+    available = {
+        operation.operationId
+        for _child, _path, receipt in children
+        for operation in receipt.operations
+        if operation.status == "applied"
+    }
+    if len(only) != len(set(only)):
+        _fail(PlanSemanticError("each --only operation ID may be provided at most once"))
+    unknown = sorted(set(only) - available)
+    if unknown:
+        _fail(PlanSemanticError("unknown applied operation ID(s): " + ", ".join(unknown)))
+    selected = set(only) if only else available
+    phase_selections = [
+        (
+            child,
+            path,
+            receipt,
+            [
+                operation.operationId
+                for operation in receipt.operations
+                if operation.status == "applied" and operation.operationId in selected
+            ],
+        )
+        for child, path, receipt in children
+    ]
+    phase_selections = [item for item in phase_selections if item[3]]
+    total = sum(len(item[3]) for item in phase_selections)
+    if total == 0:
+        _fail(PlanSemanticError("plan-set receipt has no selected applied operations"))
+    if total > config.max_operations:
+        _fail(
+            PlanSemanticError(
+                f"plan-set revert selects {total} operations; configured maximum is "
+                f"{config.max_operations}"
+            )
+        )
+
+    client = _client_from_config(config, full_access_key_file)
+    projected = ProjectedReader(client)
+    display = _OperationProgress("Plan-set revert preflight", total)
+    display.start()
+    completed_preflight = 0
+    try:
+        account = client.check_connection()
+        if (
+            account.account_user_id != source.accountUserId
+            or account.account_email.casefold() != source.accountEmail.casefold()
+        ):
+            raise LivePreconditionError(
+                f"plan-set receipt account mismatch: expected {source.accountEmail} "
+                f"({source.accountUserId}), connected {account.account_email} "
+                f"({account.account_user_id})"
+            )
+        for _child, child_path, receipt, operation_ids in phase_selections:
+            checked = preflight_revert(
+                receipt,
+                child_path,
+                operation_ids,
+                client=projected,
+                history=history,
+                now_ms=unix_milliseconds(),
+                strict_concurrency=config.strict_concurrency,
+                progress=lambda current, _total, operation_id, base=completed_preflight: (
+                    display.update(base + current, total, operation_id)
+                ),
+            )
+            for operation in checked.operations:
+                projected.project(
+                    operation.compiled.target_id,
+                    project_compiled_mutation(operation.live_document, operation.compiled),
+                )
+            completed_preflight += len(checked.operations)
+        display.stop()
+        typer.echo(
+            f"Plan-set revert: {source.planSetId}\n"
+            f"Phases: {len(phase_selections)} (reverse dependency order)\n"
+            f"Operations: {total}\n"
+            f"Expected account: {source.accountEmail} ({source.accountUserId})\n"
+        )
+        if not confirm_revert(total):
+            raise UserDeclinedError("revert declined; no Marvin changes were made")
+
+        parent = new_plan_set_revert_receipt(source, source_path)
+        parent_path = persist_plan_set_receipt(history.root, parent)
+        try:
+            for phase_index, (child, child_path, receipt, operation_ids) in enumerate(
+                phase_selections, start=1
+            ):
+                console.print(
+                    f"Reverting phase {phase_index}/{len(phase_selections)}: {child.planPath}",
+                    markup=False,
+                )
+                result = execute_revert(
+                    receipt,
+                    child_path,
+                    operation_ids,
+                    client=client,
+                    history=history,
+                    approve=lambda _result: True,
+                    strict_concurrency=config.strict_concurrency,
+                )
+                parent.children.append(
+                    PlanSetChildReceipt(
+                        planPath=child.planPath,
+                        planId=child.planId,
+                        planDigest=child.planDigest,
+                        receiptPath=result.receipt_path,
+                        status=result.receipt.status,
+                    )
+                )
+                persist_plan_set_receipt(history.root, parent)
+        except MarvinPilotError:
+            parent.status = "partial"
+            parent.endedAt = (
+                datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            )
+            persist_plan_set_receipt(history.root, parent)
+            raise
+        parent.status = "reverted"
+        parent.endedAt = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        parent_path = persist_plan_set_receipt(history.root, parent)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        display.stop()
+        client.close()
+    console.print(f"[bold bright_green]Reverted:[/] {total} operation(s)")
+    console.print(f"[bold bright_cyan]Plan-set receipt:[/] {parent_path}", soft_wrap=True)
+
+
 @app.command("apply")
 def apply_command(
     plan_path: Annotated[str, typer.Argument(help="Plan JSON path, or - for stdin.")],
@@ -875,7 +1764,6 @@ def apply_command(
 ) -> None:
     """Preflight, apply, verify, and durably journal a complete plan."""
 
-    plan, raw = _read_plan_argument_with_bytes(plan_path)
     if yes and unattended:
         _fail(PlanSyntaxError("use either --yes or --unattended, not both"))
     if yes:
@@ -883,6 +1771,16 @@ def apply_command(
             require_controlling_terminal()
         except MarvinPilotError as exc:
             _fail(exc)
+    input_kind, change_input, raw = _read_change_input(plan_path)
+    if input_kind == "plan-set":
+        _apply_loaded_plan_set(
+            change_input,
+            full_access_key_file=full_access_key_file,
+            yes=yes,
+            unattended=unattended,
+        )
+        return
+    plan = change_input
     config = _load_config_or_fail()
     if unattended and not config.unattended_enabled:
         _fail(
@@ -908,6 +1806,20 @@ def apply_command(
                     f"plan has at least {len(plan.operations)} impact from its operations; "
                     "configured unattended maximum is "
                     f"{config.unattended_max_impact}"
+                )
+            )
+        if plan.expectedAccount is None:
+            _fail(
+                PlanSemanticError(
+                    "unattended apply requires expectedAccount.userId and expectedAccount.email "
+                    "in the plan"
+                )
+            )
+        if plan.expectedAccount.userId != config.unattended_account_user_id:
+            _fail(
+                PlanSemanticError(
+                    "plan expectedAccount does not match the account pinned by the unattended "
+                    "policy"
                 )
             )
     client = _client_from_config(config, full_access_key_file)
@@ -1062,10 +1974,32 @@ def revert_command(
         ),
     ] = None,
 ) -> None:
-    """Human-review and revert all or selected applied operations from a receipt."""
+    """Human-review and revert a plan/plan-set receipt in reverse dependency order."""
 
     config = _load_config_or_fail()
     history = _history_store(config)
+    try:
+        raw = json.loads(receipt_path.read_text(encoding="utf-8"))
+        plan_set_source = (
+            _resolve_plan_set_revert_source(history, receipt_path, raw)
+            if isinstance(raw, dict)
+            else None
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        _fail(PlanSyntaxError(f"could not read revert input {receipt_path}: {exc}"))
+    except MarvinPilotError as exc:
+        _fail(exc)
+    if plan_set_source is not None:
+        resolved_path, source_set = plan_set_source
+        _revert_plan_set(
+            resolved_path,
+            source_set,
+            only=only or [],
+            config=config,
+            history=history,
+            full_access_key_file=full_access_key_file,
+        )
+        return
     try:
         resolved_receipt_path, source = _resolve_revert_source(history, receipt_path)
     except MarvinPilotError as exc:
@@ -1133,14 +2067,23 @@ def revert_command(
 
 @app.command("schema")
 def schema_command(
+    kind: Annotated[
+        Literal["plan", "draft", "plan-set"],
+        typer.Option("--kind", help="Export the full plan, compact draft, or plan-set schema."),
+    ] = "plan",
     output: Annotated[
         Path | None,
         typer.Option("--output", "-o", help="Create this file instead of writing to stdout."),
     ] = None,
 ) -> None:
-    """Print the complete JSON Schema for Marvin Pilot change plans."""
+    """Print a strict JSON Schema for plans, compact drafts, or plan sets."""
 
-    _write_or_print(plan_schema_json(), output)
+    content = {
+        "plan": plan_schema_json,
+        "draft": draft_schema_json,
+        "plan-set": plan_set_schema_json,
+    }[kind]()
+    _write_or_print(content, output)
 
 
 @app.command("example")
@@ -1272,11 +2215,14 @@ def plan_format_help() -> None:
 PLAN FORMAT
 
 The root is an object with schemaVersion 1, a UUID planId, an RFC 3339 createdAt timestamp
-with an explicit offset, a non-empty summary, and one or more operations.
+with an explicit offset, a non-empty summary, and one or more operations. Pin live execution with
+expectedAccount: {{"userId":"numeric Marvin ID","email":"account@example.com"}}. Pilot checks
+that identity before document discovery and again immediately before writes. Unattended plans
+require it; reviewed legacy plans may omit it.
 
 Actions:
-  update    Existing task, project, recurrence series, or explicit generated occurrence.
-  create    New task, project, or recurrence series using a caller-generated UUID.
+  update    Existing task, project, category, recurrence series, or generated occurrence.
+  create    New task, project, category, or recurrence series using a caller-generated UUID.
   complete  Existing task/project or explicit occurrence; a series itself cannot be completed.
   trash     Delete an existing item, occurrence, or series after journaling its recovery snapshot.
 
@@ -1355,6 +2301,15 @@ Allowlisted task/project fields:
   snoozedUntil                RFC 3339 timestamp with offset or null
   permanentSnoozeUntil        HH:mm or null
   dependencies                array of task/project IDs or null; tasks only
+  orbit                       true or false; include/exclude the task from Orbit
+
+Relative sibling order (update operations only):
+  "siblingOrder": {{"beforeId":"sibling-id"}}
+  "siblingOrder": {{"afterId":"sibling-id"}}
+  "siblingOrder": {{"position":"first"}}  (or "last")
+Pilot resolves this to Marvin's day rank for scheduled tasks, master rank for unscheduled tasks,
+and container rank for projects/categories during live preflight. The anchor must be a compatible
+sibling in the final day/parent. Do not combine siblingOrder with raw dayRank/masterRank changes.
 
 Recurrence targets and fields:
   - An entire recurring-task series uses target.type "recurringTask". Create requires after.title
@@ -1401,12 +2356,15 @@ Subtask notes:
   - Pilot merges retained native subtask records by ID, preserves unknown native metadata, writes
     deterministic ranks, snapshots the entire embedded map, and restores it exactly on revert.
 
-Project notes:
-  - Use target.type "project". Pilot stores projects in Marvin's Categories database with
-    type "project"; it does not create categories.
+Container notes:
+  - Use target.type "project" or "category". Both live in Marvin's Categories database with
+    their corresponding type. Categories support create, rename, move, relative order, and Trash;
+    they cannot be completed and their editable fields are title and parent.
   - A task or project may use a project created earlier in the same plan as its parent. Put the
     parent create operation first and list its operationId in dependsOnOperations.
-  - Project moves are rejected if the proposed ancestry would create or inherit a parent cycle.
+  - Container moves are rejected if the proposed ancestry would create or inherit a parent cycle.
+    Project/category Trash is blocked unless the documented /children read proves every direct
+    child was already moved or deleted, including earlier projected operations in this plan.
   - complete.completedAt may not be later than the plan's createdAt. Pilot writes a task's
     historical doneAt or the local YYYY-MM-DD doneDate required by a project, plus Marvin's
     matching historical completion field-update timestamps. updatedAt remains the actual apply
@@ -1422,10 +2380,14 @@ Generate a complete example with:
 
 Generate machine-readable JSON Schema with:
   marvin-pilot schema
+  marvin-pilot schema --kind draft
+  marvin-pilot schema --kind plan-set
 
 Review without credentials or network access with:
   marvin-pilot validate PLAN.json
   marvin-pilot describe PLAN.json
+  marvin-pilot describe PLAN.json --format markdown -o REVIEW.md
+  marvin-pilot describe PLAN.json --format json
 
 Collect every read-only live error/warning before human apply with:
   marvin-pilot validate PLAN.json --live
@@ -1435,6 +2397,45 @@ Collect every read-only live error/warning before human apply with:
 Required target, recurrence-series, and sourceTask titles are strict safety hints. Optional
 parent/label titles produce review warnings with the exact live value; they do not replace ID and
 updatedAt checks. Apply always revalidates the complete plan regardless of diagnostic selectors.
+
+COMPACT AUTHORING
+
+`marvin-pilot prepare` accepts a closed draftVersion 1 document. A draft retains only intent:
+expectedAccount, summary, operationId/action/target/reason/dependencies, desired after fields,
+completion time, and optional siblingOrder. Existing targets may use an exact ID, or a unique
+exact/normalized backup title. Pilot fills target titles, before-state, updatedAt locks,
+caller-safe create UUIDs, and typed display paths from a local backup and optional live overlay.
+It never invents desired dates, parents, titles, or actions.
+
+  marvin-pilot prepare draft.json --backup MarvinBackup.json.lzma -o plan.json
+  marvin-pilot prepare draft.json --backup MarvinBackup.json.lzma --live -o plan.json
+  marvin-pilot prepare reviewed-plan.json --live --rebase-live -o rebased-plan.json
+
+Use --rebase-live only for a previously reviewed full plan: it creates a new plan ID and refreshes
+locks/generated paths only when every reviewed semantic before-value still matches. Any drift
+requires a new review. Input - reads stdin; omitted -o writes strict plan JSON to stdout.
+
+PLAN SETS
+
+A planSetVersion 1 manifest applies dependency-ordered plan files with one review and a parent
+receipt. Paths are safe and relative to the manifest. Every child plan must have the same exact
+expectedAccount, and operation IDs must be unique across the set:
+
+  {{
+    "planSetVersion": 1,
+    "planSetId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "summary": "Apply structure before cleanup.",
+    "expectedAccount": {{"userId":"123456","email":"account@example.com"}},
+    "plans": [
+      {{"path":"01-structure.json"}},
+      {{"path":"02-cleanup.json","dependsOn":["01-structure.json"]}}
+    ]
+  }}
+
+validate, describe, visualize, apply, history status, and revert accept this manifest. Live
+validation projects each successful phase over one shared document cache. Apply runs phases
+forward; revert uses child receipts in reverse dependency order. Parent and child receipts remain
+integrity checked. --only operation-id can select operations across a plan-set revert.
 
 COMPLETE VERSION 1 EXAMPLE
 {complete_example}
@@ -1684,6 +2685,185 @@ def config_unset_full_access_token() -> None:
     except MarvinPilotError as exc:
         _fail(exc)
     typer.echo("Removed the full-access token from the native OS keyring.")
+
+
+@history_app.command("status")
+def history_status_command(
+    source: Annotated[
+        Path,
+        typer.Argument(help="Plan, plan-set manifest, or directory to inspect locally."),
+    ],
+    recursive: Annotated[
+        bool,
+        typer.Option("--recursive", "-r", help="Scan JSON files below a directory recursively."),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit stable machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Report receipt-backed applied/reverted status without Marvin API access."""
+
+    history = _history_store(_load_config_or_fail())
+    if source.is_dir():
+        paths = sorted(source.rglob("*.json") if recursive else source.glob("*.json"))
+    else:
+        paths = [source]
+    results: list[dict[str, object]] = []
+    for path in paths:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and "planSetVersion" in raw:
+                loaded = load_plan_set(path)
+                match = find_latest_plan_set_receipt(
+                    history.root,
+                    loaded.manifest.planSetId,
+                    manifest_digest_value=plan_set_digest(loaded),
+                )
+                revert = (
+                    find_latest_plan_set_revert(history.root, match[1].receiptId)
+                    if match is not None
+                    else None
+                )
+                if revert is not None and revert[1].status == "reverted":
+                    set_status = "reverted"
+                elif revert is not None:
+                    set_status = f"{revert[1].status}-revert"
+                else:
+                    set_status = match[1].status if match is not None else "never-applied"
+                results.append(
+                    {
+                        "path": str(path),
+                        "kind": "plan-set",
+                        "id": loaded.manifest.planSetId,
+                        "status": set_status,
+                        "receiptPath": (
+                            str(revert[0])
+                            if revert is not None
+                            else (str(match[0]) if match is not None else None)
+                        ),
+                    }
+                )
+            elif isinstance(raw, dict) and "schemaVersion" in raw:
+                plan, _plan_raw = load_plan(path)
+                status = plan_history_status(plan, history)
+                results.append(
+                    {
+                        "path": str(path),
+                        "kind": "plan",
+                        "id": status.plan_id,
+                        "status": status.status,
+                        "receiptPath": status.receipt_path,
+                        "details": status.details,
+                    }
+                )
+        except MarvinPilotError as exc:
+            results.append({"path": str(path), "kind": "invalid", "error": str(exc)})
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            if not source.is_dir():
+                _fail(PlanSyntaxError(f"could not inspect {path}: {exc}"))
+    if json_output:
+        typer.echo(json.dumps({"results": results}, ensure_ascii=False, indent=2))
+        return
+    if not results:
+        typer.echo("No plan or plan-set JSON files found.")
+        return
+    for result in results:
+        status = result.get("status", "invalid")
+        typer.echo(f"{status}: {result['path']}")
+        if result.get("receiptPath"):
+            typer.echo(f"  receipt: {result['receiptPath']}")
+        if result.get("error"):
+            typer.echo(f"  error: {result['error']}")
+
+
+@history_app.command("audit")
+def history_audit_command(
+    receipt_path: Annotated[
+        Path,
+        typer.Argument(help="Apply receipt or plan-set parent receipt to audit."),
+    ],
+    live: Annotated[
+        bool,
+        typer.Option("--live", help="Required acknowledgement: read current Marvin documents."),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit stable machine-readable JSON."),
+    ] = False,
+    full_access_key_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--full-access-key-file",
+            help="Read the secret from this file; the token itself is never a CLI argument.",
+        ),
+    ] = None,
+) -> None:
+    """Read-only compare current server documents with verified receipt post-state."""
+
+    if not live:
+        _fail(PlanSyntaxError("history audit requires --live"))
+    config = _load_config_or_fail()
+    history = _history_store(config)
+    client = _client_from_config(config, full_access_key_file)
+    try:
+        raw = json.loads(receipt_path.read_text(encoding="utf-8"))
+        batches: list[tuple[str, list[dict[str, object]]]] = []
+        if isinstance(raw, dict) and "planSetReceiptVersion" in raw:
+            parent = load_plan_set_receipt(receipt_path)
+            if parent.kind != "apply":
+                raise PlanSemanticError("history audit requires an apply plan-set receipt")
+            account = client.check_connection()
+            if (
+                account.account_user_id != parent.accountUserId
+                or account.account_email.casefold() != parent.accountEmail.casefold()
+            ):
+                raise LivePreconditionError(
+                    f"plan-set receipt account mismatch: expected {parent.accountEmail} "
+                    f"({parent.accountUserId}), connected {account.account_email} "
+                    f"({account.account_user_id})"
+                )
+            for child in parent.children:
+                child_path = Path(child.receiptPath)
+                if not child_path.is_absolute():
+                    child_path = (receipt_path.parent / child_path).resolve()
+                receipt = HistoryStore(child_path.parent).load(child_path)
+                batches.append((child.planPath, audit_receipt_live(receipt, client)))
+        else:
+            receipt = history.load(receipt_path)
+            batches.append((receipt_path.name, audit_receipt_live(receipt, client)))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        _fail(PlanSyntaxError(f"could not read receipt {receipt_path}: {exc}"))
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        client.close()
+    counts: dict[str, int] = {}
+    for _name, items in batches:
+        for item in items:
+            state = str(item["state"])
+            counts[state] = counts.get(state, 0) + 1
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "receipt": str(receipt_path),
+                    "counts": counts,
+                    "batches": [{"name": name, "operations": items} for name, items in batches],
+                    "note": "Marvin UI caches may lag; this audit reads full documents.",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    typer.echo("Live receipt audit (full-document reads):")
+    for name, items in batches:
+        typer.echo(f"\n{name}")
+        for item in items:
+            title = item.get("targetTitle") or item["targetId"]
+            typer.echo(f"  {item['state']}: {title} [{item['operationId']}] — {item['detail']}")
+    typer.echo("\nNote: Marvin UI caches may lag behind these document reads.")
 
 
 @history_app.command("path")

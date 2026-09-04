@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import lzma
 import math
+import re
+import unicodedata
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -128,12 +130,14 @@ def _number(value: Any) -> int | float | None:
 
 def _milliseconds_to_rfc3339(value: Any) -> str | None:
     milliseconds = _number(value)
-    if milliseconds is None:
+    if milliseconds is None or milliseconds <= 0:
         return None
     try:
-        rendered = datetime.fromtimestamp(milliseconds / 1_000, UTC).isoformat(
-            timespec="milliseconds"
-        )
+        completed = datetime.fromtimestamp(milliseconds / 1_000, UTC)
+        # Reject corrupt timestamps well beyond any plausible local-clock skew.
+        if completed > datetime.now(UTC).replace(microsecond=0) + timedelta(days=2):
+            return None
+        rendered = completed.isoformat(timespec="milliseconds")
     except (OSError, OverflowError, ValueError):
         return None
     return rendered.replace("+00:00", "Z")
@@ -324,6 +328,14 @@ def _select_root(
         and document["title"].casefold() == query.casefold()
     ]
     if not candidates:
+        normalized_query = normalized_title(query)
+        candidates = [
+            document
+            for document in containers
+            if isinstance(document.get("title"), str)
+            and normalized_title(document["title"]) == normalized_query
+        ]
+    if not candidates:
         raise PlanSemanticError(
             f"no active Marvin category/project matches title or ID {query!r} in the backup"
         )
@@ -346,6 +358,10 @@ def build_project_context(
     include_trash: bool = False,
     source_format: str = "marvin-backup-json",
     source_bytes: int | None = None,
+    max_depth: int | None = None,
+    state: Literal["all", "open", "completed"] = "all",
+    since: date | None = None,
+    summary: bool = False,
 ) -> dict[str, Any]:
     """Build deterministic, compact context for all descendants of one category/project."""
 
@@ -408,6 +424,21 @@ def build_project_context(
 
     visit(root_id, 1)
 
+    if max_depth is not None:
+        compact_items = [item for item in compact_items if item["depth"] <= max_depth]
+    if state == "open":
+        compact_items = [item for item in compact_items if not item["done"]]
+    elif state == "completed":
+        compact_items = [item for item in compact_items if item["done"]]
+    if since is not None:
+        since_text = since.isoformat()
+        retained = []
+        for item in compact_items:
+            completion = item.get("completedOn", str(item.get("completedAt", ""))[:10])
+            if not item["done"] or not completion or completion >= since_text:
+                retained.append(item)
+        compact_items = retained
+
     root_path, root_path_cyclic = _container_path(root, documents_by_id)
     if root_path_cyclic:
         cycles.add(root_id)
@@ -447,7 +478,7 @@ def build_project_context(
     }
     if source_bytes is not None:
         source["inputBytes"] = source_bytes
-    return {
+    result = {
         "contextVersion": 1,
         "kind": "project",
         "source": source,
@@ -464,15 +495,155 @@ def build_project_context(
         "items": compact_items,
         "warnings": warnings,
     }
+    if summary:
+        completed_dates = sorted(
+            (
+                item.get("completedOn", str(item.get("completedAt", ""))[:10])
+                for item in compact_items
+                if item["done"]
+            ),
+            reverse=True,
+        )
+        result["summary"] = {
+            "directChildren": [
+                {key: item[key] for key in ("id", "type", "title", "done") if key in item}
+                for item in compact_items
+                if item["depth"] == 1
+            ],
+            "latestCompletion": completed_dates[0] if completed_dates else None,
+            "oldestRetainedCompletion": completed_dates[-1] if completed_dates else None,
+            "recurrenceDefinitions": sum(item["type"] == "recurringTask" for item in compact_items),
+            "generatedOccurrences": sum(
+                item.get("recurrence", {}).get("scope") == "occurrence" for item in compact_items
+            ),
+        }
+        result.pop("items")
+    return result
 
 
-def project_context_json(backup_path: Path, query: str, *, include_trash: bool = False) -> str:
-    documents, source_format, source_bytes = load_backup_documents(backup_path)
+def project_context_json(
+    backup_path: Path,
+    query: str,
+    *,
+    include_trash: bool = False,
+    max_depth: int | None = None,
+    state: Literal["all", "open", "completed"] = "all",
+    since: date | None = None,
+    summary: bool = False,
+) -> str:
+    from marvin_pilot.backup_cache import load_cached_backup_documents
+
+    documents, source_format, source_bytes, digest, cache_hit = load_cached_backup_documents(
+        backup_path
+    )
     context = build_project_context(
         documents,
         query,
         include_trash=include_trash,
         source_format=source_format,
         source_bytes=source_bytes,
+        max_depth=max_depth,
+        state=state,
+        since=since,
+        summary=summary,
     )
+    context["source"]["sha256"] = digest
+    context["source"]["cacheHit"] = cache_hit
     return json.dumps(context, ensure_ascii=False, indent=2) + "\n"
+
+
+def normalized_title(value: str) -> str:
+    """Normalize display decoration for candidate ranking, never identity selection."""
+
+    value = unicodedata.normalize("NFKC", value)
+    value = "".join(
+        character
+        for character in value
+        if unicodedata.category(character) != "Cf" and character != "\ufe0f"
+    )
+    value = re.sub(r"^\W+", "", value, flags=re.UNICODE)
+    return " ".join(value.casefold().split())
+
+
+def search_backup_context(documents: list[dict[str, Any]], query: str) -> dict[str, Any]:
+    """Return ranked title/path candidates without silently choosing an ambiguous match."""
+
+    documents_by_id = {
+        document["_id"]: document
+        for document in documents
+        if _item_type(document) is not None and isinstance(document.get("_id"), str)
+    }
+    normalized_query = normalized_title(query)
+    candidates = []
+    for document in documents_by_id.values():
+        title = document.get("title")
+        if not isinstance(title, str) or _is_trashed(document):
+            continue
+        normalized = normalized_title(title)
+        if title == query:
+            reason, score = "exact title", 0
+        elif normalized == normalized_query:
+            reason, score = "normalized title", 1
+        elif normalized_query and normalized_query in normalized:
+            reason, score = "normalized substring", 2
+        else:
+            continue
+        path = []
+        if _item_type(document) in {"category", "project"}:
+            path, _cyclic = _container_path(document, documents_by_id)
+        else:
+            parent = documents_by_id.get(document.get("parentId"))
+            if parent is not None:
+                path, _cyclic = _container_path(parent, documents_by_id)
+        candidates.append(
+            {
+                "id": document["_id"],
+                "type": _item_type(document),
+                "title": title,
+                "match": reason,
+                "path": path,
+                "_score": score,
+            }
+        )
+    candidates.sort(key=lambda item: (item["_score"], item["title"].casefold(), item["id"]))
+    for item in candidates:
+        item.pop("_score")
+    return {
+        "contextVersion": 1,
+        "kind": "search",
+        "query": query,
+        "normalizedQuery": normalized_query,
+        "count": len(candidates),
+        "ambiguous": len(candidates) > 1,
+        "candidates": candidates[:100],
+    }
+
+
+def scheduled_day_context(documents: list[dict[str, Any]], scheduled_date: date) -> dict[str, Any]:
+    """Return exact backup documents scheduled for a date; never claim live Today semantics."""
+
+    items = []
+    for document in documents:
+        if _item_type(document) != "task" or document.get("day") != scheduled_date.isoformat():
+            continue
+        if _is_trashed(document):
+            continue
+        compact = _compact_document(document, depth=0)
+        occurrence = document.get("recurring") is True
+        compact["scheduleKind"] = "generated-occurrence" if occurrence else "ordinary-task"
+        if occurrence:
+            identifier = str(document.get("_id", ""))
+            compact["rolledOver"] = scheduled_date.isoformat() not in identifier
+        items.append(compact)
+    items.sort(key=lambda item: (_sort_number(item.get("rank")), item["title"].casefold()))
+    return {
+        "contextVersion": 1,
+        "kind": "scheduled-day",
+        "date": scheduled_date.isoformat(),
+        "accuracyNote": (
+            "Backup snapshot only: exact day fields are shown, but this is not a claim about "
+            "Marvin's current Today strategy, rollover, or UI cache."
+        ),
+        "count": len(items),
+        "items": items,
+    }

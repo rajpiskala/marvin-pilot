@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import lzma
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,10 @@ import marvin_pilot.backup_context as backup_context
 from marvin_pilot.backup_context import (
     build_project_context,
     load_backup_documents,
+    normalized_title,
     project_context_json,
+    scheduled_day_context,
+    search_backup_context,
 )
 from marvin_pilot.errors import PlanSemanticError, PlanSyntaxError
 
@@ -267,3 +271,59 @@ def test_invalid_backup_shapes_fail_without_tracebacks(tmp_path: Path) -> None:
     invalid_lzma.write_bytes(b"not lzma")
     with pytest.raises(PlanSyntaxError, match="could not read Marvin backup"):
         load_backup_documents(invalid_lzma)
+
+
+@pytest.mark.parametrize("bad_timestamp", [0, -1, float("inf"), float("nan")])
+def test_invalid_completion_timestamps_are_omitted_with_warning(
+    bad_timestamp: float, tmp_path: Path
+) -> None:
+    documents = backup_documents()
+    documents.append(
+        {
+            "_id": "bad-done",
+            "db": "Tasks",
+            "title": "Completed without a trustworthy timestamp",
+            "parentId": "alpha",
+            "done": True,
+            "doneAt": bad_timestamp,
+        }
+    )
+    context = build_project_context(documents, "alpha")
+    item = next(item for item in context["items"] if item["id"] == "bad-done")
+    assert "completedAt" not in item
+    assert any("no completion timestamp" in warning for warning in context["warnings"])
+
+
+def test_project_filters_summary_normalized_search_and_scheduled_day() -> None:
+    documents = backup_documents()
+    documents.extend(
+        [
+            {
+                "_id": "decorated",
+                "db": "Tasks",
+                "title": "🚀  Release Readiness",
+                "parentId": "alpha",
+                "day": "2026-09-04",
+                "done": False,
+                "rank": 2,
+            },
+            {
+                "_id": "done-recent",
+                "db": "Tasks",
+                "title": "Recent completion",
+                "parentId": "alpha",
+                "done": True,
+                "doneAt": 1_788_480_000_000,
+            },
+        ]
+    )
+    summary = build_project_context(documents, "alpha", max_depth=1, summary=True)
+    assert "items" not in summary
+    assert summary["summary"]["directChildren"]
+    assert normalized_title("🚀  Release Readiness") == "release readiness"
+    search = search_backup_context(documents, "release readiness")
+    assert search["candidates"][0]["id"] == "decorated"
+    assert search["candidates"][0]["match"] == "normalized title"
+    day = scheduled_day_context(documents, date(2026, 9, 4))
+    assert day["items"][0]["scheduleKind"] == "ordinary-task"
+    assert "not a claim" in day["accuracyNote"]

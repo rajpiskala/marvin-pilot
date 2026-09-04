@@ -4,7 +4,7 @@ import json
 
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.plan_io import parse_plan_bytes
-from marvin_pilot.schema import plan_schema_json
+from marvin_pilot.schema import draft_schema_json, plan_schema_json, plan_set_schema_json
 
 
 def test_generated_schema_is_json_and_closed() -> None:
@@ -24,3 +24,12 @@ def test_embedded_example_stays_valid() -> None:
         "create",
         "trash",
     ]
+
+
+def test_compact_draft_and_plan_set_schemas_are_closed() -> None:
+    draft = json.loads(draft_schema_json())
+    plan_set = json.loads(plan_set_schema_json())
+    assert draft["title"] == "Marvin Pilot compact draft v1"
+    assert plan_set["title"] == "Marvin Pilot plan set v1"
+    assert draft["additionalProperties"] is False
+    assert plan_set["additionalProperties"] is False

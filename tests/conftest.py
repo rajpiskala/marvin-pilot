@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+import marvin_pilot.backup_cache as backup_cache_module
 from marvin_pilot.examples import EXAMPLE_PLAN
 
 
@@ -21,3 +22,10 @@ def pytest_configure(config: pytest.Config) -> None:
 @pytest.fixture
 def example_plan_dict() -> dict:
     return copy.deepcopy(EXAMPLE_PLAN)
+
+
+@pytest.fixture(autouse=True)
+def isolated_backup_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never let a test read or mutate the user's real parsed-backup cache."""
+
+    monkeypatch.setattr(backup_cache_module, "backup_cache_dir", lambda: tmp_path / "backup-cache")
