@@ -372,6 +372,8 @@ function renderCard(
     recurrenceScope = null,
     recurrenceScheduledDate = null,
     completedAt = null,
+    completionDay = null,
+    completionDayBehavior = null,
     targetChainPosition = 1,
     targetChainLength = 1,
   } = {},
@@ -416,7 +418,13 @@ function renderCard(
   }
   article.append(taskLine);
 
-  if (card.items.length > 0 || card.note_state === "clear" || completedAt || showOccurrenceDate) {
+  if (
+    card.items.length > 0
+    || card.note_state === "clear"
+    || completedAt
+    || (completionDay && sideName === "after")
+    || showOccurrenceDate
+  ) {
     const items = node("div", "task-items");
     card.items.forEach((item) => {
       const isTag = ["parent", "labels"].includes(item.kind);
@@ -468,6 +476,19 @@ function renderCard(
       completed.textContent = `Done ${formatCompletionTimestamp(completedAt)}`;
       completed.title = `Marked done at ${completedAt}; displayed in your browser's local time format.`;
       items.append(completed);
+    }
+    if (completionDay && sideName === "after") {
+      const historyDay = node(
+        "time",
+        "task-item completion-day",
+        `History ${completionDay}`,
+      );
+      historyDay.dateTime = completionDay;
+      historyDay.title = (
+        `Marvin will list this completion under ${completionDay}`
+        + (completionDayBehavior ? ` (${completionDayBehavior}).` : ".")
+      );
+      items.append(historyDay);
     }
     article.append(items);
   }
@@ -783,6 +804,8 @@ function renderStateOperation(operation, sideName) {
       recurrenceScope: operation.recurrence_scope,
       recurrenceScheduledDate: operation.recurrence_scheduled_date,
       completedAt: completionTimestamp(operation, sideName),
+      completionDay: operation.completion_day_after,
+      completionDayBehavior: operation.completion_day_behavior,
       targetChainPosition: operation.target_chain_position,
       targetChainLength: operation.target_chain_length,
     }),
@@ -802,6 +825,8 @@ function renderDiffCell(operation, sideName) {
         recurrenceScope: operation.recurrence_scope,
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt: completionTimestamp(operation, sideName),
+        completionDay: operation.completion_day_after,
+        completionDayBehavior: operation.completion_day_behavior,
         targetChainPosition: operation.target_chain_position,
         targetChainLength: operation.target_chain_length,
       }),
@@ -1123,6 +1148,8 @@ function renderHierarchyNode(item, sideName, operations, depth = 0) {
         recurrenceScope: operation.recurrence_scope,
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt,
+        completionDay: operation.completion_day_after,
+        completionDayBehavior: operation.completion_day_behavior,
         targetChainPosition: operation.target_chain_position,
         targetChainLength: operation.target_chain_length,
       }),
@@ -1280,6 +1307,8 @@ function renderComparisonSide(operation, sideName) {
         recurrenceScope: operation.recurrence_scope,
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt: completionTimestamp(operation, sideName),
+        completionDay: operation.completion_day_after,
+        completionDayBehavior: operation.completion_day_behavior,
         targetChainPosition: operation.target_chain_position,
         targetChainLength: operation.target_chain_length,
       }),

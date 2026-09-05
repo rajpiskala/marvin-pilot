@@ -20,7 +20,7 @@ from marvin_pilot.errors import (
 )
 from marvin_pilot.field_registry import field_snapshot
 from marvin_pilot.history import HistoryStore, ReceiptHandle, rfc3339_utc
-from marvin_pilot.models.plan_v1 import ChangePlanV1
+from marvin_pilot.models.plan_v1 import ChangePlanV1, CompleteOperation
 from marvin_pilot.models.receipt_v1 import ReceiptOperationV1, ReceiptV1
 from marvin_pilot.plan_io import plan_digest
 from marvin_pilot.preflight import (
@@ -250,7 +250,9 @@ def execute_apply(
                 strict_concurrency=strict_concurrency,
                 expected_revision=expected_revision,
             )
-            if checked.compiled.endpoint == "doc/delete":
+            if checked.compiled.endpoint == "doc/delete" or isinstance(
+                checked.operation, CompleteOperation
+            ):
                 assert current_document is not None
                 receipt_operation.beforeDocument = deepcopy(current_document)
             receipt_operation.status = "sending"
@@ -285,8 +287,20 @@ def execute_apply(
                     field: field_snapshot(resulting_document, field)
                     for field in checked.compiled.desired_fields
                 }
-                if checked.compiled.endpoint == "doc/create":
+                if checked.compiled.endpoint == "doc/create" or isinstance(
+                    checked.operation, CompleteOperation
+                ):
                     receipt_operation.afterDocument = deepcopy(resulting_document)
+                if (
+                    isinstance(checked.operation, CompleteOperation)
+                    and checked.operation.target.type == "task"
+                    and receipt_operation.completionHistory is not None
+                ):
+                    receipt_operation.completionHistory.documentDayVerified = True
+                    receipt_operation.completionHistory.detail = (
+                        "The full task document contains the reviewed completion-history day. "
+                        "Server /doneItems visibility was not checked."
+                    )
                 runtime_revisions[checked.operation.target.id] = revision_snapshot(
                     resulting_document
                 )

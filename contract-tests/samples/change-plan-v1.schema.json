@@ -12,6 +12,17 @@
           "title": "Completedat",
           "type": "string"
         },
+        "completionDay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CompletionDayTransition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "dependsOnOperations": {
           "items": {
             "type": "string"
@@ -63,6 +74,43 @@
         "completedAt"
       ],
       "title": "CompleteOperation",
+      "type": "object"
+    },
+    "CompletionDayTransition": {
+      "additionalProperties": false,
+      "description": "Review lock for the Marvin history bucket used by a task completion.",
+      "properties": {
+        "after": {
+          "title": "After",
+          "type": "string"
+        },
+        "before": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Before"
+        },
+        "behavior": {
+          "enum": [
+            "assigned",
+            "preserved",
+            "replaced"
+          ],
+          "title": "Behavior",
+          "type": "string"
+        }
+      },
+      "required": [
+        "before",
+        "after",
+        "behavior"
+      ],
+      "title": "CompletionDayTransition",
       "type": "object"
     },
     "CreateOperation": {

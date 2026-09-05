@@ -16,6 +16,11 @@ from pydantic import Field, StrictStr, ValidationError, field_validator, model_v
 from marvin_pilot.backup_cache import load_cached_backup_documents
 from marvin_pilot.backup_context import normalized_title
 from marvin_pilot.compiler import compile_operation, project_compiled_mutation
+from marvin_pilot.completion import (
+    completion_day_behavior,
+    completion_local_date,
+    usable_marvin_day,
+)
 from marvin_pilot.duration import milliseconds_to_duration
 from marvin_pilot.errors import LivePreconditionError, PlanSemanticError, PlanSyntaxError
 from marvin_pilot.field_registry import live_field_matches, recurring_task_field_matches
@@ -23,6 +28,7 @@ from marvin_pilot.models.plan_v1 import (
     ChangePlanV1,
     ClosedModel,
     CompleteOperation,
+    CompletionDayTransition,
     CreateItemFields,
     CreateOperation,
     ExistingItemTarget,
@@ -536,11 +542,21 @@ def prepare_draft(
                 )
             elif draft_operation.action == "complete":
                 display = _display_for(document, None, reader, action="complete")
+                completion_day = None
+                if target.type == "task":
+                    final_day = completion_local_date(draft_operation.completedAt)
+                    before_day = usable_marvin_day(document.get("day"))
+                    completion_day = CompletionDayTransition(
+                        before=before_day,
+                        after=final_day,
+                        behavior=completion_day_behavior(before_day, final_day),
+                    )
                 operation = CompleteOperation(
                     operationId=draft_operation.operationId,
                     action="complete",
                     target=target,
                     completedAt=draft_operation.completedAt,
+                    completionDay=completion_day,
                     reason=draft_operation.reason,
                     dependsOnOperations=draft_operation.dependsOnOperations,
                     expectedUpdatedAt=expected_updated_at,
@@ -612,6 +628,19 @@ def rebase_plan_live(
             display = _display_for(document, operation.after, reader, action="update")
         else:
             display = _display_for(document, None, reader, action=operation.action)
+        if isinstance(operation, CompleteOperation) and operation.target.type == "task":
+            before_day = usable_marvin_day(document.get("day"))
+            if operation.completionDay is not None and operation.completionDay.before != before_day:
+                raise LivePreconditionError(
+                    f"operation {operation.operationId!r} completion day changed; "
+                    "semantic review is required"
+                )
+            final_day = completion_local_date(operation.completedAt)
+            value["operations"][index]["completionDay"] = CompletionDayTransition(
+                before=before_day,
+                after=final_day,
+                behavior=completion_day_behavior(before_day, final_day),
+            ).model_dump(mode="json")
         value["operations"][index]["display"] = (
             display.model_dump(mode="json", exclude_none=True) if display is not None else None
         )

@@ -36,6 +36,7 @@ from marvin_pilot.approval import (
     confirm_unattended_enable,
     require_controlling_terminal,
 )
+from marvin_pilot.atomic import exclusive_write_bytes
 from marvin_pilot.backup_cache import (
     backup_cache_dir,
     clear_backup_cache,
@@ -85,12 +86,22 @@ from marvin_pilot.errors import (
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.executor import execute_apply, unix_milliseconds
 from marvin_pilot.history import HistoryStore
-from marvin_pilot.history_status import audit_receipt_live, plan_history_status
+from marvin_pilot.history_status import (
+    audit_receipt_live,
+    build_completion_day_repair_plan,
+    plan_history_status,
+)
 from marvin_pilot.live_context import build_live_today_context
 from marvin_pilot.marvin_client import MarvinClient
 from marvin_pilot.models.plan_v1 import ChangePlanV1
 from marvin_pilot.models.receipt_v1 import ReceiptV1
-from marvin_pilot.plan_io import MAX_PLAN_BYTES, load_plan, parse_plan_bytes, plan_digest
+from marvin_pilot.plan_io import (
+    MAX_PLAN_BYTES,
+    canonical_plan_bytes,
+    load_plan,
+    parse_plan_bytes,
+    plan_digest,
+)
 from marvin_pilot.plan_set import (
     LoadedPlanSet,
     PlanSetChildReceipt,
@@ -2366,14 +2377,17 @@ Container notes:
     Project/category Trash is blocked unless the documented /children read proves every direct
     child was already moved or deleted, including earlier projected operations in this plan.
   - complete.completedAt may not be later than the plan's createdAt. Pilot writes a task's
-    historical doneAt or the local YYYY-MM-DD doneDate required by a project, plus Marvin's
-    matching historical completion field-update timestamps. updatedAt remains the actual apply
-    time so concurrency checks stay truthful.
+    historical doneAt and assigns day to the local YYYY-MM-DD encoded by completedAt. A prepared
+    task plan adds completionDay {{before,after,behavior}} so that history-bucket replacement is
+    explicit during review. For tasks, native completion field-update timestamps and updatedAt
+    remain the actual apply time. Projects retain their existing historical doneDate behavior.
   - Revert restores prior open/completed fields. Reverting create deletes the created document;
     reverting trash recreates the exact ID from Pilot's full-document recovery snapshot. These
     deleted documents do not appear in Marvin's native Trash UI, so retain private receipts.
-  - Marvin's server-maintained /doneItems history does not index backdated /doc/update task
-    completions. Audit those completion dates through full-document reads and Pilot receipts.
+  - Apply verifies the full task document and receipts say explicitly that server /doneItems
+    visibility was not checked. Audit through full-document reads. For older Pilot receipts,
+    history audit --live detects missing/wrong history days, and --repair-plan PATH emits a
+    separately reviewable locked repair plan without applying it.
 
 Generate a complete example with:
   marvin-pilot example
@@ -2791,6 +2805,16 @@ def history_audit_command(
         bool,
         typer.Option("--json", help="Emit stable machine-readable JSON."),
     ] = False,
+    repair_plan: Annotated[
+        Path | None,
+        typer.Option(
+            "--repair-plan",
+            help=(
+                "Write a review-only plan for completion-history day defects proven by the "
+                "receipt and current full documents; refuses to overwrite an existing file."
+            ),
+        ),
+    ] = None,
     full_access_key_file: Annotated[
         Path | None,
         typer.Option(
@@ -2799,7 +2823,7 @@ def history_audit_command(
         ),
     ] = None,
 ) -> None:
-    """Read-only compare current server documents with verified receipt post-state."""
+    """Compare live documents with a receipt; optionally draft safe history-day repairs."""
 
     if not live:
         _fail(PlanSyntaxError("history audit requires --live"))
@@ -2809,6 +2833,7 @@ def history_audit_command(
     try:
         raw = json.loads(receipt_path.read_text(encoding="utf-8"))
         batches: list[tuple[str, list[dict[str, object]]]] = []
+        expected_account: dict[str, str] | None = None
         if isinstance(raw, dict) and "planSetReceiptVersion" in raw:
             parent = load_plan_set_receipt(receipt_path)
             if parent.kind != "apply":
@@ -2823,6 +2848,10 @@ def history_audit_command(
                     f"({parent.accountUserId}), connected {account.account_email} "
                     f"({account.account_user_id})"
                 )
+            expected_account = {
+                "userId": parent.accountUserId,
+                "email": parent.accountEmail,
+            }
             for child in parent.children:
                 child_path = Path(child.receiptPath)
                 if not child_path.is_absolute():
@@ -2832,6 +2861,11 @@ def history_audit_command(
         else:
             receipt = history.load(receipt_path)
             batches.append((receipt_path.name, audit_receipt_live(receipt, client)))
+            if receipt.accountUserId is not None and receipt.accountEmail is not None:
+                expected_account = {
+                    "userId": receipt.accountUserId,
+                    "email": receipt.accountEmail,
+                }
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         _fail(PlanSyntaxError(f"could not read receipt {receipt_path}: {exc}"))
     except MarvinPilotError as exc:
@@ -2843,6 +2877,29 @@ def history_audit_command(
         for item in items:
             state = str(item["state"])
             counts[state] = counts.get(state, 0) + 1
+    repair_result: dict[str, object] | None = None
+    if repair_plan is not None:
+        if expected_account is None:
+            _fail(
+                PlanSemanticError(
+                    "cannot build a repair plan because the receipt does not pin an account"
+                )
+            )
+        try:
+            repair = build_completion_day_repair_plan(
+                [item for _name, items in batches for item in items],
+                expected_account=expected_account,
+            )
+            exclusive_write_bytes(repair_plan, canonical_plan_bytes(repair) + b"\n")
+            repair_result = {
+                "path": str(repair_plan),
+                "operations": len(repair.operations),
+                "digest": plan_digest(repair),
+            }
+        except FileExistsError:
+            _fail(PlanSyntaxError(f"refusing to overwrite existing repair plan: {repair_plan}"))
+        except MarvinPilotError as exc:
+            _fail(exc)
     if json_output:
         typer.echo(
             json.dumps(
@@ -2850,6 +2907,7 @@ def history_audit_command(
                     "receipt": str(receipt_path),
                     "counts": counts,
                     "batches": [{"name": name, "operations": items} for name, items in batches],
+                    "repairPlan": repair_result,
                     "note": "Marvin UI caches may lag; this audit reads full documents.",
                 },
                 ensure_ascii=False,
@@ -2863,6 +2921,12 @@ def history_audit_command(
         for item in items:
             title = item.get("targetTitle") or item["targetId"]
             typer.echo(f"  {item['state']}: {title} [{item['operationId']}] — {item['detail']}")
+    if repair_result is not None:
+        typer.echo(
+            f"\nRepair plan: {repair_result['path']} "
+            f"({repair_result['operations']} operation(s), {repair_result['digest']})"
+        )
+        typer.echo("Review it with validate, describe, and visualize before applying it.")
     typer.echo("\nNote: Marvin UI caches may lag behind these document reads.")
 
 

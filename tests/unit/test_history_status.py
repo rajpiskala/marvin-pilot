@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,7 +10,11 @@ import pytest
 from marvin_pilot.errors import LivePreconditionError, PlanSemanticError
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.history import HistoryStore
-from marvin_pilot.history_status import audit_receipt_live, plan_history_status
+from marvin_pilot.history_status import (
+    audit_receipt_live,
+    build_completion_day_repair_plan,
+    plan_history_status,
+)
 from marvin_pilot.models.receipt_v1 import ReceiptOperationV1, ReceiptV1
 from marvin_pilot.plan_io import parse_plan_bytes
 
@@ -187,3 +192,143 @@ def test_live_audit_rejects_revert_receipts_and_account_mismatch() -> None:
     stored = receipt().model_copy(update={"accountUserId": "different"})
     with pytest.raises(LivePreconditionError, match="account mismatch"):
         audit_receipt_live(stored, AuditReader({}))
+
+
+def completion_receipt() -> tuple[ReceiptV1, int]:
+    completed_at = "2026-09-04T08:15:00-07:00"
+    done_at = int(datetime.fromisoformat(completed_at).timestamp() * 1_000)
+    stored = receipt().model_copy(deep=True)
+    stored.sourcePlan = {
+        "operations": [
+            {
+                "operationId": "complete-history",
+                "action": "complete",
+                "target": {
+                    "type": "task",
+                    "id": "task-complete",
+                    "title": "Archive the records",
+                },
+                "completedAt": completed_at,
+            }
+        ]
+    }
+    stored.operations = [
+        ReceiptOperationV1(
+            operationId="complete-history",
+            action="complete",
+            targetId="task-complete",
+            targetType="task",
+            targetTitle="Archive the records",
+            status="applied",
+            plannedAfter={"done": True, "completedAt": completed_at},
+            afterFields={
+                "done": {"present": True, "value": True},
+                "doneAt": {"present": True, "value": done_at},
+            },
+        )
+    ]
+    return stored, done_at
+
+
+def test_live_audit_detects_and_builds_locked_completion_day_repair() -> None:
+    stored, done_at = completion_receipt()
+    rows = audit_receipt_live(
+        stored,
+        AuditReader(
+            {
+                "task-complete": {
+                    "_id": "task-complete",
+                    "db": "Tasks",
+                    "title": "Archive the records",
+                    "done": True,
+                    "doneAt": done_at,
+                    "day": "unassigned",
+                    "updatedAt": 1234,
+                }
+            }
+        ),
+    )
+
+    assert rows[0]["state"] == "mismatch"
+    assert rows[0]["completionHistory"] == {
+        "state": "missing-day",
+        "expectedDay": "2026-09-04",
+        "actualDay": None,
+        "plannedCompletedAt": "2026-09-04T08:15:00-07:00",
+        "doneAtMatches": True,
+        "discoverability": "unverified",
+        "repairable": True,
+    }
+
+    plan = build_completion_day_repair_plan(
+        rows,
+        expected_account={"userId": "123456", "email": "pilot@example.com"},
+        created_at=datetime(2026, 9, 5, tzinfo=UTC),
+    )
+    operation = plan.operations[0]
+    assert operation.action == "update"
+    assert operation.before.scheduledDate is None
+    assert operation.after.scheduledDate == "2026-09-04"
+    assert operation.display is not None
+    assert operation.display.existingCompletedAt == "2026-09-04T08:15:00-07:00"
+    assert operation.expectedUpdatedAt == 1234
+
+
+def test_completion_audit_refuses_unsafe_timestamp_repair() -> None:
+    stored, done_at = completion_receipt()
+    rows = audit_receipt_live(
+        stored,
+        AuditReader(
+            {
+                "task-complete": {
+                    "title": "Archive the records",
+                    "done": True,
+                    "doneAt": done_at + 1,
+                    "day": "2026-09-01",
+                    "updatedAt": 1234,
+                }
+            }
+        ),
+    )
+
+    assert rows[0]["completionHistory"]["state"] == "completion-timestamp-changed"
+    assert rows[0]["completionHistory"]["repairable"] is False
+    with pytest.raises(PlanSemanticError, match="no confirmed completion-day repairs"):
+        build_completion_day_repair_plan(
+            rows,
+            expected_account={"userId": "123456", "email": "pilot@example.com"},
+        )
+
+
+def test_recurring_completion_repair_locks_the_current_occurrence_day() -> None:
+    stored, done_at = completion_receipt()
+    stored.sourcePlan["operations"][0]["target"]["recurrence"] = {
+        "scope": "occurrence",
+        "seriesId": "series-1",
+        "seriesTitle": "Archive records weekly",
+        "scheduledDate": "2026-09-01",
+    }
+    rows = audit_receipt_live(
+        stored,
+        AuditReader(
+            {
+                "task-complete": {
+                    "title": "Archive the records",
+                    "done": True,
+                    "doneAt": done_at,
+                    "day": "2026-09-02",
+                    "updatedAt": 1234,
+                }
+            }
+        ),
+    )
+
+    assert rows[0]["completionHistory"]["state"] == "wrong-day"
+    plan = build_completion_day_repair_plan(
+        rows,
+        expected_account={"userId": "123456", "email": "pilot@example.com"},
+    )
+    operation = plan.operations[0]
+    assert operation.target.recurrence.scheduledDate == "2026-09-02"
+    assert operation.before.scheduledDate == "2026-09-02"
+    assert operation.after.scheduledDate == "2026-09-04"

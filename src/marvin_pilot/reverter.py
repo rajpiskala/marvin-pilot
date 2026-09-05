@@ -310,10 +310,18 @@ def preflight_revert(
             )
         if source_operation.recurrence is not None:
             recurrence = source_operation.recurrence
+            expected_current_day = recurrence.scheduledDate
+            applied_day = source_operation.afterFields.get("day")
+            if (
+                isinstance(applied_day, dict)
+                and applied_day.get("present") is True
+                and isinstance(applied_day.get("value"), str)
+            ):
+                expected_current_day = applied_day["value"]
             if (
                 identity_document.get("recurring") is not True
                 or identity_document.get("recurringTaskId") != recurrence.seriesId
-                or identity_document.get("day") != recurrence.scheduledDate
+                or identity_document.get("day") != expected_current_day
             ):
                 raise LivePreconditionError(
                     f"operation {source_operation.operationId!r} recurring occurrence identity "

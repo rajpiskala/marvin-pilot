@@ -178,6 +178,7 @@ def test_live_preflight_projects_an_explicit_same_target_chain(documents: dict) 
     result = preflight_plan(same_target_plan(), reader, now_ms=NOW_MS)
 
     assert reader.calls.count("task-wash-dishes-id") == 1
+    assert result.operations[-1].compiled.desired_fields["day"] == "2026-08-08"
     rename, reschedule, complete = result.operations
     assert rename.prior_same_target_operation_id is None
     assert reschedule.prior_same_target_operation_id == "rename-dishes"
@@ -186,6 +187,19 @@ def test_live_preflight_projects_an_explicit_same_target_chain(documents: dict) 
     assert reschedule.live_document["updatedAt"] == NOW_MS
     assert complete.live_document["day"] == "2026-08-09"
     assert complete.compiled.before_fields["done"] == {"present": False}
+
+
+def test_live_preflight_rejects_stale_completion_day_lock(documents: dict) -> None:
+    value = same_target_plan().model_dump(mode="json", by_alias=True, exclude_none=True)
+    value["operations"][-1]["completionDay"] = {
+        "before": "2026-08-08",
+        "after": "2026-08-08",
+        "behavior": "preserved",
+    }
+    plan = parse_plan_bytes(json.dumps(value).encode())
+
+    with pytest.raises(LivePreconditionError, match="completion day is stale"):
+        preflight_plan(plan, FakeReader(documents), now_ms=NOW_MS)
 
 
 def test_live_validation_blocks_later_same_target_steps_after_an_error(documents: dict) -> None:

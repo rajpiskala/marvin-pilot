@@ -136,13 +136,25 @@ def test_complete_compiles_historical_dates_for_tasks_and_projects() -> None:
     task_value = project_complete()
     task_value["target"]["type"] = "task"
     task = parse_plan_bytes(encode_plan([task_value])).operations[0]
-    task_compiled = compile_complete(task, {"done": False}, NOW_MS)
+    task_compiled = compile_complete(
+        task, {"done": False, "day": "2026-07-30"}, NOW_MS
+    )
     task_setters = {setter["key"]: setter["val"] for setter in task_compiled.payload["setters"]}
-    assert task_setters["fieldUpdates.done"] == expected_completed_ms
+    assert task_setters["fieldUpdates.done"] == NOW_MS
     assert task_setters["doneAt"] == expected_completed_ms
-    assert task_setters["fieldUpdates.doneAt"] == expected_completed_ms
+    assert task_setters["fieldUpdates.doneAt"] == NOW_MS
+    assert task_setters["day"] == "2026-07-23"
+    assert task_setters["fieldUpdates.day"] == NOW_MS
     assert "doneDate" not in task_setters
-    assert task_compiled.desired_fields == {"done": True, "doneAt": expected_completed_ms}
+    assert task_compiled.desired_fields == {
+        "done": True,
+        "doneAt": expected_completed_ms,
+        "day": "2026-07-23",
+    }
+    assert task_compiled.before_fields["day"] == {
+        "present": True,
+        "value": "2026-07-30",
+    }
 
 
 def test_project_preflight_validates_document_type_and_open_state() -> None:

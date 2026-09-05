@@ -51,6 +51,13 @@ class ReceiptRecurrenceV1(ReceiptModel):
     scheduledDate: str
 
 
+class ReceiptCompletionHistoryV1(ReceiptModel):
+    expectedDay: str
+    documentDayVerified: bool = False
+    serverHistoryStatus: Literal["not-checked", "visible", "missing"] = "not-checked"
+    detail: str
+
+
 class ReceiptOperationV1(ReceiptModel):
     operationId: str
     action: Literal["update", "create", "trash", "complete"]
@@ -69,6 +76,7 @@ class ReceiptOperationV1(ReceiptModel):
     afterFields: dict[str, dict[str, Any]] = Field(default_factory=dict)
     beforeDocument: dict[str, Any] | None = None
     afterDocument: dict[str, Any] | None = None
+    completionHistory: ReceiptCompletionHistoryV1 | None = None
     request: RequestRecord | None = None
     outcome: str | None = None
     error: str | None = None

@@ -20,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from marvin_pilot.completion import completion_day_behavior, completion_local_date
 from marvin_pilot.duration import normalize_duration
 
 _OPERATION_ID_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?\Z")
@@ -777,10 +778,26 @@ class TrashOperation(BaseOperation):
     expectedUpdatedAt: Annotated[StrictInt, Field(ge=0)] | None = None
 
 
+class CompletionDayTransition(ClosedModel):
+    """Review lock for the Marvin history bucket used by a task completion."""
+
+    before: StrictStr | None
+    after: StrictStr
+    behavior: Literal["assigned", "preserved", "replaced"]
+
+    @field_validator("before", "after")
+    @classmethod
+    def validate_day(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
+        return _iso_date(value, f"completionDay.{getattr(info, 'field_name', 'day')}")
+
+
 class CompleteOperation(BaseOperation):
     action: Literal["complete"]
     target: ExistingItemTarget
     completedAt: StrictStr
+    completionDay: CompletionDayTransition | None = None
     expectedUpdatedAt: Annotated[StrictInt, Field(ge=0)] | None = None
 
     @field_validator("completedAt")
@@ -792,6 +809,19 @@ class CompleteOperation(BaseOperation):
     def reject_category_completion(self) -> CompleteOperation:
         if self.target.type == "category":
             raise ValueError("categories cannot be completed; only tasks and projects can")
+        if self.target.type == "project" and self.completionDay is not None:
+            raise ValueError("completionDay is only valid for task completions")
+        if self.target.type == "task" and self.completionDay is not None:
+            expected_after = completion_local_date(self.completedAt)
+            if self.completionDay.after != expected_after:
+                raise ValueError(
+                    "completionDay.after must equal the local calendar date encoded by completedAt"
+                )
+            expected_behavior = completion_day_behavior(
+                self.completionDay.before, self.completionDay.after
+            )
+            if self.completionDay.behavior != expected_behavior:
+                raise ValueError("completionDay.behavior does not match completionDay.before/after")
         return self
 
 

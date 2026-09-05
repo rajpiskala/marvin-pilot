@@ -246,12 +246,14 @@ def test_recurring_crud_apply_receipts_and_reverse_revert(tmp_path: Path) -> Non
     ]
     assert client.documents["occurrence-update"]["note"] == "Occurrence-only note"
     assert client.documents["occurrence-complete"]["done"] is True
+    assert client.documents["occurrence-complete"]["day"] == "2026-08-15"
     assert "occurrence-trash" not in client.documents
     assert SERIES_TRASH not in client.documents
     assert client.documents[SERIES_UPDATE]["deletedDates"] == ["2026-08-01"]
     assert applied.receipt.operations[0].targetType == "recurringTask"
     assert applied.receipt.operations[2].recurrence is not None
     assert applied.receipt.operations[2].recurrence.scope == "occurrence"
+    assert applied.receipt.operations[3].completionHistory.documentDayVerified is True
 
     reverted = execute_revert(
         applied.receipt,
@@ -270,6 +272,7 @@ def test_recurring_crud_apply_receipts_and_reverse_revert(tmp_path: Path) -> Non
     assert client.documents[SERIES_UPDATE]["subtaskList"] == []
     assert client.documents["occurrence-update"]["note"] is None
     assert client.documents["occurrence-complete"]["done"] is False
+    assert client.documents["occurrence-complete"]["day"] == "2026-08-16"
     assert client.documents["occurrence-trash"]["title"] == "Existing recurring fixture"
     assert "deletedAt" not in client.documents["occurrence-trash"]
     assert client.documents[SERIES_TRASH]["title"] == "Redundant recurring fixture"

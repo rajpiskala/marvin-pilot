@@ -171,3 +171,41 @@ def test_prepare_resolves_one_normalized_backup_title_but_rejects_ambiguity() ->
     ]
     with pytest.raises(PlanSemanticError, match="ambiguous"):
         prepare_draft(draft, SnapshotReader(duplicated), now_ms=NOW_MS)
+
+
+@pytest.mark.parametrize(
+    ("before_day", "behavior"),
+    [
+        ("unassigned", "assigned"),
+        ("2026-09-04", "preserved"),
+        ("2026-09-01", "replaced"),
+        ("2026-09-07", "replaced"),
+    ],
+)
+def test_prepare_locks_native_completion_day_transition(
+    before_day: str, behavior: str
+) -> None:
+    value = draft_value()
+    value["operations"] = [
+        {
+            "operationId": "complete-task",
+            "action": "complete",
+            "target": {"type": "task", "id": "task-1"},
+            "completedAt": "2026-09-04T10:55:00-07:00",
+            "reason": "Record completion in the correct Marvin history bucket.",
+        }
+    ]
+    source = documents()
+    source[-1]["day"] = before_day
+
+    plan = prepare_draft(
+        parse_draft_bytes(json.dumps(value).encode()),
+        SnapshotReader(source),
+        now_ms=NOW_MS,
+    )
+
+    transition = plan.operations[0].completionDay
+    assert transition is not None
+    assert transition.before == (None if before_day == "unassigned" else before_day)
+    assert transition.after == "2026-09-04"
+    assert transition.behavior == behavior

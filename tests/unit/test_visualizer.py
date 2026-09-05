@@ -281,6 +281,11 @@ def test_completion_inherits_known_ancestry_but_respects_explicit_unknown_after_
                 "target": {"type": "task", "id": "task-fixture", "title": "Fixture task"},
                 "reason": "Record the completed fixture.",
                 "completedAt": "2026-08-15T18:30:00-07:00",
+                "completionDay": {
+                    "before": None,
+                    "after": "2026-08-15",
+                    "behavior": "assigned",
+                },
                 "display": {"beforePath": [category], "beforeOrder": 42},
             }
         ],
@@ -288,6 +293,10 @@ def test_completion_inherits_known_ancestry_but_respects_explicit_unknown_after_
     view = _view(value)
     operation = view.operations[0]
     assert operation.completed_at == "2026-08-15T18:30:00-07:00"
+    assert operation.completion_day_before is None
+    assert operation.completion_day_after == "2026-08-15"
+    assert operation.completion_day_behavior == "assigned"
+    assert operation.diffs[-1].label == "Completion history day"
     assert operation.after_path_state == "path"
     assert operation.after_path == operation.before_path
     assert operation.after_order == operation.before_order == 42

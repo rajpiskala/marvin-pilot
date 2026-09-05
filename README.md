@@ -353,13 +353,18 @@ Before reusing old artifacts, inspect their receipt-backed local state:
 marvin-pilot history status plans/ --recursive
 marvin-pilot history status cleanup.plan-set.json --json
 marvin-pilot history audit path/to/applied-receipt.json --live
+marvin-pilot history audit path/to/old-receipt.json --live --repair-plan completion-repair.json
 ```
 
 Status distinguishes never applied, applied, partial/ambiguous, fully reverted, selectively
 reverted, and changed artifacts without calling Marvin. `history audit --live` then compares each
 verified receipt post-state with current full documents, separating a still-matching result from a
 later edit, missing document, or unexpectedly present deleted target. It notes that Marvin UI
-caches can lag behind the document API.
+caches can lag behind the document API. For task completions, the audit separately classifies the
+full document's completion timestamp and completion-history day. If an older Pilot receipt proves
+that the timestamp still matches but `day` is missing or wrong, `--repair-plan` writes a normal,
+account-pinned, concurrency-locked plan that changes only that history day. It never applies the
+repair and refuses to guess after the completion timestamp has changed.
 
 For large reorganizations, prefer reviewed batches over one enormous plan.
 
@@ -446,7 +451,7 @@ it returns documents whose stored day equals DATE and explicitly does not claim 
 | `marvin-pilot revert RECEIPT`         | Revert an applied receipt                  |
 | `marvin-pilot history list`           | List audit receipts                        |
 | `marvin-pilot history status SOURCE`  | Report local apply/revert status            |
-| `marvin-pilot history audit R --live` | Compare a receipt with current documents    |
+| `marvin-pilot history audit R --live` | Audit current documents; optionally draft history repair |
 | `marvin-pilot history show latest`    | Inspect the newest receipt                 |
 | `marvin-pilot history verify RECEIPT` | Verify receipt integrity                   |
 | `marvin-pilot schema --output FILE`   | Export plan/draft/plan-set JSON Schema      |
@@ -606,11 +611,20 @@ moves/deletions earlier in the same dependency chain are projected, so a plan ca
 then delete a container. Container Trash remains blocked from unattended apply regardless of the
 nominal one-operation impact.
 
-Task completion backdates both Marvin's `doneAt` value and the completion field-update timestamps
-that Marvin uses to place the item in completion-day views. Project completion similarly backdates
-`doneDate` and its completion field-update timestamps. `updatedAt` still records the actual apply
-time, preserving an honest concurrency lock. This prevents an item marked done for an earlier date
-from appearing under **Completed Today** merely because the plan was applied today.
+Task completion writes the exact `doneAt` instant and assigns Marvin's `day` to the local calendar
+date encoded by that timestamp's explicit RFC 3339 offset. This is the native behavior confirmed
+for overdue, same-day, future-scheduled, and unscheduled ordinary tasks; a missing/unassigned day is
+assigned, while any other scheduled day is replaced unless it already matches. Marvin's
+`fieldUpdates.done`, `fieldUpdates.doneAt`, `fieldUpdates.day`, and `updatedAt` retain the real apply
+time, matching the native client while keeping concurrency truthful. Project completion instead
+writes the local date to `doneDate`.
+
+Prepared and rebased task-completion plans include review-only
+`completionDay: {before, after, behavior}` metadata. `before` is the current usable day or `null`,
+`after` is the timestamp's local date, and `behavior` is `assigned`, `preserved`, or `replaced`.
+Live preflight rejects a stale `before` lock. Older plans that omit this optional metadata remain
+compatible: live preflight still derives and verifies the same setter, while `prepare`/`rebase`
+adds the explicit lock for human review.
 
 Completed tasks remain ordinary task documents addressable by exact ID. Pilot can rename or reparent them without reopening them, but the plan must include the verified `display.existingCompletedAt` timestamp so the historical state is visible during review. This supports backup-assisted historical reorganization while retaining a fresh live-state and concurrency check before every write.
 
@@ -664,7 +678,12 @@ Deleting an explicit generated occurrence tombstones that exact task document. P
 
 Series subtasks preserve declared order and are copied by Marvin into future occurrences. Generated occurrences use the ordinary task-subtask model, including stable IDs and done state. Receipts record recurrence scope, and conflict-aware revert supports both series edits and explicit occurrence edits.
 
-One upstream distinction matters for audits: a task completed through the full-access document path receives native completion fields, but live testing found that the limited `/doneItems` endpoint does not index that backdated mutation. Project completion dates remain directly readable as `doneDate`. Use the receipt or full document rather than `/doneItems` as the sole oracle for Pilot-applied historical completion.
+One upstream distinction matters for audits: Pilot verifies the full task document after apply,
+including `done`, `doneAt`, and the completion-history `day`; it does not claim that the separate,
+limited-token `/doneItems` endpoint was checked. Receipts expose both facts explicitly. Use
+`history audit --live` for authoritative full-document comparison. For older receipts created
+before Pilot wrote `day`, the same command can diagnose a timestamp-matching defect and
+`--repair-plan PATH` can emit a separately reviewable correction.
 
 ### Pilot-managed Trash and recovery
 
@@ -734,7 +753,15 @@ python -m playwright install chromium
 MARVIN_PILOT_BROWSER_TESTS=1 python -m pytest -m browser tests/browser
 ```
 
-Live contract testing has covered the v1 task and project field set, project CRUD, historical completion (including Marvin's completion-index timestamps), ordered subtask create/read/update/delete/reorder/complete/reopen/consolidation, recurrence-series create/read/update/Trash/restore/revert, explicit generated-occurrence update/complete/Trash/revert, create/update/schedule/unschedule/Trash/restore/revert workflows, and a 200-operation scale run against a dedicated development account. Recurrence scope also has unit, in-memory integration, and browser-visualizer coverage; its disposable live-account contract is described in `contract-tests/README.md`.
+Live contract testing has covered the v1 task and project field set, project CRUD, historical
+completion, ordered subtask create/read/update/delete/reorder/complete/reopen/consolidation,
+recurrence-series create/read/update/Trash/restore/revert, explicit generated-occurrence
+update/complete/Trash/revert, create/update/schedule/unschedule/Trash/restore/revert workflows, and
+a 200-operation scale run against a dedicated development account. Native task completion-day
+behavior was separately checked across overdue, same-day, future, unscheduled, and cross-day
+recurrence cases. Recurrence and completion scope also have unit, in-memory integration, and
+browser-visualizer coverage; their disposable live-account contracts are described in
+`contract-tests/README.md`.
 
 See [`contract-tests/README.md`](contract-tests/README.md) before running live contract cases.
 

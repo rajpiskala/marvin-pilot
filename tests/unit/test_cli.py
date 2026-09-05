@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -1203,6 +1204,91 @@ def test_apply_and_history_commands_work_end_to_end_with_mocked_marvin(
     assert client.closed
     assert received_key_files == [key_file, key_file]
     assert "revert  reverted" in runner.invoke(app, ["history", "list"]).stdout
+
+
+def test_history_audit_writes_review_only_completion_day_repair(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    completed_at = "2026-09-04T08:15:00-07:00"
+    done_at = int(datetime.fromisoformat(completed_at).timestamp() * 1_000)
+    operation = {
+        "operationId": "complete-history",
+        "action": "complete",
+        "target": {
+            "type": "task",
+            "id": "task-complete",
+            "title": "Archive the records",
+        },
+        "completedAt": completed_at,
+    }
+    receipt = ReceiptV1(
+        receiptId="receipt-completion-history",
+        kind="apply",
+        status="applied",
+        startedAt="2026-09-04T15:15:00Z",
+        endedAt="2026-09-04T15:16:00Z",
+        cliVersion="test",
+        sourcePlan={"operations": [operation]},
+        sourcePlanText=json.dumps({"operations": [operation]}),
+        planId="11111111-1111-4111-8111-111111111111",
+        planDigest="sha256:test",
+        apiBaseHost="https://marvin.test",
+        accountUserId="123456",
+        accountEmail="pilot@example.com",
+        operations=[
+            ReceiptOperationV1(
+                operationId="complete-history",
+                action="complete",
+                targetId="task-complete",
+                targetType="task",
+                targetTitle="Archive the records",
+                status="applied",
+                plannedAfter={"done": True, "completedAt": completed_at},
+                afterFields={
+                    "done": {"present": True, "value": True},
+                    "doneAt": {"present": True, "value": done_at},
+                },
+            )
+        ],
+    )
+    receipt_path = isolated_app_dirs / "old-receipt.json"
+    receipt_path.write_bytes(receipt_file_bytes(receipt))
+    repair_path = isolated_app_dirs / "completion-repair.json"
+    client = CliMarvinClient(
+        {
+            "_id": "task-complete",
+            "_rev": "2-completed",
+            "db": "Tasks",
+            "title": "Archive the records",
+            "done": True,
+            "doneAt": done_at,
+            "day": "unassigned",
+            "updatedAt": 1234,
+        }
+    )
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+
+    result = runner.invoke(
+        app,
+        [
+            "history",
+            "audit",
+            str(receipt_path),
+            "--live",
+            "--repair-plan",
+            str(repair_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "completion history missing-day" in result.stdout
+    assert f"Repair plan: {repair_path}" in result.stdout
+    repair, _raw = cli_module.load_plan(repair_path)
+    assert repair.expectedAccount.userId == "123456"
+    assert repair.operations[0].before.scheduledDate is None
+    assert repair.operations[0].after.scheduledDate == "2026-09-04"
+    assert client.mutations == 0
+    assert client.closed
 
 
 def test_revert_plan_lookup_requires_an_exact_apply_receipt(

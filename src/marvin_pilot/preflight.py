@@ -14,6 +14,7 @@ from marvin_pilot.compiler import (
     compile_operation,
     project_compiled_mutation,
 )
+from marvin_pilot.completion import usable_marvin_day
 from marvin_pilot.errors import LivePreconditionError
 from marvin_pilot.field_registry import (
     FIELD_SPECS,
@@ -254,6 +255,20 @@ def _check_existing_preconditions(
         raise LivePreconditionError(
             f"operation {operation.operationId!r} targets an item already completed"
         )
+    if (
+        isinstance(operation, CompleteOperation)
+        and operation.target.type == "task"
+        and operation.completionDay is not None
+    ):
+        live_day = usable_marvin_day(document.get("day"))
+        if live_day != operation.completionDay.before:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} completion day is stale: expected "
+                f"{operation.completionDay.before!r}, found {live_day!r}",
+                check="completion-day",
+                expected=operation.completionDay.before,
+                found=live_day,
+            )
     existing_completed_at = (
         operation.display.existingCompletedAt if operation.display is not None else None
     )

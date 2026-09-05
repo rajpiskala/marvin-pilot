@@ -843,6 +843,13 @@ a:focus-visible {
   color: var(--warning);
 }
 
+.task-item.completion-day {
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 650;
+}
+
 .task-item.cleared {
   border: 1px dashed var(--line-strong);
   background: transparent;

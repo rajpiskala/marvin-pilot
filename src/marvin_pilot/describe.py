@@ -6,6 +6,7 @@ import json
 from collections import Counter
 from typing import Any
 
+from marvin_pilot.completion import completion_local_date
 from marvin_pilot.models.plan_v1 import (
     ChangePlanV1,
     CompleteOperation,
@@ -144,6 +145,19 @@ def render_plan_description(plan: ChangePlanV1) -> str:
             lines.extend(_accepted_source_loss_lines(after))
         elif isinstance(operation, CompleteOperation):
             lines.append(f"   completed at: {operation.completedAt}")
+            if operation.target.type == "task":
+                if operation.completionDay is None:
+                    lines.append(
+                        "   completion history day: current live day -> "
+                        f"{completion_local_date(operation.completedAt)} "
+                        "(inferred during live validation)"
+                    )
+                else:
+                    before = operation.completionDay.before or "unassigned"
+                    lines.append(
+                        f"   completion history day: {before} -> {operation.completionDay.after} "
+                        f"({operation.completionDay.behavior})"
+                    )
 
         expected_updated_at = getattr(operation, "expectedUpdatedAt", None)
         if expected_updated_at is not None:
@@ -187,6 +201,15 @@ def plan_description_payload(plan: ChangePlanV1) -> dict[str, Any]:
             value["after"] = operation.after.model_dump(exclude_unset=True, mode="json")
         elif isinstance(operation, CompleteOperation):
             value["completedAt"] = operation.completedAt
+            value["completionDay"] = (
+                operation.completionDay.model_dump(mode="json")
+                if operation.completionDay is not None
+                else {
+                    "before": None,
+                    "after": completion_local_date(operation.completedAt),
+                    "behavior": "inferred-live",
+                }
+            )
         if operation.display is not None:
             value["display"] = operation.display.model_dump(
                 mode="json", exclude_none=True, exclude_unset=True
@@ -254,6 +277,12 @@ def render_plan_markdown(plan: ChangePlanV1) -> str:
             lines.append(f"- Depends on: {dependencies}")
         if "completedAt" in operation:
             lines.append(f"- Completed at: {operation['completedAt']}")
+        if "completionDay" in operation:
+            lines.append(
+                "- Completion history day: `"
+                + json.dumps(operation["completionDay"], ensure_ascii=False, sort_keys=True)
+                + "`"
+            )
         if "siblingOrder" in operation:
             lines.append(
                 "- Relative order: `"

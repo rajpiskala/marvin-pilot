@@ -8,6 +8,7 @@ from collections import Counter, OrderedDict
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
+from marvin_pilot.completion import completion_local_date
 from marvin_pilot.models.plan_v1 import (
     ChangePlanV1,
     CompleteOperation,
@@ -114,6 +115,9 @@ class OperationView:
     recurrence_series_title: str | None
     recurrence_scheduled_date: str | None
     completed_at: str | None
+    completion_day_before: str | None
+    completion_day_after: str | None
+    completion_day_behavior: str | None
     existing_completed_at: str | None
     reason: str
     target_id: str
@@ -833,6 +837,29 @@ def _operation_view(
         "completed_at": (
             operation.completedAt if isinstance(operation, CompleteOperation) else None
         ),
+        "completion_day_before": (
+            operation.completionDay.before
+            if isinstance(operation, CompleteOperation) and operation.completionDay is not None
+            else None
+        ),
+        "completion_day_after": (
+            (
+                operation.completionDay.after
+                if operation.completionDay is not None
+                else completion_local_date(operation.completedAt)
+            )
+            if isinstance(operation, CompleteOperation) and operation.target.type == "task"
+            else None
+        ),
+        "completion_day_behavior": (
+            (
+                operation.completionDay.behavior
+                if operation.completionDay is not None
+                else "inferred-live"
+            )
+            if isinstance(operation, CompleteOperation) and operation.target.type == "task"
+            else None
+        ),
         "existing_completed_at": (
             operation.display.existingCompletedAt if operation.display is not None else None
         ),
@@ -933,20 +960,42 @@ def _operation_view(
         lifecycle_after = FieldValueView(
             "value", f"Completed at {operation.completedAt}", _exact_json(operation.completedAt)
         )
+        diffs = [
+            FieldDiffView(
+                "lifecycle",
+                f"{operation.target.type.title()} state",
+                lifecycle_before,
+                lifecycle_after,
+            )
+        ]
+        if operation.target.type == "task":
+            before_day = (
+                operation.completionDay.before if operation.completionDay is not None else None
+            )
+            after_day = (
+                operation.completionDay.after
+                if operation.completionDay is not None
+                else completion_local_date(operation.completedAt)
+            )
+            diffs.append(
+                FieldDiffView(
+                    "completionDay",
+                    "Completion history day",
+                    FieldValueView(
+                        "value" if before_day is not None else "none",
+                        before_day or "Live value (resolved before apply)",
+                        _exact_json(before_day),
+                    ),
+                    FieldValueView("value", after_day, _exact_json(after_day)),
+                )
+            )
         return OperationView(
             **common,
             before=_target_only_card(operation.target.title),
             after=_target_only_card(operation.target.title),
             before_empty_label=None,
             after_empty_label=None,
-            diffs=(
-                FieldDiffView(
-                    "lifecycle",
-                    f"{operation.target.type.title()} state",
-                    lifecycle_before,
-                    lifecycle_after,
-                ),
-            ),
+            diffs=tuple(diffs),
         )
     lifecycle_before = FieldValueView("value", "Active", '"active"')
     lifecycle_after = FieldValueView("value", "Deleted with Pilot recovery", '"trash"')

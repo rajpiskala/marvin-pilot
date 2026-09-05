@@ -539,6 +539,35 @@ def test_earlier_operation_dependency_is_valid(example_plan_dict: dict) -> None:
     parse_plan_bytes(encode(example_plan_dict))
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("after", "2026-08-09", "completionDay.after"),
+        ("behavior", "preserved", "completionDay.behavior"),
+    ],
+)
+def test_completion_day_metadata_must_match_completed_at_and_transition(
+    example_plan_dict: dict, field: str, value: str, message: str
+) -> None:
+    operation = {
+        "operationId": "complete-task",
+        "action": "complete",
+        "target": {"type": "task", "id": "task-id", "title": "Finish work"},
+        "reason": "Record the reviewed completion.",
+        "completedAt": "2026-08-08T23:55:00-07:00",
+        "completionDay": {
+            "before": "2026-08-07",
+            "after": "2026-08-08",
+            "behavior": "replaced",
+        },
+    }
+    operation["completionDay"][field] = value
+    example_plan_dict["operations"] = [operation]
+
+    with pytest.raises(PlanSyntaxError, match=message):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
 def test_plan_size_limit() -> None:
     with pytest.raises(PlanSyntaxError, match="exceeds"):
         parse_plan_bytes(b" " * (MAX_PLAN_BYTES + 1))

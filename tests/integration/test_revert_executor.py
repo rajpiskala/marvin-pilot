@@ -309,6 +309,13 @@ def test_ordered_same_document_chain_applies_and_reverts_as_one_plan(tmp_path: P
         "present": True,
         "value": False,
     }
+    completion_receipt = source.receipt.operations[3]
+    assert completion_receipt.plannedBefore["completionDay"] == "2026-08-08"
+    assert completion_receipt.plannedAfter["completionDay"] == "2026-08-08"
+    assert completion_receipt.beforeDocument["day"] == "2026-08-08"
+    assert completion_receipt.afterDocument["day"] == "2026-08-08"
+    assert completion_receipt.completionHistory.documentDayVerified is True
+    assert completion_receipt.completionHistory.serverHistoryStatus == "not-checked"
 
     reverted = revert_fixture(tmp_path, client, source, clock)
 

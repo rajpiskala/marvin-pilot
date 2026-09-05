@@ -896,6 +896,54 @@ def test_project_completion_is_visible_and_filterable(page) -> None:
         assert page.locator(".action-complete").count() == 2
 
 
+def test_task_completion_shows_history_day_and_replacement_semantics(page) -> None:
+    plan = {
+        "schemaVersion": 1,
+        "planId": "55555555-5555-4555-8555-555555555556",
+        "createdAt": "2026-09-05T12:00:00-07:00",
+        "summary": "Preview a historical task completion.",
+        "operations": [
+            {
+                "operationId": "complete-task-history",
+                "action": "complete",
+                "target": {
+                    "type": "task",
+                    "id": "task-history",
+                    "title": "Archive the records",
+                },
+                "reason": "Record the task under its actual completion day.",
+                "completedAt": "2026-09-04T18:30:00-07:00",
+                "completionDay": {
+                    "before": "2026-09-07",
+                    "after": "2026-09-04",
+                    "behavior": "replaced",
+                },
+            }
+        ],
+    }
+    with running_visualizer(plan_dict=plan) as server:
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+        history_day = page.locator(
+            '.hierarchy-pane-after [data-operation-id="complete-task-history"] .completion-day'
+        )
+        assert history_day.count() == 1
+        assert history_day.inner_text() == "History 2026-09-04"
+        assert history_day.get_attribute("datetime") == "2026-09-04"
+        assert "replaced" in history_day.get_attribute("title")
+        before = page.locator(
+            '.hierarchy-pane-before [data-operation-id="complete-task-history"]'
+        )
+        assert before.locator(".completion-day").count() == 0
+        assert before.locator(".task-items").count() == 0
+
+        page.locator(".operation-details summary").first.click()
+        details = page.locator(".operation-details[open]").inner_text()
+        assert "Completion history day" in details
+        assert "2026-09-07" in details
+        assert "2026-09-04" in details
+
+
 def test_completed_task_move_is_visibly_completed_on_both_sides(page) -> None:
     completed_at = "2026-07-23T18:30:00-07:00"
     category = {"id": "category-work", "type": "category", "title": "Work"}

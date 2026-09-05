@@ -193,6 +193,16 @@ def _changes_table(checked: PreflightOperation) -> Table:
             )
     elif isinstance(operation, CompleteOperation):
         table.add_row("completion", "open", f"completed at {operation.completedAt}")
+        if operation.target.type == "task":
+            if operation.completionDay is None:
+                before = format_plan_value("scheduledDate", checked.live_document.get("day"))
+                after = checked.compiled.desired_fields["day"]
+                behavior = "derived from live state"
+            else:
+                before = operation.completionDay.before or "unassigned"
+                after = operation.completionDay.after
+                behavior = operation.completionDay.behavior
+            table.add_row("completion history day", before, f"{after} ({behavior})")
     else:
         table.add_row(
             "document",
@@ -211,7 +221,9 @@ def _compiler_notes(checked: PreflightOperation) -> list[str]:
     if operation.action == "create":
         notes.append(f"{operation.target.type} identity/defaults/timestamps")
     if operation.action == "complete":
-        notes.append("done state and historical completion timestamp")
+        notes.append(
+            "done state, historical completion timestamp, and dated completion-history bucket"
+        )
     if operation.action == "trash":
         notes.append("API deletion after full recovery snapshot is journaled")
     return notes

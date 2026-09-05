@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from marvin_pilot.completion import completion_local_date
 from marvin_pilot.field_registry import (
     FIELD_SPECS,
     compile_fields_for_target,
@@ -289,9 +290,10 @@ def compile_complete(
     completed = datetime.fromisoformat(candidate)
     completed_ms = int(completed.timestamp() * 1_000)
     desired: dict[str, Any] = {"done": True}
+    done_field_update_ms = completed_ms if operation.target.type == "project" else now_ms
     setters = [
         {"key": "done", "val": True},
-        {"key": "fieldUpdates.done", "val": completed_ms},
+        {"key": "fieldUpdates.done", "val": done_field_update_ms},
     ]
     touched_fields = ["done"]
     if operation.target.type == "project":
@@ -305,14 +307,18 @@ def compile_complete(
         )
         touched_fields.append("doneDate")
     else:
+        completion_day = completion_local_date(operation.completedAt)
         desired["doneAt"] = completed_ms
+        desired["day"] = completion_day
         setters.extend(
             [
                 {"key": "doneAt", "val": completed_ms},
-                {"key": "fieldUpdates.doneAt", "val": completed_ms},
+                {"key": "fieldUpdates.doneAt", "val": now_ms},
+                {"key": "day", "val": completion_day},
+                {"key": "fieldUpdates.day", "val": now_ms},
             ]
         )
-        touched_fields.append("doneAt")
+        touched_fields.extend(("doneAt", "day"))
     setters.append({"key": "updatedAt", "val": now_ms})
     return CompiledMutation(
         operation_id=operation.operationId,

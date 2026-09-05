@@ -22,6 +22,11 @@ from marvin_pilot.atomic import (
     exclusive_write_bytes,
     replace_with_retry,
 )
+from marvin_pilot.completion import (
+    completion_day_behavior,
+    completion_local_date,
+    usable_marvin_day,
+)
 from marvin_pilot.errors import HistoryError
 from marvin_pilot.models.plan_v1 import (
     CompleteOperation,
@@ -30,6 +35,7 @@ from marvin_pilot.models.plan_v1 import (
     UpdateOperation,
 )
 from marvin_pilot.models.receipt_v1 import (
+    ReceiptCompletionHistoryV1,
     ReceiptOperationV1,
     ReceiptStatus,
     ReceiptV1,
@@ -170,6 +176,18 @@ class HistoryStore:
                     "done": True,
                     "completedAt": operation.completedAt,
                 }
+                if operation.target.type == "task":
+                    before_day = usable_marvin_day(
+                        checked.live_document.get("day")
+                        if checked.live_document is not None
+                        else None
+                    )
+                    after_day = completion_local_date(operation.completedAt)
+                    planned_before["completionDay"] = before_day
+                    planned_after["completionDay"] = after_day
+                    planned_after["completionDayBehavior"] = completion_day_behavior(
+                        before_day, after_day
+                    )
             operations.append(
                 ReceiptOperationV1(
                     operationId=operation.operationId,
@@ -188,8 +206,20 @@ class HistoryStore:
                     desiredFields=checked.compiled.desired_fields,
                     beforeDocument=(
                         deepcopy(checked.live_document)
-                        if isinstance(operation, TrashOperation)
+                        if isinstance(operation, (TrashOperation, CompleteOperation))
                         and checked.live_document is not None
+                        else None
+                    ),
+                    completionHistory=(
+                        ReceiptCompletionHistoryV1(
+                            expectedDay=completion_local_date(operation.completedAt),
+                            detail=(
+                                "Pending verification of the task document's completion-history "
+                                "day. Server /doneItems visibility has not been checked."
+                            ),
+                        )
+                        if isinstance(operation, CompleteOperation)
+                        and operation.target.type == "task"
                         else None
                     ),
                     request=RequestRecord(

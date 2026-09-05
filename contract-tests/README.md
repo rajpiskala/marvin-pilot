@@ -144,6 +144,26 @@ Use two disposable projects and one disposable ordinary task in the dedicated de
 Also preview the move before applying it. Both Now and After must show the completed task marker and
 localized original completion timestamp under their respective project hierarchies.
 
+### Completion-history day contract extension
+
+Use disposable ordinary tasks that begin overdue, scheduled today, future-scheduled, and
+unscheduled. Complete each with an explicit timestamp whose offset resolves to the chosen
+completion date. For every case verify that:
+
+1. `doneAt` is the exact requested instant and `day` is that instant's local `YYYY-MM-DD`.
+2. `fieldUpdates.done`, `fieldUpdates.doneAt`, `fieldUpdates.day`, and `updatedAt` describe the
+   actual mutation time rather than pretending that the API write happened historically.
+3. The receipt stores the full before/after documents, marks the document day verified, and leaves
+   separate server-history visibility explicitly `not-checked`.
+4. The visualizer shows both the localized marked-done timestamp and the history day.
+5. Revert restores the exact prior `day`, including the original date of a generated occurrence.
+
+Include a generated recurrence occurrence whose identity date differs from its completion date.
+Its apply receipt must retain the original recurrence identity while its verified after-state uses
+the completion day; reverse-order revert must accept that transition and restore the identity day.
+Do not infer native behavior from a single same-day task, because that misses the replacement and
+recurrence cases.
+
 ## Independent live oracles
 
 Use at least two independent views for mutations:
