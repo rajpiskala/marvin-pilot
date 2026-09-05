@@ -931,9 +931,7 @@ def test_task_completion_shows_history_day_and_replacement_semantics(page) -> No
         assert history_day.inner_text() == "History 2026-09-04"
         assert history_day.get_attribute("datetime") == "2026-09-04"
         assert "replaced" in history_day.get_attribute("title")
-        before = page.locator(
-            '.hierarchy-pane-before [data-operation-id="complete-task-history"]'
-        )
+        before = page.locator('.hierarchy-pane-before [data-operation-id="complete-task-history"]')
         assert before.locator(".completion-day").count() == 0
         assert before.locator(".task-items").count() == 0
 

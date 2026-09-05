@@ -19,9 +19,7 @@ from marvin_pilot.completion import (
         ("2026-09-05T00:00:00Z", "2026-09-05"),
     ],
 )
-def test_completion_local_date_uses_the_timestamp_offset(
-    completed_at: str, expected: str
-) -> None:
+def test_completion_local_date_uses_the_timestamp_offset(completed_at: str, expected: str) -> None:
     assert completion_local_date(completed_at) == expected
 
 

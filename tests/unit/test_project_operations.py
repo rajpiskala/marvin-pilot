@@ -136,9 +136,7 @@ def test_complete_compiles_historical_dates_for_tasks_and_projects() -> None:
     task_value = project_complete()
     task_value["target"]["type"] = "task"
     task = parse_plan_bytes(encode_plan([task_value])).operations[0]
-    task_compiled = compile_complete(
-        task, {"done": False, "day": "2026-07-30"}, NOW_MS
-    )
+    task_compiled = compile_complete(task, {"done": False, "day": "2026-07-30"}, NOW_MS)
     task_setters = {setter["key"]: setter["val"] for setter in task_compiled.payload["setters"]}
     assert task_setters["fieldUpdates.done"] == NOW_MS
     assert task_setters["doneAt"] == expected_completed_ms

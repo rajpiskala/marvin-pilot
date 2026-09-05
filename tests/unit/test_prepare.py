@@ -182,9 +182,7 @@ def test_prepare_resolves_one_normalized_backup_title_but_rejects_ambiguity() ->
         ("2026-09-07", "replaced"),
     ],
 )
-def test_prepare_locks_native_completion_day_transition(
-    before_day: str, behavior: str
-) -> None:
+def test_prepare_locks_native_completion_day_transition(before_day: str, behavior: str) -> None:
     value = draft_value()
     value["operations"] = [
         {
