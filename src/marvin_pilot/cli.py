@@ -2376,18 +2376,23 @@ Container notes:
   - Container moves are rejected if the proposed ancestry would create or inherit a parent cycle.
     Project/category Trash is blocked unless the documented /children read proves every direct
     child was already moved or deleted, including earlier projected operations in this plan.
-  - complete.completedAt may not be later than the plan's createdAt. Pilot writes a task's
-    historical doneAt and assigns day to the local YYYY-MM-DD encoded by completedAt. A prepared
-    task plan adds completionDay {{before,after,behavior}} so that history-bucket replacement is
-    explicit during review. For tasks, native completion field-update timestamps and updatedAt
-    remain the actual apply time. Projects retain their existing historical doneDate behavior.
+  - complete.completedAt may not be later than the plan's createdAt. Pilot writes exact historical
+    doneAt and assigns day to the local YYYY-MM-DD encoded by completedAt for both tasks and
+    projects; projects also receive doneDate. A prepared plan adds completionDay
+    {{before,after,behavior}} so that history-bucket replacement is explicit during review. Native
+    completion field-update timestamps and updatedAt remain the actual apply time.
+  - For a legacy project completed by an older Pilot version without doneAt, history audit --live
+    --repair-plan may emit complete with repairHistory: true. Live preflight requires the project
+    to remain completed, requires doneDate to match completedAt, and refuses to overwrite any
+    existing doneAt.
   - Revert restores prior open/completed fields. Reverting create deletes the created document;
     reverting trash recreates the exact ID from Pilot's full-document recovery snapshot. These
     deleted documents do not appear in Marvin's native Trash UI, so retain private receipts.
-  - Apply verifies the full task document and receipts say explicitly that server /doneItems
-    visibility was not checked. Audit through full-document reads. For older Pilot receipts,
-    history audit --live detects missing/wrong history days, and --repair-plan PATH emits a
-    separately reviewable locked repair plan without applying it.
+  - Apply verifies the full task/project document and receipts say explicitly that server
+    /doneItems visibility was not checked. Audit through full-document reads. For older Pilot
+    receipts, history audit --live detects missing/wrong task history days and missing project
+    completion timestamps; --repair-plan PATH emits a separately reviewable locked plan without
+    applying it.
 
 Generate a complete example with:
   marvin-pilot example
@@ -2810,8 +2815,9 @@ def history_audit_command(
         typer.Option(
             "--repair-plan",
             help=(
-                "Write a review-only plan for completion-history day defects proven by the "
-                "receipt and current full documents; refuses to overwrite an existing file."
+                "Write a review-only plan for task history-day or missing project timestamp "
+                "defects proven by the receipt and current full documents; refuses to "
+                "overwrite an existing file."
             ),
         ),
     ] = None,
@@ -2823,7 +2829,7 @@ def history_audit_command(
         ),
     ] = None,
 ) -> None:
-    """Compare live documents with a receipt; optionally draft safe history-day repairs."""
+    """Compare live documents with a receipt; optionally draft safe completion repairs."""
 
     if not live:
         _fail(PlanSyntaxError("history audit requires --live"))

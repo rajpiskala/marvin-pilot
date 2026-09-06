@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol
 from uuid import uuid4
 
-from pydantic import Field, StrictStr, ValidationError, field_validator, model_validator
+from pydantic import Field, StrictBool, StrictStr, ValidationError, field_validator, model_validator
 
 from marvin_pilot.backup_cache import load_cached_backup_documents
 from marvin_pilot.backup_context import normalized_title
@@ -106,6 +106,7 @@ class DraftTrashOperation(DraftBaseOperation):
 class DraftCompleteOperation(DraftBaseOperation):
     action: Literal["complete"]
     completedAt: StrictStr
+    repairHistory: StrictBool = False
 
 
 DraftOperation = Annotated[
@@ -543,7 +544,7 @@ def prepare_draft(
             elif draft_operation.action == "complete":
                 display = _display_for(document, None, reader, action="complete")
                 completion_day = None
-                if target.type == "task":
+                if target.type in {"task", "project"}:
                     final_day = completion_local_date(draft_operation.completedAt)
                     before_day = usable_marvin_day(document.get("day"))
                     completion_day = CompletionDayTransition(
@@ -551,6 +552,7 @@ def prepare_draft(
                         after=final_day,
                         behavior=completion_day_behavior(before_day, final_day),
                     )
+                repair_fields = {"repairHistory": True} if draft_operation.repairHistory else {}
                 operation = CompleteOperation(
                     operationId=draft_operation.operationId,
                     action="complete",
@@ -561,6 +563,7 @@ def prepare_draft(
                     dependsOnOperations=draft_operation.dependsOnOperations,
                     expectedUpdatedAt=expected_updated_at,
                     display=display,
+                    **repair_fields,
                 )
             else:
                 display = _display_for(document, None, reader, action="trash")
@@ -628,7 +631,10 @@ def rebase_plan_live(
             display = _display_for(document, operation.after, reader, action="update")
         else:
             display = _display_for(document, None, reader, action=operation.action)
-        if isinstance(operation, CompleteOperation) and operation.target.type == "task":
+        if isinstance(operation, CompleteOperation) and operation.target.type in {
+            "task",
+            "project",
+        }:
             before_day = usable_marvin_day(document.get("day"))
             if operation.completionDay is not None and operation.completionDay.before != before_day:
                 raise LivePreconditionError(

@@ -119,19 +119,37 @@ def test_nested_project_create_requires_order_and_operation_dependency() -> None
 def test_complete_compiles_historical_dates_for_tasks_and_projects() -> None:
     project = parse_plan_bytes(encode_plan([project_complete()])).operations[0]
     assert isinstance(project, CompleteOperation)
-    project_compiled = compile_complete(project, {"done": False}, NOW_MS)
+    project_compiled = compile_complete(
+        project,
+        {"done": False, "day": "2026-07-30"},
+        NOW_MS,
+    )
     project_setters = {
         setter["key"]: setter["val"] for setter in project_compiled.payload["setters"]
     }
     expected_completed_ms = 1_784_856_600_000
     assert project_setters == {
         "done": True,
-        "fieldUpdates.done": expected_completed_ms,
+        "fieldUpdates.done": NOW_MS,
+        "doneAt": expected_completed_ms,
+        "fieldUpdates.doneAt": NOW_MS,
+        "day": "2026-07-23",
+        "fieldUpdates.day": NOW_MS,
         "doneDate": "2026-07-23",
-        "fieldUpdates.doneDate": expected_completed_ms,
+        "fieldUpdates.doneDate": NOW_MS,
         "updatedAt": NOW_MS,
     }
-    assert project_compiled.desired_fields == {"done": True, "doneDate": "2026-07-23"}
+    assert project_compiled.desired_fields == {
+        "done": True,
+        "doneAt": expected_completed_ms,
+        "day": "2026-07-23",
+        "doneDate": "2026-07-23",
+    }
+    assert project_compiled.before_fields["doneAt"] == {"present": False}
+    assert project_compiled.before_fields["day"] == {
+        "present": True,
+        "value": "2026-07-30",
+    }
 
     task_value = project_complete()
     task_value["target"]["type"] = "task"
@@ -178,6 +196,52 @@ def test_project_preflight_validates_document_type_and_open_state() -> None:
     live["project-existing"]["type"] = "project"
     live["project-existing"]["done"] = True
     with pytest.raises(LivePreconditionError, match="already completed"):
+        preflight_plan(plan, FakeReader(live), now_ms=NOW_MS)
+
+
+def test_project_history_repair_requires_exact_legacy_defect() -> None:
+    operation = project_complete()
+    operation["repairHistory"] = True
+    operation["completionDay"] = {
+        "before": None,
+        "after": "2026-07-23",
+        "behavior": "assigned",
+    }
+    plan = parse_plan_bytes(encode_plan([operation]))
+    live = {
+        "project-existing": {
+            "_id": "project-existing",
+            "_rev": "1-project",
+            "db": "Categories",
+            "type": "project",
+            "title": "Shipped",
+            "done": True,
+            "doneDate": "2026-07-23",
+            "day": "unassigned",
+            "updatedAt": 100,
+        }
+    }
+
+    result = preflight_plan(plan, FakeReader(live), now_ms=NOW_MS)
+    assert result.operations[0].compiled.desired_fields == {
+        "done": True,
+        "doneAt": 1_784_856_600_000,
+        "day": "2026-07-23",
+        "doneDate": "2026-07-23",
+    }
+
+    live["project-existing"]["doneAt"] = 1_784_856_600_000
+    with pytest.raises(LivePreconditionError, match="refuses to overwrite existing project doneAt"):
+        preflight_plan(plan, FakeReader(live), now_ms=NOW_MS)
+
+    live["project-existing"].pop("doneAt")
+    live["project-existing"]["doneDate"] = "2026-07-22"
+    with pytest.raises(LivePreconditionError, match="doneDate is stale"):
+        preflight_plan(plan, FakeReader(live), now_ms=NOW_MS)
+
+    live["project-existing"]["doneDate"] = "2026-07-23"
+    live["project-existing"]["done"] = False
+    with pytest.raises(LivePreconditionError, match="project is open"):
         preflight_plan(plan, FakeReader(live), now_ms=NOW_MS)
 
 
@@ -418,3 +482,17 @@ def test_visualizer_exposes_project_type_and_completion() -> None:
     assert operation.after is not None
     assert operation.diffs[0].label == "Project state"
     assert operation.diffs[0].after.summary == "Completed at 2026-07-23T18:30:00-07:00"
+    assert operation.completion_day_after == "2026-07-23"
+    assert operation.history_repair is False
+
+    repair_value = project_complete()
+    repair_value["repairHistory"] = True
+    repair_value["completionDay"] = {
+        "before": None,
+        "after": "2026-07-23",
+        "behavior": "assigned",
+    }
+    repair = build_plan_view(parse_plan_bytes(encode_plan([repair_value]))).operations[0]
+    assert repair.history_repair is True
+    assert repair.change_kinds == ("history repaired",)
+    assert repair.diffs[0].before.summary == "Completed; native timestamp missing"

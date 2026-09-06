@@ -568,6 +568,21 @@ def test_completion_day_metadata_must_match_completed_at_and_transition(
         parse_plan_bytes(encode(example_plan_dict))
 
 
+def test_completion_history_repair_is_project_only(example_plan_dict: dict) -> None:
+    operation = {
+        "operationId": "repair-task-history",
+        "action": "complete",
+        "target": {"type": "task", "id": "task-id", "title": "Finish work"},
+        "reason": "This invalid repair must be rejected.",
+        "completedAt": "2026-08-08T23:55:00-07:00",
+        "repairHistory": True,
+    }
+    example_plan_dict["operations"] = [operation]
+
+    with pytest.raises(PlanSyntaxError, match="repairHistory is only valid for project"):
+        parse_plan_bytes(encode(example_plan_dict))
+
+
 def test_plan_size_limit() -> None:
     with pytest.raises(PlanSyntaxError, match="exceeds"):
         parse_plan_bytes(b" " * (MAX_PLAN_BYTES + 1))

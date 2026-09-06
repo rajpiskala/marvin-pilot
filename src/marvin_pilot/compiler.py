@@ -289,36 +289,31 @@ def compile_complete(
     )
     completed = datetime.fromisoformat(candidate)
     completed_ms = int(completed.timestamp() * 1_000)
-    desired: dict[str, Any] = {"done": True}
-    done_field_update_ms = completed_ms if operation.target.type == "project" else now_ms
+    completion_day = completion_local_date(operation.completedAt)
+    desired: dict[str, Any] = {
+        "done": True,
+        "doneAt": completed_ms,
+        "day": completion_day,
+    }
     setters = [
         {"key": "done", "val": True},
-        {"key": "fieldUpdates.done", "val": done_field_update_ms},
+        {"key": "fieldUpdates.done", "val": now_ms},
+        {"key": "doneAt", "val": completed_ms},
+        {"key": "fieldUpdates.doneAt", "val": now_ms},
+        {"key": "day", "val": completion_day},
+        {"key": "fieldUpdates.day", "val": now_ms},
     ]
-    touched_fields = ["done"]
+    touched_fields = ["done", "doneAt", "day"]
     if operation.target.type == "project":
-        done_date = completed.date().isoformat()
+        done_date = completion_day
         desired["doneDate"] = done_date
         setters.extend(
             [
                 {"key": "doneDate", "val": done_date},
-                {"key": "fieldUpdates.doneDate", "val": completed_ms},
+                {"key": "fieldUpdates.doneDate", "val": now_ms},
             ]
         )
         touched_fields.append("doneDate")
-    else:
-        completion_day = completion_local_date(operation.completedAt)
-        desired["doneAt"] = completed_ms
-        desired["day"] = completion_day
-        setters.extend(
-            [
-                {"key": "doneAt", "val": completed_ms},
-                {"key": "fieldUpdates.doneAt", "val": now_ms},
-                {"key": "day", "val": completion_day},
-                {"key": "fieldUpdates.day", "val": now_ms},
-            ]
-        )
-        touched_fields.extend(("doneAt", "day"))
     setters.append({"key": "updatedAt", "val": now_ms})
     return CompiledMutation(
         operation_id=operation.operationId,

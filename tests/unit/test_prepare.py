@@ -207,3 +207,43 @@ def test_prepare_locks_native_completion_day_transition(before_day: str, behavio
     assert transition.before == (None if before_day == "unassigned" else before_day)
     assert transition.after == "2026-09-04"
     assert transition.behavior == behavior
+
+
+def test_prepare_locks_project_completion_day_and_history_repair() -> None:
+    value = draft_value()
+    value["operations"] = [
+        {
+            "operationId": "repair-project-history",
+            "action": "complete",
+            "target": {"type": "project", "id": "project-1"},
+            "completedAt": "2026-09-04T10:55:00-07:00",
+            "repairHistory": True,
+            "reason": "Restore the missing native project completion timestamp.",
+        }
+    ]
+    source = documents()
+    source.append(
+        {
+            "_id": "project-1",
+            "db": "Categories",
+            "type": "project",
+            "title": "Finished project",
+            "done": True,
+            "doneDate": "2026-09-04",
+            "day": "unassigned",
+            "updatedAt": 123,
+        }
+    )
+
+    plan = prepare_draft(
+        parse_draft_bytes(json.dumps(value).encode()),
+        SnapshotReader(source),
+        now_ms=NOW_MS,
+    )
+
+    operation = plan.operations[0]
+    assert operation.repairHistory is True
+    assert operation.completionDay is not None
+    assert operation.completionDay.before is None
+    assert operation.completionDay.after == "2026-09-04"
+    assert operation.completionDay.behavior == "assigned"

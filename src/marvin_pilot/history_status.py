@@ -170,7 +170,7 @@ def audit_receipt_live(receipt: ReceiptV1, reader: Any) -> list[dict[str, Any]]:
         source_operation = source_operations.get(operation.operationId, {})
         if (
             operation.action == "complete"
-            and operation.targetType == "task"
+            and operation.targetType in {"task", "project"}
             and document is not None
         ):
             target = source_operation.get("target")
@@ -190,6 +190,7 @@ def audit_receipt_live(receipt: ReceiptV1, reader: Any) -> list[dict[str, Any]]:
             actual_day = usable_marvin_day(document.get("day"))
             expected_done_at = _timestamp_ms(planned_completed_at)
             actual_done_at = document.get("doneAt")
+            done_at_missing = actual_done_at is None or actual_done_at == ""
             done_at_matches = (
                 expected_done_at is not None
                 and isinstance(actual_done_at, (int, float))
@@ -200,6 +201,8 @@ def audit_receipt_live(receipt: ReceiptV1, reader: Any) -> list[dict[str, Any]]:
                 completion_state = "unknown"
             elif document.get("done") is not True:
                 completion_state = "not-completed"
+            elif operation.targetType == "project" and done_at_missing:
+                completion_state = "missing-timestamp"
             elif not done_at_matches:
                 completion_state = "completion-timestamp-changed"
             elif actual_day is None:
@@ -208,9 +211,13 @@ def audit_receipt_live(receipt: ReceiptV1, reader: Any) -> list[dict[str, Any]]:
                 completion_state = "wrong-day"
             else:
                 completion_state = "matches"
-            repairable = completion_state in {"missing-day", "wrong-day"} and not (
-                source_recurrence is not None and actual_day is None
-            )
+            done_date_matches = document.get("doneDate") == expected_day
+            if operation.targetType == "project":
+                repairable = completion_state == "missing-timestamp" and done_date_matches
+            else:
+                repairable = completion_state in {"missing-day", "wrong-day"} and not (
+                    source_recurrence is not None and actual_day is None
+                )
             result["completionHistory"] = {
                 "state": completion_state,
                 "expectedDay": expected_day,
@@ -222,6 +229,13 @@ def audit_receipt_live(receipt: ReceiptV1, reader: Any) -> list[dict[str, Any]]:
                 ),
                 "repairable": repairable,
             }
+            if operation.targetType == "project":
+                result["completionHistory"].update(
+                    {
+                        "actualDoneDate": document.get("doneDate"),
+                        "doneDateMatches": done_date_matches,
+                    }
+                )
             result["currentUpdatedAt"] = document.get("updatedAt")
             result["currentTitle"] = document.get("title")
             if source_recurrence is not None:
@@ -229,11 +243,20 @@ def audit_receipt_live(receipt: ReceiptV1, reader: Any) -> list[dict[str, Any]]:
             if completion_state != "matches":
                 state = "mismatch" if repairable else state
                 result["state"] = state
-                result["detail"] = (
-                    f"completion history {completion_state}: expected day "
-                    f"{expected_day!r}, found {actual_day!r}; full document verified, "
-                    "server /doneItems discoverability unverified"
-                )
+                if operation.targetType == "project":
+                    result["detail"] = (
+                        f"completion history {completion_state}: expected doneAt "
+                        f"{expected_done_at!r}, found {actual_done_at!r}; expected day/doneDate "
+                        f"{expected_day!r}, found day={actual_day!r} and "
+                        f"doneDate={document.get('doneDate')!r}; full document verified, "
+                        "server /doneItems discoverability unverified"
+                    )
+                else:
+                    result["detail"] = (
+                        f"completion history {completion_state}: expected day "
+                        f"{expected_day!r}, found {actual_day!r}; full document verified, "
+                        "server /doneItems discoverability unverified"
+                    )
             else:
                 result["detail"] = (
                     "completion document and history day match; server /doneItems "
@@ -249,7 +272,7 @@ def build_completion_day_repair_plan(
     expected_account: dict[str, str],
     created_at: datetime | None = None,
 ) -> ChangePlanV1:
-    """Build a review-only repair plan for confirmed historical completion-day defects."""
+    """Build a review-only repair plan for confirmed completion-history defects."""
 
     operations: list[dict[str, Any]] = []
     seen_targets: dict[str, str] = {}
@@ -274,38 +297,67 @@ def build_completion_day_repair_plan(
                 )
             continue
         seen_targets[target_id] = expected_day
-        target: dict[str, Any] = {"type": "task", "id": target_id, "title": title}
+        target_type = row.get("targetType")
+        if target_type not in {"task", "project"}:
+            continue
+        target: dict[str, Any] = {"type": target_type, "id": target_id, "title": title}
         recurrence = row.get("recurrence")
-        if isinstance(recurrence, dict):
+        if target_type == "task" and isinstance(recurrence, dict):
             current_occurrence_day = completion.get("actualDay")
             if not isinstance(current_occurrence_day, str):
                 continue
             target["recurrence"] = recurrence | {"scheduledDate": current_occurrence_day}
         digest = hashlib.sha256(target_id.encode("utf-8")).hexdigest()[:16]
-        operation: dict[str, Any] = {
-            "operationId": f"repair-completion-day-{digest}",
-            "action": "update",
-            "target": target,
-            "before": {"scheduledDate": completion.get("actualDay")},
-            "after": {"scheduledDate": expected_day},
-            "display": {"existingCompletedAt": planned_completed_at},
-            "reason": (
-                "Restore Marvin completed-item history to the local calendar date encoded "
-                "by the original reviewed completedAt timestamp."
-            ),
-        }
+        if target_type == "project":
+            operation = {
+                "operationId": f"repair-project-completion-{digest}",
+                "action": "complete",
+                "target": target,
+                "completedAt": planned_completed_at,
+                "completionDay": {
+                    "before": completion.get("actualDay"),
+                    "after": expected_day,
+                    "behavior": (
+                        "assigned"
+                        if completion.get("actualDay") is None
+                        else (
+                            "preserved"
+                            if completion.get("actualDay") == expected_day
+                            else "replaced"
+                        )
+                    ),
+                },
+                "repairHistory": True,
+                "reason": (
+                    "Restore the missing native project completion timestamp and align its "
+                    "history day with the original reviewed completedAt timestamp."
+                ),
+            }
+        else:
+            operation = {
+                "operationId": f"repair-completion-day-{digest}",
+                "action": "update",
+                "target": target,
+                "before": {"scheduledDate": completion.get("actualDay")},
+                "after": {"scheduledDate": expected_day},
+                "display": {"existingCompletedAt": planned_completed_at},
+                "reason": (
+                    "Restore Marvin completed-item history to the local calendar date encoded "
+                    "by the original reviewed completedAt timestamp."
+                ),
+            }
         updated_at = row.get("currentUpdatedAt")
         if isinstance(updated_at, int) and not isinstance(updated_at, bool):
             operation["expectedUpdatedAt"] = updated_at
         operations.append(operation)
     if not operations:
-        raise PlanSemanticError("receipt audit found no confirmed completion-day repairs")
+        raise PlanSemanticError("receipt audit found no confirmed completion-history repairs")
     timestamp = (created_at or datetime.now(UTC)).astimezone(UTC)
     value = {
         "schemaVersion": 1,
         "planId": str(uuid4()),
         "createdAt": timestamp.isoformat().replace("+00:00", "Z"),
-        "summary": f"Repair {len(operations)} historical completion-history day(s).",
+        "summary": f"Repair {len(operations)} historical completion-history record(s).",
         "expectedAccount": expected_account,
         "operations": operations,
     }

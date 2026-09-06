@@ -164,6 +164,13 @@ the completion day; reverse-order revert must accept that transition and restore
 Do not infer native behavior from a single same-day task, because that misses the replacement and
 recurrence cases.
 
+Also complete an open project with an explicit historical timestamp. Verify exact `doneAt`, matching
+local-date `day` and `doneDate`, real mutation-time field updates, full receipt snapshots, browser
+presentation, and exact revert. For a legacy receipt whose completed project has matching
+`doneDate` but no `doneAt`, verify that history audit emits a separately reviewable
+`repairHistory: true` completion, refuses any existing timestamp, and leaves the project completed
+through apply and revert.
+
 ## Independent live oracles
 
 Use at least two independent views for mutations:

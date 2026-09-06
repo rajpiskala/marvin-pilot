@@ -145,7 +145,9 @@ def render_plan_description(plan: ChangePlanV1) -> str:
             lines.extend(_accepted_source_loss_lines(after))
         elif isinstance(operation, CompleteOperation):
             lines.append(f"   completed at: {operation.completedAt}")
-            if operation.target.type == "task":
+            if operation.repairHistory:
+                lines.append("   completion history repair: missing project timestamp")
+            if operation.target.type in {"task", "project"}:
                 if operation.completionDay is None:
                     lines.append(
                         "   completion history day: current live day -> "
@@ -201,6 +203,7 @@ def plan_description_payload(plan: ChangePlanV1) -> dict[str, Any]:
             value["after"] = operation.after.model_dump(exclude_unset=True, mode="json")
         elif isinstance(operation, CompleteOperation):
             value["completedAt"] = operation.completedAt
+            value["repairHistory"] = operation.repairHistory
             value["completionDay"] = (
                 operation.completionDay.model_dump(mode="json")
                 if operation.completionDay is not None
@@ -277,6 +280,8 @@ def render_plan_markdown(plan: ChangePlanV1) -> str:
             lines.append(f"- Depends on: {dependencies}")
         if "completedAt" in operation:
             lines.append(f"- Completed at: {operation['completedAt']}")
+        if operation.get("repairHistory"):
+            lines.append("- Completion history repair: missing project timestamp")
         if "completionDay" in operation:
             lines.append(
                 "- Completion history day: `"

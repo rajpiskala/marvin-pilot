@@ -14,7 +14,7 @@ from marvin_pilot.compiler import (
     compile_operation,
     project_compiled_mutation,
 )
-from marvin_pilot.completion import usable_marvin_day
+from marvin_pilot.completion import completion_local_date, usable_marvin_day
 from marvin_pilot.errors import LivePreconditionError
 from marvin_pilot.field_registry import (
     FIELD_SPECS,
@@ -251,13 +251,36 @@ def _check_existing_preconditions(
         raise LivePreconditionError(
             f"operation {operation.operationId!r} targets an item currently in Trash"
         )
-    if isinstance(operation, CompleteOperation) and document.get("done") is True:
-        raise LivePreconditionError(
-            f"operation {operation.operationId!r} targets an item already completed"
-        )
+    if isinstance(operation, CompleteOperation):
+        already_done = document.get("done") is True
+        if operation.repairHistory:
+            if not already_done:
+                raise LivePreconditionError(
+                    f"operation {operation.operationId!r} cannot repair completion history "
+                    "because the project is open"
+                )
+            live_done_at = document.get("doneAt")
+            if _meaningful(live_done_at):
+                raise LivePreconditionError(
+                    f"operation {operation.operationId!r} refuses to overwrite existing "
+                    f"project doneAt {live_done_at!r}"
+                )
+            expected_day = completion_local_date(operation.completedAt)
+            if document.get("doneDate") != expected_day:
+                raise LivePreconditionError(
+                    f"operation {operation.operationId!r} project doneDate is stale: expected "
+                    f"{expected_day!r}, found {document.get('doneDate')!r}",
+                    check="completion-done-date",
+                    expected=expected_day,
+                    found=document.get("doneDate"),
+                )
+        elif already_done:
+            raise LivePreconditionError(
+                f"operation {operation.operationId!r} targets an item already completed"
+            )
     if (
         isinstance(operation, CompleteOperation)
-        and operation.target.type == "task"
+        and operation.target.type in {"task", "project"}
         and operation.completionDay is not None
     ):
         live_day = usable_marvin_day(document.get("day"))

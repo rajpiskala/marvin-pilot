@@ -17,7 +17,7 @@
   "schemas": {
     "changePlan": {
       "file": "change-plan-v1.schema.json",
-      "sha256": "d0be57d088d268ff1968d8a1985eced2de4149fdde5e9e0374db801e9cc55a39"
+      "sha256": "08afd08ab714b635247baee7579eac8d7ccb0d859a2e27d2af92ebdbaa781280"
     },
     "accountConfig": {
       "file": "account-config-v1.schema.json",

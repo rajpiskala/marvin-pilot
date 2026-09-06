@@ -296,6 +296,7 @@ def test_completion_inherits_known_ancestry_but_respects_explicit_unknown_after_
     assert operation.completion_day_before is None
     assert operation.completion_day_after == "2026-08-15"
     assert operation.completion_day_behavior == "assigned"
+    assert operation.history_repair is False
     assert operation.diffs[-1].label == "Completion history day"
     assert operation.after_path_state == "path"
     assert operation.after_path == operation.before_path

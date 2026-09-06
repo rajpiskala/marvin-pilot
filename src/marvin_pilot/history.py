@@ -171,12 +171,15 @@ class HistoryStore:
             elif isinstance(operation, CreateOperation):
                 planned_after = operation.after.model_dump(exclude_unset=True, mode="json")
             elif isinstance(operation, CompleteOperation):
-                planned_before = {"done": False}
+                planned_before = {"done": operation.repairHistory}
                 planned_after = {
                     "done": True,
                     "completedAt": operation.completedAt,
                 }
-                if operation.target.type == "task":
+                if operation.repairHistory:
+                    planned_before["completionTimestamp"] = None
+                    planned_after["historyRepair"] = True
+                if operation.target.type in {"task", "project"}:
                     before_day = usable_marvin_day(
                         checked.live_document.get("day")
                         if checked.live_document is not None
@@ -214,12 +217,13 @@ class HistoryStore:
                         ReceiptCompletionHistoryV1(
                             expectedDay=completion_local_date(operation.completedAt),
                             detail=(
-                                "Pending verification of the task document's completion-history "
-                                "day. Server /doneItems visibility has not been checked."
+                                f"Pending verification of the {operation.target.type} document's "
+                                "completion timestamp and history day. Server /doneItems "
+                                "visibility has not been checked."
                             ),
                         )
                         if isinstance(operation, CompleteOperation)
-                        and operation.target.type == "task"
+                        and operation.target.type in {"task", "project"}
                         else None
                     ),
                     request=RequestRecord(

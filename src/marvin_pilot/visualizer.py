@@ -118,6 +118,7 @@ class OperationView:
     completion_day_before: str | None
     completion_day_after: str | None
     completion_day_behavior: str | None
+    history_repair: bool
     existing_completed_at: str | None
     reason: str
     target_id: str
@@ -732,7 +733,7 @@ def _change_kinds(
     if isinstance(operation, CreateOperation):
         return ("created",)
     if isinstance(operation, CompleteOperation):
-        return ("completed",)
+        return ("history repaired",) if operation.repairHistory else ("completed",)
     if isinstance(operation, TrashOperation):
         return ("trashed",)
 
@@ -848,7 +849,8 @@ def _operation_view(
                 if operation.completionDay is not None
                 else completion_local_date(operation.completedAt)
             )
-            if isinstance(operation, CompleteOperation) and operation.target.type == "task"
+            if isinstance(operation, CompleteOperation)
+            and operation.target.type in {"task", "project"}
             else None
         ),
         "completion_day_behavior": (
@@ -857,8 +859,12 @@ def _operation_view(
                 if operation.completionDay is not None
                 else "inferred-live"
             )
-            if isinstance(operation, CompleteOperation) and operation.target.type == "task"
+            if isinstance(operation, CompleteOperation)
+            and operation.target.type in {"task", "project"}
             else None
+        ),
+        "history_repair": (
+            operation.repairHistory if isinstance(operation, CompleteOperation) else False
         ),
         "existing_completed_at": (
             operation.display.existingCompletedAt if operation.display is not None else None
@@ -956,7 +962,11 @@ def _operation_view(
             ),
         )
     if isinstance(operation, CompleteOperation):
-        lifecycle_before = FieldValueView("value", "Active", '"active"')
+        lifecycle_before = FieldValueView(
+            "value",
+            "Completed; native timestamp missing" if operation.repairHistory else "Active",
+            '"completed-without-timestamp"' if operation.repairHistory else '"active"',
+        )
         lifecycle_after = FieldValueView(
             "value", f"Completed at {operation.completedAt}", _exact_json(operation.completedAt)
         )
@@ -968,7 +978,7 @@ def _operation_view(
                 lifecycle_after,
             )
         ]
-        if operation.target.type == "task":
+        if operation.target.type in {"task", "project"}:
             before_day = (
                 operation.completionDay.before if operation.completionDay is not None else None
             )

@@ -886,6 +886,10 @@ def test_project_completion_is_visible_and_filterable(page) -> None:
             "2026-07-23T18:30:00-07:00",
         )
         assert completion_time.inner_text() == f"Done {expected_local}"
+        history_day = page.locator(
+            '.hierarchy-pane-after [data-operation-id="complete-project"] .completion-day'
+        )
+        assert history_day.inner_text() == "History 2026-07-23"
 
         page.locator(".operation-details summary").first.click()
         details = page.locator(".operation-details[open]").inner_text()
@@ -894,6 +898,49 @@ def test_project_completion_is_visible_and_filterable(page) -> None:
 
         page.locator('[data-action-filter="complete"]').click()
         assert page.locator(".action-complete").count() == 2
+
+
+def test_project_completion_history_repair_is_explicit_in_preview(page) -> None:
+    plan = {
+        "schemaVersion": 1,
+        "planId": "55555555-5555-4555-8555-555555555557",
+        "createdAt": "2026-09-05T12:00:00-07:00",
+        "summary": "Preview one guarded project history repair.",
+        "operations": [
+            {
+                "operationId": "repair-project-history",
+                "action": "complete",
+                "target": {
+                    "type": "project",
+                    "id": "project-history",
+                    "title": "Finished project",
+                },
+                "reason": "Restore the missing native completion timestamp.",
+                "completedAt": "2026-07-18T18:30:00-07:00",
+                "completionDay": {
+                    "before": None,
+                    "after": "2026-07-18",
+                    "behavior": "assigned",
+                },
+                "repairHistory": True,
+            }
+        ],
+    }
+    with running_visualizer(plan_dict=plan) as server:
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+        before = page.locator('.hierarchy-pane-before [data-operation-id="repair-project-history"]')
+        after = page.locator('.hierarchy-pane-after [data-operation-id="repair-project-history"]')
+        assert before.get_by_text("HISTORY REPAIRED").count() == 1
+        assert before.locator(".completion-time").count() == 0
+        assert after.get_by_text("HISTORY REPAIRED").count() == 1
+        assert after.locator(".completion-time").count() == 1
+        assert after.locator(".completion-day").inner_text() == "History 2026-07-18"
+
+        page.locator(".operation-details summary").first.click()
+        details = page.locator(".operation-details[open]").inner_text()
+        assert "Completed; native timestamp missing" in details
+        assert "Completed at 2026-07-18T18:30:00-07:00" in details
 
 
 def test_task_completion_shows_history_day_and_replacement_semantics(page) -> None:

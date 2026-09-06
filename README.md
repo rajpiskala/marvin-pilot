@@ -360,11 +360,14 @@ Status distinguishes never applied, applied, partial/ambiguous, fully reverted, 
 reverted, and changed artifacts without calling Marvin. `history audit --live` then compares each
 verified receipt post-state with current full documents, separating a still-matching result from a
 later edit, missing document, or unexpectedly present deleted target. It notes that Marvin UI
-caches can lag behind the document API. For task completions, the audit separately classifies the
-full document's completion timestamp and completion-history day. If an older Pilot receipt proves
-that the timestamp still matches but `day` is missing or wrong, `--repair-plan` writes a normal,
-account-pinned, concurrency-locked plan that changes only that history day. It never applies the
-repair and refuses to guess after the completion timestamp has changed.
+caches can lag behind the document API. For task and project completions, the audit separately
+classifies the full document's completion timestamp and completion-history day. If an older task
+receipt proves that the timestamp still matches but `day` is missing or wrong, `--repair-plan`
+writes a normal update that changes only that history day. If an older project receipt proves that
+`doneAt` is missing while `doneDate` still matches the reviewed timestamp, it writes a guarded
+`repairHistory` completion that restores `doneAt` and aligns `day`. Every repair plan is
+account-pinned and concurrency-locked; the command never applies it or overwrites an existing
+project timestamp.
 
 For large reorganizations, prefer reviewed batches over one enormous plan.
 
@@ -611,20 +614,28 @@ moves/deletions earlier in the same dependency chain are projected, so a plan ca
 then delete a container. Container Trash remains blocked from unattended apply regardless of the
 nominal one-operation impact.
 
-Task completion writes the exact `doneAt` instant and assigns Marvin's `day` to the local calendar
-date encoded by that timestamp's explicit RFC 3339 offset. This is the native behavior confirmed
-for overdue, same-day, future-scheduled, and unscheduled ordinary tasks; a missing/unassigned day is
-assigned, while any other scheduled day is replaced unless it already matches. Marvin's
-`fieldUpdates.done`, `fieldUpdates.doneAt`, `fieldUpdates.day`, and `updatedAt` retain the real apply
-time, matching the native client while keeping concurrency truthful. Project completion instead
-writes the local date to `doneDate`.
+Task and project completion write the exact `doneAt` instant and assign Marvin's `day` to the local
+calendar date encoded by that timestamp's explicit RFC 3339 offset. Projects additionally write
+the same date to `doneDate`. This is the native task behavior confirmed for overdue, same-day,
+future-scheduled, and unscheduled items; a missing/unassigned day is assigned, while any other
+scheduled day is replaced unless it already matches. Marvin's `fieldUpdates.done`,
+`fieldUpdates.doneAt`, `fieldUpdates.day`, project `fieldUpdates.doneDate`, and `updatedAt` retain
+the real apply time, matching the native client while keeping concurrency truthful.
 
-Prepared and rebased task-completion plans include review-only
+Prepared and rebased task/project-completion plans include review-only
 `completionDay: {before, after, behavior}` metadata. `before` is the current usable day or `null`,
 `after` is the timestamp's local date, and `behavior` is `assigned`, `preserved`, or `replaced`.
 Live preflight rejects a stale `before` lock. Older plans that omit this optional metadata remain
 compatible: live preflight still derives and verifies the same setter, while `prepare`/`rebase`
 adds the explicit lock for human review.
+
+Projects completed by Pilot versions that predate native `doneAt` support can be audited from their
+original receipts. `marvin-pilot history audit RECEIPT --live --repair-plan REPAIR.json` emits a
+separate `complete` operation with `repairHistory: true` only when the project is still completed,
+its `doneAt` is absent, and its `doneDate` agrees with the original reviewed `completedAt`. Live
+preflight locks the title, `updatedAt`, current history day, and `doneDate`, and refuses to overwrite
+any existing completion timestamp. The repair remains review-only until explicitly applied and is
+fully revertible from its own receipt.
 
 Completed tasks remain ordinary task documents addressable by exact ID. Pilot can rename or reparent them without reopening them, but the plan must include the verified `display.existingCompletedAt` timestamp so the historical state is visible during review. This supports backup-assisted historical reorganization while retaining a fresh live-state and concurrency check before every write.
 
@@ -678,12 +689,12 @@ Deleting an explicit generated occurrence tombstones that exact task document. P
 
 Series subtasks preserve declared order and are copied by Marvin into future occurrences. Generated occurrences use the ordinary task-subtask model, including stable IDs and done state. Receipts record recurrence scope, and conflict-aware revert supports both series edits and explicit occurrence edits.
 
-One upstream distinction matters for audits: Pilot verifies the full task document after apply,
-including `done`, `doneAt`, and the completion-history `day`; it does not claim that the separate,
-limited-token `/doneItems` endpoint was checked. Receipts expose both facts explicitly. Use
-`history audit --live` for authoritative full-document comparison. For older receipts created
-before Pilot wrote `day`, the same command can diagnose a timestamp-matching defect and
-`--repair-plan PATH` can emit a separately reviewable correction.
+One upstream distinction matters for audits: Pilot verifies the full task/project document after
+apply, including `done`, `doneAt`, and the completion-history `day` (plus project `doneDate`); it
+does not claim that the separate, limited-token `/doneItems` endpoint was checked. Receipts expose
+both facts explicitly. Use `history audit --live` for authoritative full-document comparison. For
+older receipts created before Pilot wrote task `day` or project `doneAt`, the same command can
+diagnose the defect and `--repair-plan PATH` can emit a separately reviewable correction.
 
 ### Pilot-managed Trash and recovery
 
@@ -759,9 +770,10 @@ recurrence-series create/read/update/Trash/restore/revert, explicit generated-oc
 update/complete/Trash/revert, create/update/schedule/unschedule/Trash/restore/revert workflows, and
 a 200-operation scale run against a dedicated development account. Native task completion-day
 behavior was separately checked across overdue, same-day, future, unscheduled, and cross-day
-recurrence cases. Recurrence and completion scope also have unit, in-memory integration, and
-browser-visualizer coverage; their disposable live-account contracts are described in
-`contract-tests/README.md`.
+recurrence cases. Native completed-project documents were also cross-checked for `doneAt`, `day`,
+`doneDate`, and real write-time field-update semantics. Recurrence and completion scope have unit,
+in-memory integration, and browser-visualizer coverage; their disposable live-account contracts
+are described in `contract-tests/README.md`.
 
 See [`contract-tests/README.md`](contract-tests/README.md) before running live contract cases.
 

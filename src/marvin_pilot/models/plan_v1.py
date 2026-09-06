@@ -779,7 +779,7 @@ class TrashOperation(BaseOperation):
 
 
 class CompletionDayTransition(ClosedModel):
-    """Review lock for the Marvin history bucket used by a task completion."""
+    """Review lock for the Marvin history bucket used by an item completion."""
 
     before: StrictStr | None
     after: StrictStr
@@ -798,6 +798,7 @@ class CompleteOperation(BaseOperation):
     target: ExistingItemTarget
     completedAt: StrictStr
     completionDay: CompletionDayTransition | None = None
+    repairHistory: StrictBool = False
     expectedUpdatedAt: Annotated[StrictInt, Field(ge=0)] | None = None
 
     @field_validator("completedAt")
@@ -809,9 +810,9 @@ class CompleteOperation(BaseOperation):
     def reject_category_completion(self) -> CompleteOperation:
         if self.target.type == "category":
             raise ValueError("categories cannot be completed; only tasks and projects can")
-        if self.target.type == "project" and self.completionDay is not None:
-            raise ValueError("completionDay is only valid for task completions")
-        if self.target.type == "task" and self.completionDay is not None:
+        if self.repairHistory and self.target.type != "project":
+            raise ValueError("repairHistory is only valid for project completions")
+        if self.completionDay is not None:
             expected_after = completion_local_date(self.completedAt)
             if self.completionDay.after != expected_after:
                 raise ValueError(

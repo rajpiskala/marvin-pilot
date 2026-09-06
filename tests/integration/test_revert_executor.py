@@ -221,12 +221,93 @@ def test_project_completion_apply_and_revert_restores_open_state(tmp_path: Path)
     )
 
     assert client.documents[project_id]["done"] is True
+    assert client.documents[project_id]["doneAt"] == 1_784_856_600_000
+    assert client.documents[project_id]["day"] == "2026-07-23"
     assert client.documents[project_id]["doneDate"] == "2026-07-23"
     assert source.receipt.operations[0].targetType == "project"
+    assert source.receipt.operations[0].completionHistory is not None
+    assert source.receipt.operations[0].completionHistory.documentDayVerified is True
 
     revert_fixture(tmp_path, client, source, clock)
     assert client.documents[project_id]["done"] is False
+    assert client.documents[project_id]["doneAt"] is None
+    assert client.documents[project_id]["day"] == "unassigned"
     assert client.documents[project_id]["doneDate"] is None
+
+
+def test_project_completion_history_repair_stays_completed_and_reverts(tmp_path: Path) -> None:
+    project_id = "legacy-completed-project"
+    documents = {
+        project_id: {
+            "_id": project_id,
+            "_rev": "1-project",
+            "db": "Categories",
+            "type": "project",
+            "title": "Finished project",
+            "done": True,
+            "doneDate": "2026-07-18",
+            "day": "unassigned",
+            "updatedAt": 100,
+        }
+    }
+    value = {
+        "schemaVersion": 1,
+        "planId": "55555555-5555-4555-8555-555555555555",
+        "createdAt": "2026-08-11T12:00:00-07:00",
+        "summary": "Repair one legacy project completion timestamp.",
+        "operations": [
+            {
+                "operationId": "repair-project-history",
+                "action": "complete",
+                "target": {
+                    "type": "project",
+                    "id": project_id,
+                    "title": "Finished project",
+                },
+                "reason": "Restore the timestamp recorded by the original plan.",
+                "completedAt": "2026-07-18T18:30:00-07:00",
+                "completionDay": {
+                    "before": None,
+                    "after": "2026-07-18",
+                    "behavior": "assigned",
+                },
+                "repairHistory": True,
+                "expectedUpdatedAt": 100,
+            }
+        ],
+    }
+    raw = json.dumps(value).encode()
+    client = InMemoryMarvin(documents)
+    clock = Clock()
+    source = execute_apply(
+        parse_plan_bytes(raw),
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _checked: True,
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+
+    expected_done_at = 1_784_424_600_000
+    assert client.documents[project_id]["done"] is True
+    assert client.documents[project_id]["doneAt"] == expected_done_at
+    assert client.documents[project_id]["day"] == "2026-07-18"
+    assert client.documents[project_id]["doneDate"] == "2026-07-18"
+    operation = source.receipt.operations[0]
+    assert operation.plannedBefore == {
+        "done": True,
+        "completionTimestamp": None,
+        "completionDay": None,
+    }
+    assert operation.completionHistory is not None
+    assert operation.completionHistory.documentDayVerified is True
+
+    revert_fixture(tmp_path, client, source, clock)
+    assert client.documents[project_id]["done"] is True
+    assert client.documents[project_id]["doneAt"] is None
+    assert client.documents[project_id]["day"] == "unassigned"
+    assert client.documents[project_id]["doneDate"] == "2026-07-18"
 
 
 def test_ordered_same_document_chain_applies_and_reverts_as_one_plan(tmp_path: Path) -> None:

@@ -293,7 +293,7 @@ def test_completion_audit_refuses_unsafe_timestamp_repair() -> None:
 
     assert rows[0]["completionHistory"]["state"] == "completion-timestamp-changed"
     assert rows[0]["completionHistory"]["repairable"] is False
-    with pytest.raises(PlanSemanticError, match="no confirmed completion-day repairs"):
+    with pytest.raises(PlanSemanticError, match="no confirmed completion-history repairs"):
         build_completion_day_repair_plan(
             rows,
             expected_account={"userId": "123456", "email": "pilot@example.com"},
@@ -332,3 +332,148 @@ def test_recurring_completion_repair_locks_the_current_occurrence_day() -> None:
     assert operation.target.recurrence.scheduledDate == "2026-09-02"
     assert operation.before.scheduledDate == "2026-09-02"
     assert operation.after.scheduledDate == "2026-09-04"
+
+
+def test_project_completion_audit_builds_guarded_timestamp_repair() -> None:
+    completed_at = "2026-07-18T18:30:00-07:00"
+    stored = receipt().model_copy(deep=True)
+    stored.sourcePlan = {
+        "operations": [
+            {
+                "operationId": "complete-project-history",
+                "action": "complete",
+                "target": {
+                    "type": "project",
+                    "id": "project-complete",
+                    "title": "Finished project",
+                },
+                "completedAt": completed_at,
+            }
+        ]
+    }
+    stored.operations = [
+        ReceiptOperationV1(
+            operationId="complete-project-history",
+            action="complete",
+            targetId="project-complete",
+            targetType="project",
+            targetTitle="Finished project",
+            status="applied",
+            plannedAfter={"done": True, "completedAt": completed_at},
+            afterFields={
+                "done": {"present": True, "value": True},
+                "doneDate": {"present": True, "value": "2026-07-18"},
+            },
+        )
+    ]
+    rows = audit_receipt_live(
+        stored,
+        AuditReader(
+            {
+                "project-complete": {
+                    "_id": "project-complete",
+                    "db": "Categories",
+                    "type": "project",
+                    "title": "Finished project",
+                    "done": True,
+                    "doneDate": "2026-07-18",
+                    "day": "unassigned",
+                    "updatedAt": 4321,
+                }
+            }
+        ),
+    )
+
+    assert rows[0]["state"] == "mismatch"
+    assert rows[0]["completionHistory"] == {
+        "state": "missing-timestamp",
+        "expectedDay": "2026-07-18",
+        "actualDay": None,
+        "plannedCompletedAt": completed_at,
+        "doneAtMatches": False,
+        "discoverability": "unverified",
+        "repairable": True,
+        "actualDoneDate": "2026-07-18",
+        "doneDateMatches": True,
+    }
+
+    plan = build_completion_day_repair_plan(
+        rows,
+        expected_account={"userId": "123456", "email": "pilot@example.com"},
+        created_at=datetime(2026, 9, 5, tzinfo=UTC),
+    )
+    operation = plan.operations[0]
+    assert operation.action == "complete"
+    assert operation.target.type == "project"
+    assert operation.completedAt == completed_at
+    assert operation.repairHistory is True
+    assert operation.completionDay is not None
+    assert operation.completionDay.before is None
+    assert operation.completionDay.after == "2026-07-18"
+    assert operation.expectedUpdatedAt == 4321
+
+
+def test_project_completion_audit_refuses_wrong_done_date_or_existing_timestamp() -> None:
+    completed_at = "2026-07-18T18:30:00-07:00"
+    done_at = int(datetime.fromisoformat(completed_at).timestamp() * 1_000)
+    stored = receipt().model_copy(deep=True)
+    stored.sourcePlan = {
+        "operations": [
+            {
+                "operationId": "complete-project-history",
+                "action": "complete",
+                "target": {
+                    "type": "project",
+                    "id": "project-complete",
+                    "title": "Finished project",
+                },
+                "completedAt": completed_at,
+            }
+        ]
+    }
+    stored.operations = [
+        ReceiptOperationV1(
+            operationId="complete-project-history",
+            action="complete",
+            targetId="project-complete",
+            targetType="project",
+            targetTitle="Finished project",
+            status="applied",
+            afterFields={"done": {"present": True, "value": True}},
+        )
+    ]
+
+    wrong_date_rows = audit_receipt_live(
+        stored,
+        AuditReader(
+            {
+                "project-complete": {
+                    "title": "Finished project",
+                    "done": True,
+                    "doneDate": "2026-07-17",
+                    "day": "unassigned",
+                    "updatedAt": 1,
+                }
+            }
+        ),
+    )
+    assert wrong_date_rows[0]["completionHistory"]["state"] == "missing-timestamp"
+    assert wrong_date_rows[0]["completionHistory"]["repairable"] is False
+
+    timestamp_rows = audit_receipt_live(
+        stored,
+        AuditReader(
+            {
+                "project-complete": {
+                    "title": "Finished project",
+                    "done": True,
+                    "doneAt": done_at + 1,
+                    "doneDate": "2026-07-18",
+                    "day": "2026-07-18",
+                    "updatedAt": 1,
+                }
+            }
+        ),
+    )
+    assert timestamp_rows[0]["completionHistory"]["state"] == ("completion-timestamp-changed")
+    assert timestamp_rows[0]["completionHistory"]["repairable"] is False

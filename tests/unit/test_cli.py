@@ -1306,6 +1306,93 @@ def test_revert_plan_lookup_requires_an_exact_apply_receipt(
     assert "no applied or partial receipt exactly matches" in result.stderr
 
 
+def test_history_audit_writes_review_only_project_timestamp_repair(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    completed_at = "2026-07-18T18:30:00-07:00"
+    operation = {
+        "operationId": "complete-project-history",
+        "action": "complete",
+        "target": {
+            "type": "project",
+            "id": "project-complete",
+            "title": "Finished project",
+        },
+        "completedAt": completed_at,
+    }
+    receipt = ReceiptV1(
+        receiptId="receipt-project-completion-history",
+        kind="apply",
+        status="applied",
+        startedAt="2026-07-19T01:30:00Z",
+        endedAt="2026-07-19T01:31:00Z",
+        cliVersion="test",
+        sourcePlan={"operations": [operation]},
+        sourcePlanText=json.dumps({"operations": [operation]}),
+        planId="22222222-2222-4222-8222-222222222222",
+        planDigest="sha256:project-test",
+        apiBaseHost="https://marvin.test",
+        accountUserId="123456",
+        accountEmail="pilot@example.com",
+        operations=[
+            ReceiptOperationV1(
+                operationId="complete-project-history",
+                action="complete",
+                targetId="project-complete",
+                targetType="project",
+                targetTitle="Finished project",
+                status="applied",
+                plannedAfter={"done": True, "completedAt": completed_at},
+                afterFields={
+                    "done": {"present": True, "value": True},
+                    "doneDate": {"present": True, "value": "2026-07-18"},
+                },
+            )
+        ],
+    )
+    receipt_path = isolated_app_dirs / "old-project-receipt.json"
+    receipt_path.write_bytes(receipt_file_bytes(receipt))
+    repair_path = isolated_app_dirs / "project-completion-repair.json"
+    client = CliMarvinClient(
+        {
+            "_id": "project-complete",
+            "_rev": "2-completed",
+            "db": "Categories",
+            "type": "project",
+            "title": "Finished project",
+            "done": True,
+            "doneDate": "2026-07-18",
+            "day": "unassigned",
+            "updatedAt": 4321,
+        }
+    )
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+
+    result = runner.invoke(
+        app,
+        [
+            "history",
+            "audit",
+            str(receipt_path),
+            "--live",
+            "--repair-plan",
+            str(repair_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "completion history missing-timestamp" in result.stdout
+    repair, _raw = cli_module.load_plan(repair_path)
+    repair_operation = repair.operations[0]
+    assert repair_operation.action == "complete"
+    assert repair_operation.target.type == "project"
+    assert repair_operation.completedAt == completed_at
+    assert repair_operation.repairHistory is True
+    assert repair_operation.expectedUpdatedAt == 4321
+    assert client.mutations == 0
+    assert client.closed
+
+
 def test_apply_decline_has_exit_6_and_no_receipt(
     isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

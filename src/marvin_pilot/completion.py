@@ -1,4 +1,4 @@
-"""Deterministic task-completion calendar semantics."""
+"""Deterministic task and project completion calendar semantics."""
 
 from __future__ import annotations
 

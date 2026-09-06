@@ -192,8 +192,9 @@ def _changes_table(checked: PreflightOperation) -> Table:
                 format_plan_value(field, new_value),
             )
     elif isinstance(operation, CompleteOperation):
-        table.add_row("completion", "open", f"completed at {operation.completedAt}")
-        if operation.target.type == "task":
+        before_state = "completed; timestamp missing" if operation.repairHistory else "open"
+        table.add_row("completion", before_state, f"completed at {operation.completedAt}")
+        if operation.target.type in {"task", "project"}:
             if operation.completionDay is None:
                 before = format_plan_value("scheduledDate", checked.live_document.get("day"))
                 after = checked.compiled.desired_fields["day"]

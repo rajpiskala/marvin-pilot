@@ -293,13 +293,14 @@ def execute_apply(
                     receipt_operation.afterDocument = deepcopy(resulting_document)
                 if (
                     isinstance(checked.operation, CompleteOperation)
-                    and checked.operation.target.type == "task"
+                    and checked.operation.target.type in {"task", "project"}
                     and receipt_operation.completionHistory is not None
                 ):
                     receipt_operation.completionHistory.documentDayVerified = True
                     receipt_operation.completionHistory.detail = (
-                        "The full task document contains the reviewed completion-history day. "
-                        "Server /doneItems visibility was not checked."
+                        f"The full {checked.operation.target.type} document contains the reviewed "
+                        "completion timestamp and history day. Server /doneItems visibility was "
+                        "not checked."
                     )
                 runtime_revisions[checked.operation.target.id] = revision_snapshot(
                     resulting_document
