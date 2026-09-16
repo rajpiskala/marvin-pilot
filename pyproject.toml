@@ -4,20 +4,25 @@ build-backend = "hatchling.build"
 
 [project]
 name = "amazing-marvin-pilot"
-version = "0.1.0.dev0"
+version = "0.1.0a1"
 description = "Human-reviewed, reversible AI task changes for Amazing Marvin"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Marvin Pilot contributors" }]
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = [
+  "ai-agents",
   "amazing-marvin",
+  "cli",
+  "human-in-the-loop",
   "mcp",
   "model-context-protocol",
-  "human-in-the-loop",
+  "reversible",
   "task-management",
 ]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 3 - Alpha",
   "Environment :: Console",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
@@ -35,6 +40,12 @@ dependencies = [
   "rich>=13.9",
   "typer>=0.15",
 ]
+
+[project.urls]
+Changelog = "https://github.com/rajpiskala/marvin-pilot/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/rajpiskala/marvin-pilot#readme"
+Issues = "https://github.com/rajpiskala/marvin-pilot/issues"
+Repository = "https://github.com/rajpiskala/marvin-pilot"
 
 [project.optional-dependencies]
 dev = [

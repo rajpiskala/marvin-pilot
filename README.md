@@ -34,28 +34,60 @@ Marvin Pilot keeps that credential on the human side of the workflow.
 
 The full-access token is never placed in a plan, MCP configuration, AI prompt, command-line argument, or environment variable.
 
+### Why not give an MCP write access directly?
+
+A write-enabled MCP can be the shortest path from a prompt to a Marvin mutation. That is useful for
+small, disposable changes, but its safety normally depends on the AI client showing and approving
+each tool call. The proposed batch is not necessarily a durable artifact, later calls can observe
+state changed by earlier calls, and Marvin's permanent document deletion has no native undo.
+
+Marvin Pilot is a transaction and recovery layer rather than another general-purpose MCP server:
+
+| | Write-enabled MCP | Read-only MCP + Marvin Pilot |
+| --- | --- | --- |
+| Full-access credential | Available inside the AI tool process | Kept on the human-controlled Pilot side |
+| Review unit | Usually one tool call | One exact multi-operation plan |
+| Stale-state protection | Tool-dependent | Titles, timestamps, hierarchy, recurrence, and other live locks |
+| Preview | Client-generated call summary | Offline hierarchical before/after visualizer |
+| Limits | Client/tool-dependent | Schema, operation, impact, and unattended-policy caps |
+| Verification | Tool-dependent | Reads every mutation back before recording success |
+| Recovery | Usually manual | Integrity-checked receipt and conflict-aware revert |
+
+Pilot still benefits from an MCP for read-only discovery. The separation is deliberate: the AI can
+understand the workload without receiving the credential that can irreversibly change it.
+
 ## Quick start
 
-Marvin Pilot requires **Python 3.11+** and currently installs from source.
+Marvin Pilot requires **Python 3.11+**. The recommended installation uses
+[pipx](https://pipx.pypa.io/) so the CLI has an isolated environment:
+
+```console
+pipx install "amazing-marvin-pilot==0.1.0a1"
+marvin-pilot --version
+```
+
+Because this is a pre-release, install the exact alpha version as shown. To install the tagged
+source directly from GitHub instead:
+
+```console
+pipx install "git+https://github.com/rajpiskala/marvin-pilot.git@v0.1.0a1"
+```
+
+For development, clone the repository and use an editable virtual environment:
 
 ```console
 git clone https://github.com/rajpiskala/marvin-pilot.git
 cd marvin-pilot
 python -m venv .venv
-```
 
-Activate the environment and install:
-
-```console
 # macOS / Linux
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .
 
 # Windows PowerShell
 .\.venv\Scripts\Activate.ps1
+
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
 Check the CLI:
@@ -63,6 +95,9 @@ Check the CLI:
 ```console
 marvin-pilot --help
 ```
+
+Release notes are maintained in [`CHANGELOG.md`](CHANGELOG.md). Marvin Pilot is licensed under
+the [MIT License](LICENSE).
 
 ### 1. Get both Marvin credentials
 

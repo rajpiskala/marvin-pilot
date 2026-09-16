@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 REQUIRED_SUFFIXES = (
+    "LICENSE",
     "marvin_pilot/visualizer.py",
     "marvin_pilot/visualizer_fields.py",
     "marvin_pilot/visualizer_server.py",
