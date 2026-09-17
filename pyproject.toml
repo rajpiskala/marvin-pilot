@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "amazing-marvin-pilot"
+name = "marvin-pilot"
 version = "0.1.0a1"
 description = "Human-reviewed, reversible AI task changes for Amazing Marvin"
 readme = "README.md"

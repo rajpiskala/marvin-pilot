@@ -1,6 +1,17 @@
-# Marvin Pilot
+<p align="center">
+  <img src="src/marvin_pilot/visualizer_assets/marvin-pilot.png" alt="Marvin Pilot mascot" width="360">
+</p>
 
-**Your AI plans. You approve—or preauthorize a small limit. Marvin Pilot applies.**
+<h1 align="center">Marvin Pilot</h1>
+
+<p align="center"><strong>Your AI plans. You approve—or preauthorize a small limit. Marvin Pilot applies.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/rajpiskala/marvin-pilot/actions/workflows/ci.yml"><img src="https://github.com/rajpiskala/marvin-pilot/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Project status: alpha">
+  <img src="https://img.shields.io/badge/python-3.11%2B-3776AB.svg?logo=python&logoColor=white" alt="Python 3.11 or newer">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
+</p>
 
 Marvin Pilot is a local approval CLI for [Amazing Marvin](https://amazingmarvin.com/) that lets an AI reorganize your tasks and projects **without giving it your full-access API token**.
 
@@ -62,7 +73,7 @@ Marvin Pilot requires **Python 3.11+**. The recommended installation uses
 [pipx](https://pipx.pypa.io/) so the CLI has an isolated environment:
 
 ```console
-pipx install "amazing-marvin-pilot==0.1.0a1"
+pipx install "marvin-pilot==0.1.0a1"
 marvin-pilot --version
 ```
 
@@ -818,6 +829,6 @@ in this README or the contract-test guide so a checkout is safe to share by defa
 
 ## Project status
 
-Marvin Pilot is currently **pre-alpha**. The planned PyPI distribution name is `amazing-marvin-pilot`; public PyPI publishing has not begun.
+Marvin Pilot is currently **alpha**. The PyPI distribution name is `marvin-pilot`; public PyPI publishing has not begun.
 
 Marvin Pilot is an independent community project and is not affiliated with or endorsed by Amazing Marvin.
