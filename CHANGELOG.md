@@ -2,6 +2,11 @@
 
 All notable changes to Marvin Pilot are documented here.
 
+## 1.0.1 — 2026-09-18
+
+- Fix the PyPI description's mascot image and documentation links by using public absolute URLs.
+- Fix GitHub release asset upload when the publishing job runs without a checkout.
+
 ## 1.0.0 — 2026-09-18
 
 First public stable release.

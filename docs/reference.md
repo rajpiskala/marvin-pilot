@@ -64,7 +64,7 @@ Marvin Pilot requires **Python 3.11+**. Install the stable release from PyPI wit
 [pipx](https://pipx.pypa.io/):
 
 ```console
-pipx install "marvin-pilot==1.0.0"
+pipx install "marvin-pilot==1.0.1"
 marvin-pilot --version
 ```
 

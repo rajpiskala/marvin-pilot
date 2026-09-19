@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/marvin_pilot/visualizer_assets/marvin-pilot.png" alt="Marvin Pilot mascot" width="360">
+  <img src="https://raw.githubusercontent.com/rajpiskala/marvin-pilot/main/src/marvin_pilot/visualizer_assets/marvin-pilot.png" alt="Marvin Pilot mascot" width="360">
 </p>
 
 <h1 align="center">Marvin Pilot</h1>
@@ -11,7 +11,7 @@
   <a href="https://pypi.org/project/marvin-pilot/"><img src="https://img.shields.io/pypi/v/marvin-pilot.svg" alt="PyPI version"></a>
   <img src="https://img.shields.io/badge/status-stable-brightgreen.svg" alt="Project status: stable">
   <img src="https://img.shields.io/badge/python-3.11%2B-3776AB.svg?logo=python&logoColor=white" alt="Python 3.11 or newer">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
+  <a href="https://github.com/rajpiskala/marvin-pilot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
   <a href="https://github.com/sponsors/rajpiskala"><img src="https://img.shields.io/badge/sponsor-rajpiskala-EA4AAA.svg?logo=githubsponsors&logoColor=white" alt="Sponsor Marvin Pilot"></a>
 </p>
 
@@ -20,7 +20,7 @@
   <a href="#-quick-start">Quick start</a> ·
   <a href="#-your-first-plan">First plan</a> ·
   <a href="#-safety-at-a-glance">Safety</a> ·
-  <a href="docs/reference.md">Full reference</a> ·
+  <a href="https://github.com/rajpiskala/marvin-pilot/blob/main/docs/reference.md">Full reference</a> ·
   <a href="#-sponsors">Sponsors</a>
 </p>
 
@@ -64,7 +64,7 @@ Marvin context  →  AI draft  →  prepare + validate  →  review  →  apply
 Marvin Pilot requires Python 3.11 or newer. Install the stable release from PyPI with [pipx](https://pipx.pypa.io/):
 
 ```console
-pipx install "marvin-pilot==1.0.0"
+pipx install "marvin-pilot==1.0.1"
 marvin-pilot --version
 ```
 
@@ -87,7 +87,7 @@ marvin-pilot config set-full-access-token
 marvin-pilot doctor
 ```
 
-`doctor` makes one read-only identity request and confirms which Marvin account the credential belongs to. See the [setup reference](docs/reference.md#quick-start) for MCP launcher configuration, platform-specific commands, and stricter credential modes.
+`doctor` makes one read-only identity request and confirms which Marvin account the credential belongs to. See the [setup reference](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/reference.md#quick-start) for MCP launcher configuration, platform-specific commands, and stricter credential modes.
 
 ## 🛫 Your first plan
 
@@ -111,7 +111,7 @@ If you need to undo it:
 marvin-pilot revert path/to/applied-receipt.json
 ```
 
-The full guide covers [compact draft preparation](docs/reference.md#your-first-plan), [bounded unattended apply](docs/reference.md#bounded-unattended-apply), [backup-powered historical context](docs/reference.md#historical-project-context-from-a-backup), and [dependent plan sets](docs/reference.md#dependency-ordered-plan-sets).
+The full guide covers [compact draft preparation](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/reference.md#your-first-plan), [bounded unattended apply](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/reference.md#bounded-unattended-apply), [backup-powered historical context](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/reference.md#historical-project-context-from-a-backup), and [dependent plan sets](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/reference.md#dependency-ordered-plan-sets).
 
 ## 🧰 Core commands
 
@@ -127,7 +127,7 @@ The full guide covers [compact draft preparation](docs/reference.md#your-first-p
 | `marvin-pilot revert RECEIPT` | Revert all or selected operations safely |
 | `marvin-pilot history …` | Inspect, verify, and audit local receipts |
 
-Run `marvin-pilot --help`, `marvin-pilot COMMAND --help`, or read the [complete command reference](docs/reference.md#core-commands).
+Run `marvin-pilot --help`, `marvin-pilot COMMAND --help`, or read the [complete command reference](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/reference.md#core-commands).
 
 ## 🛡️ Safety at a glance
 
@@ -137,14 +137,14 @@ Run `marvin-pilot --help`, `marvin-pilot COMMAND --help`, or read the [complete 
 - Pilot-managed deletion uses Marvin's document API, not Marvin's native Trash UI. Recovery depends on the private receipt snapshot, so keep receipts secure and backed up.
 - Plans and receipts may contain personal task content. `plans/`, local history, backups, and development artifacts should never be committed casually.
 
-Read the [full safety model](docs/reference.md#safety-model) and [security policy](SECURITY.md) before using Marvin Pilot on important workflows.
+Read the [full safety model](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/reference.md#safety-model) and [security policy](https://github.com/rajpiskala/marvin-pilot/blob/main/SECURITY.md) before using Marvin Pilot on important workflows.
 
 ## 📚 Documentation
 
-- [Comprehensive user and behavior reference](docs/reference.md)
-- [Live contract-test runbook](contract-tests/README.md)
-- [Release notes](CHANGELOG.md)
-- [Security policy](SECURITY.md)
+- [Comprehensive user and behavior reference](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/reference.md)
+- [Live contract-test runbook](https://github.com/rajpiskala/marvin-pilot/blob/main/contract-tests/README.md)
+- [Release notes](https://github.com/rajpiskala/marvin-pilot/blob/main/CHANGELOG.md)
+- [Security policy](https://github.com/rajpiskala/marvin-pilot/blob/main/SECURITY.md)
 
 GitHub automatically provides an outline for this README. The compact links at the top cover the common path; detailed navigation lives in the reference guide.
 
@@ -162,10 +162,10 @@ python -m ruff format --check src tests
 python -m ruff check src tests
 ```
 
-See the [development reference](docs/reference.md#development) before running browser or live-account contract tests.
+See the [development reference](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/reference.md#development) before running browser or live-account contract tests.
 
 ## 📌 Project status
 
 Marvin Pilot is an independent community project and is not affiliated with or endorsed by Amazing Marvin. The repository, CLI command, import package, and PyPI distribution all use the **Marvin Pilot** name.
 
-Released under the [MIT License](LICENSE).
+Released under the [MIT License](https://github.com/rajpiskala/marvin-pilot/blob/main/LICENSE).
