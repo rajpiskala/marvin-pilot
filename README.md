@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/rajpiskala/marvin-pilot/actions/workflows/ci.yml"><img src="https://github.com/rajpiskala/marvin-pilot/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-  <a href="https://pypi.org/project/marvin-pilot/"><img src="https://img.shields.io/pypi/v/marvin-pilot.svg" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/marvin-pilot/"><img src="https://img.shields.io/pypi/v/marvin-pilot.svg?cacheSeconds=300" alt="PyPI version"></a>
   <img src="https://img.shields.io/badge/status-stable-brightgreen.svg" alt="Project status: stable">
   <img src="https://img.shields.io/badge/python-3.11%2B-3776AB.svg?logo=python&logoColor=white" alt="Python 3.11 or newer">
   <a href="https://github.com/rajpiskala/marvin-pilot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
