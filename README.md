@@ -8,7 +8,8 @@
 
 <p align="center">
   <a href="https://github.com/rajpiskala/marvin-pilot/actions/workflows/ci.yml"><img src="https://github.com/rajpiskala/marvin-pilot/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-  <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Project status: alpha">
+  <a href="https://pypi.org/project/marvin-pilot/"><img src="https://img.shields.io/pypi/v/marvin-pilot.svg" alt="PyPI version"></a>
+  <img src="https://img.shields.io/badge/status-stable-brightgreen.svg" alt="Project status: stable">
   <img src="https://img.shields.io/badge/python-3.11%2B-3776AB.svg?logo=python&logoColor=white" alt="Python 3.11 or newer">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
   <a href="https://github.com/sponsors/rajpiskala"><img src="https://img.shields.io/badge/sponsor-rajpiskala-EA4AAA.svg?logo=githubsponsors&logoColor=white" alt="Sponsor Marvin Pilot"></a>
@@ -27,8 +28,8 @@ Marvin Pilot is a local safety layer between an AI assistant and [Amazing Marvin
 
 Your full-access Marvin credential stays on the Pilot side of the workflow instead of being placed in an AI prompt, plan, MCP configuration, command-line argument, or environment variable.
 
-> [!WARNING]
-> **Marvin Pilot is alpha software.** Back up Marvin and start with non-critical data. Some coupled or undocumented Marvin features cannot yet be preserved safely.
+> [!IMPORTANT]
+> Back up Marvin before your first use and review the documented limitations. Some coupled or undocumented Marvin features cannot be preserved safely.
 
 ## ✨ Why Marvin Pilot?
 
@@ -60,19 +61,19 @@ Marvin context  →  AI draft  →  prepare + validate  →  review  →  apply
 
 ## 🚀 Quick start
 
-Marvin Pilot requires Python 3.11 or newer. The first PyPI release is not live yet, so install the current source with [pipx](https://pipx.pypa.io/):
+Marvin Pilot requires Python 3.11 or newer. Install the stable release from PyPI with [pipx](https://pipx.pypa.io/):
+
+```console
+pipx install "marvin-pilot==1.0.0"
+marvin-pilot --version
+```
+
+To install the current source checkout instead:
 
 ```console
 git clone https://github.com/rajpiskala/marvin-pilot.git
 cd marvin-pilot
 pipx install .
-marvin-pilot --version
-```
-
-After `v0.1.0a1` is published to PyPI, the install command will be:
-
-```console
-pipx install "marvin-pilot==0.1.0a1"
 ```
 
 In Amazing Marvin, open **Settings → API** and create both credentials:
@@ -136,7 +137,7 @@ Run `marvin-pilot --help`, `marvin-pilot COMMAND --help`, or read the [complete 
 - Pilot-managed deletion uses Marvin's document API, not Marvin's native Trash UI. Recovery depends on the private receipt snapshot, so keep receipts secure and backed up.
 - Plans and receipts may contain personal task content. `plans/`, local history, backups, and development artifacts should never be committed casually.
 
-Read the [full safety model](docs/reference.md#safety-model) and [security policy](SECURITY.md) before using the alpha on important workflows.
+Read the [full safety model](docs/reference.md#safety-model) and [security policy](SECURITY.md) before using Marvin Pilot on important workflows.
 
 ## 📚 Documentation
 
@@ -165,6 +166,6 @@ See the [development reference](docs/reference.md#development) before running br
 
 ## 📌 Project status
 
-Marvin Pilot is an independent community project in alpha and is not affiliated with or endorsed by Amazing Marvin. The repository, CLI command, import package, and planned PyPI distribution all use the **Marvin Pilot** name.
+Marvin Pilot is an independent community project and is not affiliated with or endorsed by Amazing Marvin. The repository, CLI command, import package, and PyPI distribution all use the **Marvin Pilot** name.
 
 Released under the [MIT License](LICENSE).

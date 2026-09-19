@@ -15,7 +15,7 @@ private data and ask the maintainer for a private contact channel.
 
 ## Supported versions
 
-Marvin Pilot is alpha software. Security fixes are provided for the latest published alpha only.
+Security fixes are provided for the latest published major release.
 
 ## Credential boundary
 

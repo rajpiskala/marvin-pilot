@@ -235,7 +235,7 @@ def test_main_help_leads_with_safety_contract() -> None:
 def test_version() -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert result.stdout.strip() == "marvin-pilot 0.1.0a1"
+    assert result.stdout.strip() == "marvin-pilot 1.0.0"
 
 
 def test_example_pipes_into_validate() -> None:

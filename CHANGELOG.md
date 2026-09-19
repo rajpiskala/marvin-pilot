@@ -2,9 +2,9 @@
 
 All notable changes to Marvin Pilot are documented here.
 
-## 0.1.0a1 — 2026-09-15
+## 1.0.0 — 2026-09-18
 
-First public alpha.
+First public stable release.
 
 ### Highlights
 
@@ -16,7 +16,7 @@ First public alpha.
 - Integrity-checked receipts with full and selective conflict-aware revert.
 - Backup-powered historical project analysis without uploading backup data.
 
-### Alpha limitations
+### Known limitations
 
 - Marvin Pilot cannot preserve every coupled or undocumented Amazing Marvin feature.
 - Pilot-managed deletion uses Marvin's permanent document API and depends on the private receipt
@@ -24,5 +24,5 @@ First public alpha.
 - Installation and live use require Python 3.11 or newer and an Amazing Marvin account with API
   access enabled.
 
-Back up Marvin and start with non-critical data. See the README safety model and contract-test
-runbook before relying on the alpha for important workflows.
+Back up Marvin before first use. See the README safety model and contract-test runbook before
+relying on Marvin Pilot for important workflows.

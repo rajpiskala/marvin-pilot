@@ -17,8 +17,8 @@ MCP / Pilot context       AI                 Marvin Pilot                  Marvi
 
 Marvin Pilot validates the plan against live state, enforces configured limits, applies operations one at a time, verifies the result, and writes an integrity-checked receipt that can be fully or selectively reverted. Normal apply asks for confirmation; bounded unattended apply uses a policy that a human enabled in advance.
 
-> [!WARNING]
-> **Marvin Pilot is alpha software.** Task, project, category, subtask, recurrence, historical-completion, dependency-chain, and receipt-backed recovery paths have automated coverage and extensive development-account use. The client still cannot preserve every coupled Marvin feature. Back up Marvin and evaluate it with non-critical data first.
+> [!IMPORTANT]
+> **Back up Marvin before your first use.** Task, project, category, subtask, recurrence, historical-completion, dependency-chain, and receipt-backed recovery paths have automated coverage and extensive real-account use. The client still cannot preserve every coupled Marvin feature, so review the documented limitations before important workflows.
 
 ## Why Marvin Pilot?
 
@@ -60,20 +60,20 @@ understand the workload without receiving the credential that can irreversibly c
 
 ## Quick start
 
-Marvin Pilot requires **Python 3.11+**. The first PyPI release is not live yet, so install the
-current source with [pipx](https://pipx.pypa.io/):
+Marvin Pilot requires **Python 3.11+**. Install the stable release from PyPI with
+[pipx](https://pipx.pypa.io/):
+
+```console
+pipx install "marvin-pilot==1.0.0"
+marvin-pilot --version
+```
+
+To install the current source checkout instead:
 
 ```console
 git clone https://github.com/rajpiskala/marvin-pilot.git
 cd marvin-pilot
 pipx install .
-marvin-pilot --version
-```
-
-After `v0.1.0a1` is published to PyPI, install the exact alpha version:
-
-```console
-pipx install "marvin-pilot==0.1.0a1"
 ```
 
 For development, use an editable virtual environment from the repository checkout:
@@ -819,6 +819,6 @@ in this README or the contract-test guide so a checkout is safe to share by defa
 
 ## Project status
 
-Marvin Pilot is currently **alpha**. The PyPI distribution name is `marvin-pilot`; public PyPI publishing has not begun.
+Marvin Pilot is stable at **1.0**. The PyPI distribution name is `marvin-pilot`.
 
 Marvin Pilot is an independent community project and is not affiliated with or endorsed by Amazing Marvin.
