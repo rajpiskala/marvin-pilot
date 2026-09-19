@@ -4,7 +4,7 @@
 
 <h1 align="center">Marvin Pilot</h1>
 
-<p align="center"><strong>Your AI plans. You approve—or preauthorize a small limit. Marvin Pilot applies.</strong></p>
+<p align="center"><strong>Your AI plans. You approve. Marvin Pilot applies.</strong></p>
 
 <p align="center">
   <a href="https://github.com/rajpiskala/marvin-pilot/actions/workflows/ci.yml"><img src="https://github.com/rajpiskala/marvin-pilot/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
