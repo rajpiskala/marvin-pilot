@@ -11,6 +11,7 @@
   <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Project status: alpha">
   <img src="https://img.shields.io/badge/python-3.11%2B-3776AB.svg?logo=python&logoColor=white" alt="Python 3.11 or newer">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
+  <a href="https://github.com/sponsors/rajpiskala"><img src="https://img.shields.io/badge/sponsor-rajpiskala-EA4AAA.svg?logo=githubsponsors&logoColor=white" alt="Sponsor Marvin Pilot"></a>
 </p>
 
 <p align="center">
@@ -18,7 +19,8 @@
   <a href="#-quick-start">Quick start</a> ·
   <a href="#-your-first-plan">First plan</a> ·
   <a href="#-safety-at-a-glance">Safety</a> ·
-  <a href="docs/reference.md">Full reference</a>
+  <a href="docs/reference.md">Full reference</a> ·
+  <a href="#-sponsors">Sponsors</a>
 </p>
 
 Marvin Pilot is a local safety layer between an AI assistant and [Amazing Marvin](https://amazingmarvin.com/). The AI drafts an exact change plan; Pilot validates it against live state, shows you the result, applies only what you approve, and writes a receipt that can be reverted.
@@ -144,6 +146,10 @@ Read the [full safety model](docs/reference.md#safety-model) and [security polic
 - [Security policy](SECURITY.md)
 
 GitHub automatically provides an outline for this README. The compact links at the top cover the common path; detailed navigation lives in the reference guide.
+
+## 💖 Sponsors
+
+If Marvin Pilot saves you time, [sponsor its continued development](https://github.com/sponsors/rajpiskala). Sponsorship helps fund maintenance, testing across Marvin workflows, and safer automation features.
 
 ## 🧑‍💻 Development
 
