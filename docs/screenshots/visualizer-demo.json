@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "planId": "b10f7df6-7c6c-4a26-88cc-3ea7c203e167",
+  "createdAt": "2026-09-18T10:00:00-07:00",
+  "summary": "Organize a website launch (fictional demo)",
+  "reviewDisplay": { "showDaySectionsByDefault": false },
+  "operations": [
+    {
+      "operationId": "rename-website-project",
+      "action": "update",
+      "target": { "type": "project", "id": "project-website", "title": "Website Refresh" },
+      "reason": "Give the project a clear outcome.",
+      "before": { "title": "Website Refresh" },
+      "after": { "title": "Website Launch" },
+      "display": {
+        "beforePath": [{ "id": "category-studio", "type": "category", "title": "Studio", "emoji": "🎨", "color": "#895fd4" }],
+        "afterPath": [{ "id": "category-studio", "type": "category", "title": "Studio", "emoji": "🎨", "color": "#895fd4" }]
+      }
+    },
+    {
+      "operationId": "create-content-project",
+      "action": "create",
+      "target": { "type": "project", "id": "0cbdc074-6ea3-4dcf-aeb3-4317a2be14c1" },
+      "reason": "Group content and quality checks beneath the launch.",
+      "dependsOnOperations": ["rename-website-project"],
+      "after": {
+        "title": "Content & QA",
+        "parent": { "id": "project-website", "title": "Website Launch" }
+      },
+      "display": {
+        "afterPath": [
+          { "id": "category-studio", "type": "category", "title": "Studio", "emoji": "🎨", "color": "#895fd4" },
+          { "id": "project-website", "type": "project", "title": "Website Launch" }
+        ]
+      }
+    },
+    {
+      "operationId": "rewrite-homepage-task",
+      "action": "update",
+      "target": { "type": "task", "id": "task-homepage", "title": "Finish homepage" },
+      "reason": "Make the deliverable specific and move it into Content & QA.",
+      "dependsOnOperations": ["create-content-project"],
+      "before": {
+        "title": "Finish homepage",
+        "parent": { "id": "project-website", "title": "Website Refresh" },
+        "subtasks": []
+      },
+      "after": {
+        "title": "Write launch-page copy",
+        "parent": { "id": "0cbdc074-6ea3-4dcf-aeb3-4317a2be14c1", "title": "Content & QA" },
+        "subtasks": [
+          { "id": "subtask-headline", "title": "Draft the headline" },
+          { "id": "subtask-proof", "title": "Add three customer benefits" },
+          { "id": "subtask-review", "title": "Review the call to action" }
+        ]
+      },
+      "display": {
+        "beforePath": [
+          { "id": "category-studio", "type": "category", "title": "Studio", "emoji": "🎨", "color": "#895fd4" },
+          { "id": "project-website", "type": "project", "title": "Website Refresh" }
+        ],
+        "afterPath": [
+          { "id": "category-studio", "type": "category", "title": "Studio", "emoji": "🎨", "color": "#895fd4" },
+          { "id": "project-website", "type": "project", "title": "Website Launch" },
+          { "id": "0cbdc074-6ea3-4dcf-aeb3-4317a2be14c1", "type": "project", "title": "Content & QA" }
+        ]
+      }
+    },
+    {
+      "operationId": "clarify-mobile-task",
+      "action": "update",
+      "target": { "type": "task", "id": "task-mobile", "title": "Check mobile design" },
+      "reason": "Turn a vague check into a concrete QA task.",
+      "dependsOnOperations": ["create-content-project"],
+      "before": {
+        "title": "Check mobile design",
+        "parent": { "id": "project-website", "title": "Website Refresh" }
+      },
+      "after": {
+        "title": "Test mobile layout and keyboard navigation",
+        "parent": { "id": "0cbdc074-6ea3-4dcf-aeb3-4317a2be14c1", "title": "Content & QA" }
+      },
+      "display": {
+        "beforePath": [
+          { "id": "category-studio", "type": "category", "title": "Studio", "emoji": "🎨", "color": "#895fd4" },
+          { "id": "project-website", "type": "project", "title": "Website Refresh" }
+        ],
+        "afterPath": [
+          { "id": "category-studio", "type": "category", "title": "Studio", "emoji": "🎨", "color": "#895fd4" },
+          { "id": "project-website", "type": "project", "title": "Website Launch" },
+          { "id": "0cbdc074-6ea3-4dcf-aeb3-4317a2be14c1", "type": "project", "title": "Content & QA" }
+        ]
+      }
+    },
+    {
+      "operationId": "complete-analytics",
+      "action": "complete",
+      "target": { "type": "task", "id": "task-analytics", "title": "Connect analytics" },
+      "reason": "The setup has been verified.",
+      "completedAt": "2026-09-17T16:30:00-07:00",
+      "display": {
+        "beforePath": [
+          { "id": "category-studio", "type": "category", "title": "Studio", "emoji": "🎨", "color": "#895fd4" },
+          { "id": "project-website", "type": "project", "title": "Website Refresh" }
+        ],
+        "afterPath": [
+          { "id": "category-studio", "type": "category", "title": "Studio", "emoji": "🎨", "color": "#895fd4" },
+          { "id": "project-website", "type": "project", "title": "Website Launch" }
+        ]
+      }
+    },
+    {
+      "operationId": "trash-duplicate-draft",
+      "action": "trash",
+      "target": { "type": "task", "id": "task-old-draft", "title": "Homepage draft (duplicate)" },
+      "reason": "The launch-page copy task replaces this duplicate.",
+      "display": {
+        "beforePath": [
+          { "id": "category-studio", "type": "category", "title": "Studio", "emoji": "🎨", "color": "#895fd4" },
+          { "id": "project-website", "type": "project", "title": "Website Refresh" }
+        ]
+      }
+    },
+    {
+      "operationId": "create-launch-review",
+      "action": "create",
+      "target": { "type": "task", "id": "7288190b-6479-4d37-84a6-7eaa9a951940" },
+      "reason": "Add a final cross-device review before launch.",
+      "dependsOnOperations": ["create-content-project"],
+      "after": {
+        "title": "Review the launch page on desktop and mobile",
+        "parent": { "id": "0cbdc074-6ea3-4dcf-aeb3-4317a2be14c1", "title": "Content & QA" }
+      },
+      "display": {
+        "afterPath": [
+          { "id": "category-studio", "type": "category", "title": "Studio", "emoji": "🎨", "color": "#895fd4" },
+          { "id": "project-website", "type": "project", "title": "Website Launch" },
+          { "id": "0cbdc074-6ea3-4dcf-aeb3-4317a2be14c1", "type": "project", "title": "Content & QA" }
+        ]
+      }
+    }
+  ]
+}
