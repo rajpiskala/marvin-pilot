@@ -534,7 +534,11 @@ class VisualizerServer:
                 except Exception:
                     self._send_json(
                         HTTPStatus.INTERNAL_SERVER_ERROR,
-                        {"error": {"message": "Unexpected local error. Check Pilot history before retrying."}},
+                        {
+                            "error": {
+                                "message": "Unexpected error. Check Pilot history before retrying."
+                            }
+                        },
                     )
 
             def _method_not_allowed(self) -> None:
