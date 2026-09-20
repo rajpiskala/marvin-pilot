@@ -1747,6 +1747,7 @@ def test_browser_apply_reviews_exact_file_and_shows_receipt(page, tmp_path: Path
         page.on("dialog", lambda dialog: dialog.accept())
         page.goto(server.url)
         button = page.locator("#apply-reviewed")
+        button.wait_for(state="visible")
         assert button.is_visible()
         assert page.locator("#plan-source-path").text_content() == str(path.resolve())
         assert "synthetic@example.com" in page.locator("#plan-account").text_content()
