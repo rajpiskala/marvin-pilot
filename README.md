@@ -24,9 +24,9 @@
   <a href="#-sponsors">Sponsors</a>
 </p>
 
-Marvin Pilot is a local safety layer between an AI assistant and [Amazing Marvin](https://amazingmarvin.com/). The AI drafts an exact change plan; Pilot validates it against live state, shows you the result, applies only what you approve, and writes a receipt that can be reverted.
+Marvin Pilot is a local companion for Marvin MCP workflows that adds a safety layer between an AI assistant and [Amazing Marvin](https://amazingmarvin.com/). The AI drafts an exact change plan; Pilot validates it against live state, shows you the result, applies only what you approve, and writes a receipt that can be reverted.
 
-Your full-access Marvin credential stays on the Pilot side of the workflow instead of being placed in an AI prompt, plan, MCP configuration, command-line argument, or environment variable.
+Use a read-only Marvin MCP for discovery, then let Pilot handle reviewed, reversible writes with the full-access credential. Your full-access Marvin credential stays on the Pilot side of the workflow instead of being placed in an AI prompt, plan, MCP configuration, command-line argument, or environment variable.
 
 > [!IMPORTANT]
 > Back up Marvin before your first use and review the documented limitations. Some coupled or undocumented Marvin features cannot be preserved safely.
