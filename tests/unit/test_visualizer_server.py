@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 from contextlib import contextmanager
 from http.client import HTTPConnection
+from pathlib import Path
 
 import httpx
 
@@ -12,17 +14,24 @@ from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.plan_io import MAX_PLAN_BYTES, parse_plan_bytes
 from marvin_pilot.visualizer import build_plan_view
 from marvin_pilot.visualizer_hierarchy import build_backup_hierarchy_context
-from marvin_pilot.visualizer_server import LOOPBACK_HOST, SECURITY_HEADERS, VisualizerServer
+from marvin_pilot.visualizer_server import (
+    LOOPBACK_HOST,
+    SECURITY_HEADERS,
+    LoadedVisualization,
+    VisualizerServer,
+)
 
 
 @contextmanager
-def running_server(*, preload: bool = True, hierarchy=None):
+def running_server(*, preload: bool = True, hierarchy=None, server_kwargs=None):
     plan = parse_plan_bytes(json.dumps(EXAMPLE_PLAN).encode()) if preload else None
+    options = dict(server_kwargs or {})
     server = VisualizerServer(
-        preloaded_plan=plan,
+        preloaded_plan=options.pop("preloaded_plan", plan),
         source_name=r"C:\private\plan.json" if preload else None,
         session_token="unit-test-session",
         hierarchy=hierarchy,
+        **options,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -83,7 +92,8 @@ def test_empty_server_reports_no_current_plan() -> None:
     with running_server(preload=False) as (server, client):
         response = client.get(server.url + "api/current")
     assert response.status_code == 200
-    assert response.json() == {"plan": None}
+    assert response.json()["plan"] is None
+    assert response.json()["can_apply"] is False
 
 
 def test_backup_hierarchy_is_reused_for_browser_uploaded_plans() -> None:
@@ -172,3 +182,155 @@ def test_shutdown_releases_the_bound_port() -> None:
     server.shutdown()
     with socket.socket() as probe:
         probe.bind((LOOPBACK_HOST, port))
+
+
+def test_watched_plan_reloads_and_keeps_last_good_view_on_invalid_edit(tmp_path: Path) -> None:
+    path = tmp_path / "review.json"
+    original = json.dumps(EXAMPLE_PLAN).encode()
+    path.write_bytes(original)
+
+    def reload_view() -> LoadedVisualization:
+        raw = path.read_bytes()
+        return LoadedVisualization(plan=parse_plan_bytes(raw), source_name=path.name, raw=raw)
+
+    with running_server(
+        server_kwargs={
+            "preloaded_raw": original,
+            "watch_paths": (path,),
+            "reload_visualization": reload_view,
+        }
+    ) as (server, client):
+        first = client.get(server.url + "api/current").json()
+        path.write_bytes(b"not JSON")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            invalid = client.get(server.url + "api/current").json()
+            if invalid["revision"] > first["revision"]:
+                break
+            time.sleep(0.1)
+        assert invalid["error"]
+        assert invalid["plan"] == first["plan"]
+        changed = json.loads(json.dumps(EXAMPLE_PLAN))
+        changed["summary"] = "Updated synthetic summary"
+        path.write_bytes(json.dumps(changed).encode())
+        while time.monotonic() < deadline:
+            recovered = client.get(server.url + "api/current").json()
+            if recovered["plan"]["summary"] == "Updated synthetic summary":
+                break
+            time.sleep(0.1)
+        assert recovered["error"] is None
+        assert recovered["revision"] > invalid["revision"]
+
+
+def test_reviewed_apply_requires_origin_csrf_fresh_file_and_one_use_challenge(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "review.json"
+    source = {
+        **EXAMPLE_PLAN,
+        "expectedAccount": {"userId": "123456", "email": "synthetic@example.com"},
+    }
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+    calls = []
+
+    def preflight(plan):
+        calls.append("preflight")
+        return {
+            "operations": len(plan.operations),
+            "account": "synthetic@example.com",
+            "warnings": [],
+            "trash": 0,
+        }
+
+    def apply(_plan, _raw, assert_unchanged, reviewed_preflight):
+        assert_unchanged()
+        assert reviewed_preflight["account"] == "synthetic@example.com"
+        calls.append("apply")
+        return {"receipt_id": "synthetic-receipt", "receipt_path": "synthetic-receipt.json"}
+
+    with running_server(
+        preload=False,
+        server_kwargs={
+            "preloaded_plan": parse_plan_bytes(raw),
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "review_preflight": preflight,
+            "review_apply": apply,
+        },
+    ) as (server, client):
+        current = client.get(server.url + "api/current").json()
+        identity = {
+            "revision": current["revision"],
+            "plan_id": current["plan"]["plan_id"],
+            "digest": current["plan"]["digest"],
+        }
+        payload = {"identity": identity}
+        endpoint = server.url + "api/preflight"
+        denied = client.post(endpoint, json=payload)
+        wrong_origin = client.post(
+            endpoint,
+            json=payload,
+            headers={"Origin": "https://evil.invalid", "X-Marvin-Pilot-CSRF": current["csrf"]},
+        )
+        headers = {"Origin": server.origin, "X-Marvin-Pilot-CSRF": current["csrf"]}
+        checked = client.post(endpoint, json=payload, headers=headers)
+        assert checked.status_code == 200
+        assert checked.json()["preflight"]["operations"] == len(EXAMPLE_PLAN["operations"])
+        applied = client.post(
+            server.url + "api/apply",
+            json={**payload, "challenge": checked.json()["challenge"]},
+            headers=headers,
+        )
+        replay = client.post(
+            server.url + "api/apply",
+            json={**payload, "challenge": checked.json()["challenge"]},
+            headers=headers,
+        )
+    assert denied.status_code == 403
+    assert wrong_origin.status_code == 403
+    assert applied.status_code == 200
+    assert applied.json()["result"]["receipt_id"] == "synthetic-receipt"
+    assert replay.status_code == 409
+    assert calls == ["preflight", "apply"]
+
+
+def test_reviewed_apply_rejects_changed_file_before_any_mutation(tmp_path: Path) -> None:
+    path = tmp_path / "review.json"
+    source = {
+        **EXAMPLE_PLAN,
+        "expectedAccount": {"userId": "123456", "email": "synthetic@example.com"},
+    }
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+    calls = []
+    with running_server(
+        preload=False,
+        server_kwargs={
+            "preloaded_plan": parse_plan_bytes(raw),
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "review_preflight": lambda _plan: {"operations": 6},
+            "review_apply": lambda *_args: calls.append("apply"),
+        },
+    ) as (server, client):
+        current = client.get(server.url + "api/current").json()
+        identity = {
+            "revision": current["revision"],
+            "plan_id": current["plan"]["plan_id"],
+            "digest": current["plan"]["digest"],
+        }
+        headers = {"Origin": server.origin, "X-Marvin-Pilot-CSRF": current["csrf"]}
+        checked = client.post(
+            server.url + "api/preflight", json={"identity": identity}, headers=headers
+        )
+        assert checked.status_code == 200
+        path.write_bytes(raw + b" ")
+        stale = client.post(
+            server.url + "api/apply",
+            json={"identity": identity, "challenge": checked.json()["challenge"]},
+            headers=headers,
+        )
+        assert stale.status_code == 409
+        assert "changed" in stale.json()["error"]["message"]
+        assert calls == []

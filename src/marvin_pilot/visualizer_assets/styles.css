@@ -2486,6 +2486,28 @@ footer {
   justify-content: flex-end;
 }
 
+#apply-reviewed {
+  white-space: nowrap;
+}
+
+#apply-reviewed:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+#plan-source-path {
+  overflow-wrap: anywhere;
+}
+
+.apply-feedback {
+  margin: 10px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-background);
+  overflow-wrap: anywhere;
+}
+
 .day-sections-toggle {
   white-space: nowrap;
 }

@@ -2,6 +2,14 @@
 
 All notable changes to Marvin Pilot are documented here.
 
+## Unreleased
+
+- Reuse running visualizer sessions for the same inputs and live-reload watched plans, context
+  plans, backups, and receipts while preserving review state.
+- Add optional `visualize --allow-apply` with account pinning, exact-file freshness checks,
+  live preflight, explicit browser confirmation, CSRF protection, and the usual recovery receipt.
+- Make Preview/Changes transitions atomic and preserve expansion, selection, filters, and scroll.
+
 ## 1.0.1 — 2026-09-18
 
 - Fix the PyPI description's mascot image and documentation links by using public absolute URLs.

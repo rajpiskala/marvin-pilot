@@ -141,7 +141,13 @@ from marvin_pilot.visualizer_hierarchy import (
     build_backup_hierarchy_context,
     merge_hierarchy_contexts,
 )
-from marvin_pilot.visualizer_server import VisualizerServer
+from marvin_pilot.visualizer_runtime import (
+    find_reusable_server,
+    register_server,
+    session_key,
+    unregister_server,
+)
+from marvin_pilot.visualizer_server import LoadedVisualization, VisualizerServer
 
 SAFETY_CONTRACT = """This CLI separates reviewed Marvin mutations from explicitly bounded
 automation.
@@ -1310,6 +1316,67 @@ def describe_command(
     _write_or_print(content, output)
 
 
+def _visualization_from_input(
+    input_kind: str | None,
+    change_input: ChangePlanV1 | LoadedPlanSet | None,
+    raw: bytes | None,
+    source_name: str | None,
+    backup: Path | None,
+    receipt: Path | None,
+    context_plans: list[Path],
+) -> LoadedVisualization:
+    loaded_plan_set = change_input if input_kind == "plan-set" else None
+    plan = combined_preview_plan(loaded_plan_set) if loaded_plan_set else change_input
+    hierarchy = None
+    sources: list[str] = []
+    if backup is not None:
+        documents, _format, _size, _digest, _hit = load_cached_backup_documents(backup)
+        hierarchy = build_backup_hierarchy_context(documents)
+        sources.append("local backup")
+    for path in context_plans:
+        prerequisite, _source = load_plan(path)
+        hierarchy = project_hierarchy_context(prerequisite, hierarchy)
+        sources.append("prerequisite plan projection")
+    if loaded_plan_set is not None:
+        sources.append(
+            f"plan-set projection ({len(loaded_plan_set.plans)} dependency-ordered phases)"
+        )
+    verified_receipt = None
+    if receipt is not None:
+        if loaded_plan_set is not None or plan is None:
+            raise PlanSemanticError("--receipt requires a single preselected plan")
+        verified_receipt = HistoryStore(receipt.parent).load(receipt)
+        if verified_receipt.kind != "apply" or verified_receipt.status != "applied":
+            raise PlanSemanticError("--receipt requires a fully applied apply receipt")
+        if verified_receipt.planId != plan.planId or verified_receipt.planDigest != plan_digest(
+            plan
+        ):
+            raise PlanSemanticError(
+                "receipt does not exactly match the selected plan ID and canonical digest"
+            )
+        documents = [
+            operation.beforeDocument
+            for operation in verified_receipt.operations
+            if operation.beforeDocument is not None and operation.status == "applied"
+        ]
+        hierarchy = merge_hierarchy_contexts(hierarchy, build_backup_hierarchy_context(documents))
+        sources.append("verified apply receipt")
+    return LoadedVisualization(
+        plan=plan,
+        source_name=source_name,
+        hierarchy=hierarchy,
+        hierarchy_sources=tuple(sources),
+        review_state="applied" if verified_receipt else "preview",
+        receipt_id=verified_receipt.receiptId if verified_receipt else None,
+        raw=raw if input_kind == "plan" else None,
+        extra_watch_paths=(
+            tuple(item.path for item in loaded_plan_set.plans)
+            if loaded_plan_set is not None
+            else ()
+        ),
+    )
+
+
 @app.command("visualize")
 def visualize_command(
     plan_path: Annotated[
@@ -1350,96 +1417,177 @@ def visualize_command(
             ),
         ),
     ] = None,
+    allow_apply: Annotated[
+        bool,
+        typer.Option(
+            "--allow-apply",
+            help="Opt in to reviewed browser apply for one file-backed, account-pinned plan.",
+        ),
+    ] = False,
 ) -> None:
-    """Open an offline, credential-free, read-only browser preview."""
+    """Open a local plan preview; browser apply requires explicit --allow-apply."""
 
-    plan = None
-    loaded_plan_set: LoadedPlanSet | None = None
-    source_name = None
+    started = time.perf_counter()
+    key = session_key(plan_path, backup, context_plan or [], receipt, allow_apply)
+    if key is not None:
+        reusable = find_reusable_server(key)
+        if reusable is not None:
+            typer.echo(f"Visualizer: {reusable} (reused running session)")
+            if not no_open:
+                webbrowser.open(reusable)
+            return
+    discovery_ms = (time.perf_counter() - started) * 1000
+    if allow_apply and (plan_path is None or plan_path == "-" or receipt is not None):
+        _fail(PlanSemanticError("--allow-apply requires a file-backed plan without --receipt"))
+    input_kind = None
+    change_input = None
+    raw = None
     if plan_path is not None:
-        input_kind, change_input, _raw = _read_change_input(plan_path)
-        if input_kind == "plan-set":
-            loaded_plan_set = change_input
-            plan = combined_preview_plan(loaded_plan_set)
-        else:
-            plan = change_input
-        source_name = "stdin" if plan_path == "-" else Path(plan_path).name
-    hierarchy = None
-    hierarchy_sources: list[str] = []
-    if backup is not None:
-        try:
-            documents, _source_format, _source_bytes, _digest, _cache_hit = (
-                load_cached_backup_documents(backup)
-            )
-            hierarchy = build_backup_hierarchy_context(documents)
-            hierarchy_sources.append("local backup")
-        except MarvinPilotError as exc:
-            _fail(exc)
-    for prerequisite_path in context_plan or []:
-        try:
-            prerequisite, _source = load_plan(prerequisite_path)
-            hierarchy = project_hierarchy_context(prerequisite, hierarchy)
-            hierarchy_sources.append("prerequisite plan projection")
-        except MarvinPilotError as exc:
-            _fail(exc)
-    if loaded_plan_set is not None:
-        hierarchy_sources.append(
-            f"plan-set projection ({len(loaded_plan_set.plans)} dependency-ordered phases)"
+        input_kind, change_input, raw = _read_change_input(plan_path)
+    if allow_apply and input_kind != "plan":
+        _fail(PlanSemanticError("--allow-apply supports one plan, not a plan set"))
+    parsed_ms = (time.perf_counter() - started) * 1000 - discovery_ms
+    source_name = "stdin" if plan_path == "-" else Path(plan_path).name if plan_path else None
+    try:
+        loaded = _visualization_from_input(
+            input_kind, change_input, raw, source_name, backup, receipt, context_plan or []
         )
-    verified_receipt = None
-    if receipt is not None:
-        if loaded_plan_set is not None:
-            _fail(PlanSemanticError("--receipt currently requires a single plan, not a plan set"))
-        if plan is None:
-            _fail(PlanSemanticError("--receipt requires a preselected PLAN"))
-        try:
-            verified_receipt = HistoryStore(receipt.parent).load(receipt)
-        except MarvinPilotError as exc:
-            _fail(exc)
-        assert plan is not None
-        if verified_receipt.kind != "apply" or verified_receipt.status != "applied":
-            _fail(PlanSemanticError("--receipt requires a fully applied apply receipt"))
-        if verified_receipt.planId != plan.planId or verified_receipt.planDigest != plan_digest(
-            plan
-        ):
-            _fail(
-                PlanSemanticError(
-                    "receipt does not exactly match the selected plan ID and canonical digest"
-                )
+    except MarvinPilotError as exc:
+        _fail(exc)
+    if allow_apply and (loaded.plan is None or loaded.plan.expectedAccount is None):
+        _fail(
+            PlanSemanticError("--allow-apply requires a plan with expectedAccount userId and email")
+        )
+    context_ms = (time.perf_counter() - started) * 1000 - discovery_ms - parsed_ms
+
+    def reload_visualization() -> LoadedVisualization:
+        if plan_path is None or plan_path == "-":
+            return loaded
+        if input_kind == "plan-set":
+            selected = load_plan_set(Path(plan_path))
+            value, source_bytes = selected, selected.raw
+        else:
+            value, source_bytes = load_plan(Path(plan_path))
+        return _visualization_from_input(
+            input_kind, value, source_bytes, source_name, backup, receipt, context_plan or []
+        )
+
+    def checked_config(plan: ChangePlanV1) -> AppConfig:
+        config = load_config()
+        if len(plan.operations) > config.max_operations:
+            raise PlanSemanticError(
+                f"plan has {len(plan.operations)} operations; configured maximum is "
+                f"{config.max_operations}"
             )
-        receipt_documents = [
-            operation.beforeDocument
-            for operation in verified_receipt.operations
-            if operation.beforeDocument is not None and operation.status == "applied"
-        ]
-        receipt_hierarchy = build_backup_hierarchy_context(receipt_documents)
-        hierarchy = merge_hierarchy_contexts(hierarchy, receipt_hierarchy)
-        hierarchy_sources.append("verified apply receipt")
-    server = VisualizerServer(
-        preloaded_plan=plan,
-        source_name=source_name,
-        hierarchy=hierarchy,
-        hierarchy_sources=tuple(hierarchy_sources),
-        review_state="applied" if verified_receipt is not None else "preview",
-        receipt_id=verified_receipt.receiptId if verified_receipt is not None else None,
+        if plan.expectedAccount is None:
+            raise PlanSemanticError("browser apply requires expectedAccount.userId and email")
+        return config
+
+    def browser_preflight(plan: ChangePlanV1) -> dict:
+        config = checked_config(plan)
+        client = _build_client(config, None)
+        try:
+            result = preflight_plan(
+                plan,
+                client,
+                now_ms=unix_milliseconds(),
+                strict_concurrency=config.strict_concurrency,
+            )
+        finally:
+            client.close()
+        return {
+            "operations": len(result.operations),
+            "account": plan.expectedAccount.email,
+            "warnings": [warning.message for warning in result.warnings],
+            "trash": sum(item.operation.action == "trash" for item in result.operations),
+        }
+
+    def browser_apply(
+        plan: ChangePlanV1, source_bytes: bytes, assert_unchanged, expected_preflight: dict
+    ) -> dict:
+        config = checked_config(plan)
+        client = _build_client(config, None)
+
+        def approve(checked) -> bool:
+            assert_unchanged()
+            actual = {
+                "operations": len(checked.operations),
+                "account": plan.expectedAccount.email,
+                "warnings": [warning.message for warning in checked.warnings],
+                "trash": sum(item.operation.action == "trash" for item in checked.operations),
+            }
+            if actual != expected_preflight:
+                raise LivePreconditionError(
+                    "live preflight changed after browser review; run preflight and confirm again"
+                )
+            return True
+
+        try:
+            result = execute_apply(
+                plan,
+                source_bytes,
+                client=client,
+                history=_history_store(config),
+                approve=approve,
+                strict_concurrency=config.strict_concurrency,
+            )
+        finally:
+            client.close()
+        return {"receipt_id": result.receipt.receiptId, "receipt_path": result.receipt_path}
+
+    watch_paths = (
+        tuple(
+            [
+                Path(plan_path),
+                *(context_plan or []),
+                *([backup] if backup else []),
+                *([receipt] if receipt else []),
+                *loaded.extra_watch_paths,
+            ]
+        )
+        if plan_path is not None and plan_path != "-"
+        else ()
     )
+    server = VisualizerServer(
+        preloaded_plan=loaded.plan,
+        source_name=loaded.source_name,
+        hierarchy=loaded.hierarchy,
+        hierarchy_sources=loaded.hierarchy_sources,
+        review_state=loaded.review_state,
+        receipt_id=loaded.receipt_id,
+        preloaded_raw=loaded.raw,
+        plan_path=Path(plan_path) if allow_apply and plan_path else None,
+        watch_paths=watch_paths,
+        reload_visualization=reload_visualization if watch_paths else None,
+        review_preflight=browser_preflight if allow_apply else None,
+        review_apply=browser_apply if allow_apply else None,
+        session_key=key,
+    )
+    projection_ms = getattr(server, "projection_ms", 0.0)
+    bind_ms = getattr(server, "bind_ms", 0.0)
+    try:
+        registration = register_server(server.url, key) if key is not None else None
+    except OSError:
+        registration = None
     typer.echo(f"Visualizer: {server.url}")
-    if verified_receipt is not None:
-        typer.echo(f"Applied plan — verified receipt {verified_receipt.receiptId}.")
+    if loaded.receipt_id is not None:
+        typer.echo(f"Applied plan — verified receipt {loaded.receipt_id}.")
     else:
         typer.echo("Preview only — nothing has been applied.")
-    if hierarchy is not None:
+    if loaded.hierarchy is not None:
         source_summary = (
-            "the backup" if hierarchy_sources == ["local backup"] else " + ".join(hierarchy_sources)
+            "the backup"
+            if loaded.hierarchy_sources == ("local backup",)
+            else " + ".join(loaded.hierarchy_sources)
         )
         typer.echo(
-            f"Hierarchy: {len(hierarchy.nodes)} active item(s) loaded locally from "
+            f"Hierarchy: {len(loaded.hierarchy.nodes)} active item(s) loaded locally from "
             f"{source_summary}."
         )
-    elif plan is not None:
+    elif loaded.plan is not None:
         omitted_paths = sum(
             operation.display is None or f"{side}Path" not in operation.display.model_fields_set
-            for operation in plan.operations
+            for operation in loaded.plan.operations
             for side in ("before", "after")
             if not (side == "before" and operation.action == "create")
             and not (side == "after" and operation.action == "trash")
@@ -1449,7 +1597,16 @@ def visualize_command(
                 f"Hierarchy note: {omitted_paths} visible state(s) omit typed paths. "
                 "Use --backup BACKUP.json.lzma for local hierarchy resolution."
             )
-    typer.echo("No Marvin credential or API connection is used. Press Ctrl+C to stop.")
+    typer.echo(
+        "Browser apply is enabled; credentials load only after explicit preflight."
+        if allow_apply
+        else "No Marvin credential or API connection is used. Press Ctrl+C to stop."
+    )
+    typer.echo(
+        f"Startup: discovery {discovery_ms:.0f} ms, parse {parsed_ms:.0f} ms, "
+        f"context {context_ms:.0f} ms, projection {projection_ms:.0f} ms, "
+        f"bind {bind_ms:.0f} ms."
+    )
     if not no_open:
         try:
             opened = webbrowser.open(server.url)
@@ -1463,6 +1620,8 @@ def visualize_command(
         typer.echo("\nVisualizer stopped.")
     finally:
         server.shutdown()
+        if registration is not None:
+            unregister_server(registration)
 
 
 def _apply_loaded_plan_set(

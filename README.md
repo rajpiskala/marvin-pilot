@@ -123,6 +123,7 @@ The full guide covers [compact draft preparation](https://github.com/rajpiskala/
 | `marvin-pilot validate PLAN [--live]` | Validate offline or collect read-only live diagnostics |
 | `marvin-pilot describe PLAN` | Render a text, Markdown, or JSON review |
 | `marvin-pilot visualize PLAN` | Open the local hierarchical before/after view |
+| `marvin-pilot visualize PLAN --allow-apply` | Opt in to exact-file, browser-confirmed apply after live preflight |
 | `marvin-pilot apply PLAN` | Preflight, approve, apply, verify, and write a receipt |
 | `marvin-pilot revert RECEIPT` | Revert all or selected operations safely |
 | `marvin-pilot history …` | Inspect, verify, and audit local receipts |
@@ -131,7 +132,7 @@ Run `marvin-pilot --help`, `marvin-pilot COMMAND --help`, or read the [complete 
 
 ## 🛡️ Safety at a glance
 
-- Normal apply and every revert require an interactive terminal and explicit approval. `apply --yes` skips only the final prompt after review; it does not skip validation or verification.
+- Normal CLI apply and every revert require an interactive terminal and explicit approval. `apply --yes` skips only the final prompt after review; it does not skip validation or verification. Optional visualizer apply also requires an explicit browser confirmation and a pinned account.
 - Optional unattended apply must be enabled by a human in advance and is pinned to one account and a maximum impact. It is an accident guard, not a security boundary against malicious local software.
 - The full-access credential is loaded only for live commands and is never written to a plan or receipt.
 - Pilot-managed deletion uses Marvin's document API, not Marvin's native Trash UI. Recovery depends on the private receipt snapshot, so keep receipts secure and backed up.

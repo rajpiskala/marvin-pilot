@@ -500,10 +500,37 @@ it returns documents whose stored day equals DATE and explicitly does not claim 
 ## Visual review
 
 `marvin-pilot visualize` opens a credential-free local browser view of the proposed changes.
+Reopening the same file and options while its visualizer is still running reuses the existing
+loopback server. File-backed views watch the plan, dependency/context plans, backup, and receipt;
+valid edits refresh the page without resetting the selected mode, filters, expansion, or scroll.
+An invalid edit leaves the last good view visible with an error and disables browser apply.
+Startup timing is broken out by discovery, parsing, context, and projection/server bind.
 
 ```console
 marvin-pilot visualize plan.json
 ```
+
+For a single file-backed plan with `expectedAccount.userId` and `expectedAccount.email`, a human
+may explicitly enable **Apply this reviewed plan**:
+
+```console
+marvin-pilot visualize plan.json --allow-apply
+```
+
+The button shows the absolute path, plan ID, canonical digest, operation count, and pinned account.
+Clicking it performs a live preflight, shows warnings and a confirmation dialog, then rechecks the
+same file bytes before the first mutation. The usual configured operation limit, strict-concurrency
+checks, sequential verification, and durable recovery receipt still apply. Changing the file after
+review or preflight invalidates approval; reload and review the new version. Browser uploads,
+stdin, plan sets, and receipt-backed historical views cannot be applied from the visualizer.
+Without `--allow-apply`, visual review never loads a Marvin credential or calls its API.
+
+The local HTTP server is intentional. A self-contained `file://` HTML snapshot could present a
+one-time view, but browser file-origin rules prevent reliable fetches of adjacent input data, and
+static HTML cannot watch source files or safely bind a reviewed artifact to live preflight and
+receipt-backed apply. The server listens only on `127.0.0.1`; mutation endpoints additionally
+require the session URL, exact same Origin, and a per-session CSRF header. The CLI apply workflow
+remains available independently.
 
 If an AI-authored plan contains parent IDs but omits the optional typed display paths, supply a
 fresh local Marvin backup to reconstruct the hierarchy:
@@ -530,7 +557,7 @@ Pilot verifies the receipt hash, requires a fully applied apply receipt, and req
 plan ID and canonical-digest match. Receipt `beforeDocument` records override a newer post-apply
 backup for the affected items, while exact IDs remain available only in details/tooltips.
 
-This remains credential-free and makes no Marvin API calls. Pilot indexes active categories,
+The default review mode remains credential-free and makes no Marvin API calls. Pilot indexes active categories,
 projects, and tasks locally, combines that snapshot with project creates, renames, moves, and
 Trash operations from the plan, and sends only the hierarchy nodes needed by the rendered preview
 to the loopback browser page. It does not modify the plan, so its canonical digest is unchanged.

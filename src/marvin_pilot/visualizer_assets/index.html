@@ -65,6 +65,7 @@
             </div>
           </div>
           <div class="plan-actions">
+            <button type="button" id="apply-reviewed" class="primary-button" hidden>Apply this reviewed plan</button>
             <div class="segmented-control" role="radiogroup" aria-label="Review mode">
               <button type="button" role="radio" data-mode-choice="preview">Preview</button>
               <button type="button" role="radio" data-mode-choice="changes">Changes</button>
@@ -120,14 +121,18 @@
             <summary>Plan information</summary>
             <dl class="plan-metadata">
               <div><dt>File</dt><dd id="plan-file-name">Browser upload</dd></div>
+              <div id="plan-source-row" hidden><dt>Full path</dt><dd id="plan-source-path"></dd></div>
+              <div id="plan-account-row" hidden><dt>Pinned account</dt><dd id="plan-account"></dd></div>
               <div><dt>Operations</dt><dd id="plan-total"></dd></div>
               <div><dt>Hierarchy</dt><dd id="plan-hierarchy-source"></dd></div>
               <div><dt>Plan ID</dt><dd id="plan-id"></dd></div>
               <div class="digest"><dt>Canonical digest</dt><dd id="plan-digest"></dd></div>
             </dl>
-            <p class="local-guarantee">Your plan stays on this computer. No Marvin credential is loaded.</p>
+            <p id="local-guarantee" class="local-guarantee">Your plan stays on this computer. No Marvin credential is loaded.</p>
           </details>
         </div>
+
+        <p id="apply-feedback" class="apply-feedback" role="status" hidden></p>
 
         <section id="comparison-tray" class="comparison-tray" hidden aria-live="polite"></section>
         <div id="sections" class="sections"></div>
@@ -138,9 +143,9 @@
     </main>
 
     <footer>
-      <span>Read-only local review</span>
+      <span id="footer-review-mode">Read-only local review</span>
       <span aria-hidden="true">•</span>
-      <span>No credential loaded</span>
+      <span id="footer-credential-state">No credential loaded</span>
     </footer>
   </body>
 </html>

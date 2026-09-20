@@ -5,6 +5,7 @@ import io
 import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from rich.console import Console
@@ -14,7 +15,7 @@ import marvin_pilot.cli as cli_module
 import marvin_pilot.config as config_module
 from marvin_pilot import __version__
 from marvin_pilot.cli import app
-from marvin_pilot.errors import CredentialError, RemoteError
+from marvin_pilot.errors import CredentialError, LivePreconditionError, RemoteError
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.field_registry import FIELD_SPECS
 from marvin_pilot.history import receipt_file_bytes
@@ -517,6 +518,95 @@ def test_visualize_no_open_and_missing_path_behavior(
     assert opened == []
     assert missing.exit_code == 2
     assert "not a regular file" in missing.stderr
+
+
+def test_visualize_browser_apply_opt_in_uses_live_preflight_and_executor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "review.json"
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    source["expectedAccount"] = {"userId": "123456", "email": "synthetic@example.com"}
+    path.write_text(json.dumps(source), encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class FakeServer:
+        url = "http://127.0.0.1:1234/session/"
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def serve_forever(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    class FakeClient:
+        def close(self):
+            captured["closed"] = captured.get("closed", 0) + 1
+
+    config = SimpleNamespace(max_operations=10, strict_concurrency=True)
+    monkeypatch.setattr(cli_module, "VisualizerServer", FakeServer)
+    monkeypatch.setattr(cli_module, "find_reusable_server", lambda _key: None)
+    monkeypatch.setattr(cli_module, "register_server", lambda _url, _key: None)
+    monkeypatch.setattr(cli_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_build_client", lambda _config, _key: FakeClient())
+    monkeypatch.setattr(cli_module, "_history_store", lambda _config: "synthetic-history")
+
+    def fake_preflight(plan, client, **kwargs):
+        captured["preflight_plan"] = plan
+        captured["strict"] = kwargs["strict_concurrency"]
+        result = SimpleNamespace(
+            operations=tuple(SimpleNamespace(operation=operation) for operation in plan.operations),
+            warnings=(),
+        )
+        captured["preflight_result"] = result
+        return result
+
+    def fake_execute(plan, raw, **kwargs):
+        captured["executed_plan"] = plan
+        captured["executed_raw"] = raw
+        captured["history"] = kwargs["history"]
+        assert kwargs["approve"](captured["preflight_result"]) is True
+        return SimpleNamespace(
+            receipt=SimpleNamespace(receiptId="synthetic-receipt"),
+            receipt_path="synthetic-receipt.json",
+        )
+
+    monkeypatch.setattr(cli_module, "preflight_plan", fake_preflight)
+    monkeypatch.setattr(cli_module, "execute_apply", fake_execute)
+    result = runner.invoke(app, ["visualize", str(path), "--allow-apply", "--no-open"])
+    assert result.exit_code == 0, result.output
+    assert captured["plan_path"] == path
+    assert callable(captured["review_preflight"])
+    assert callable(captured["review_apply"])
+    plan = captured["preloaded_plan"]
+    summary = captured["review_preflight"](plan)
+    assert summary["account"] == "synthetic@example.com"
+    assert summary["operations"] == len(plan.operations)
+    applied = captured["review_apply"](
+        plan, path.read_bytes(), lambda: captured.update(checked=True), summary
+    )
+    assert applied["receipt_id"] == "synthetic-receipt"
+    assert captured["checked"] is True
+    assert captured["executed_raw"] == path.read_bytes()
+    assert captured["history"] == "synthetic-history"
+    assert captured["strict"] is True
+    assert captured["closed"] == 2
+    captured["preflight_result"].warnings = (SimpleNamespace(message="New live warning"),)
+    with pytest.raises(LivePreconditionError, match="changed after browser review"):
+        captured["review_apply"](plan, path.read_bytes(), lambda: None, summary)
+
+
+def test_visualize_browser_apply_rejects_unpinned_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "review.json"
+    write_plan(path)
+    monkeypatch.setattr(cli_module, "find_reusable_server", lambda _key: None)
+    result = runner.invoke(app, ["visualize", str(path), "--allow-apply", "--no-open"])
+    assert result.exit_code == 3
+    assert "expectedAccount" in result.stderr
 
 
 def test_visualize_loads_optional_backup_hierarchy_without_credentials(

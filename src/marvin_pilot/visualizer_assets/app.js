@@ -48,7 +48,12 @@ let movedOnly = false;
 let searchQuery = "";
 let selectedOperationId = null;
 let currentPlan = null;
+let currentRevision = -1;
+let csrfToken = null;
+let canApplyReviewed = false;
 const visibleActions = new Set(ACTIONS);
+const collapsedHierarchyKeys = new Set();
+const expandedTitleKeys = new Set();
 
 document.documentElement.dataset.theme = selectedTheme;
 
@@ -68,6 +73,15 @@ const elements = {
   hierarchySource: document.querySelector("#plan-hierarchy-source"),
   planId: document.querySelector("#plan-id"),
   digest: document.querySelector("#plan-digest"),
+  sourceRow: document.querySelector("#plan-source-row"),
+  sourcePath: document.querySelector("#plan-source-path"),
+  accountRow: document.querySelector("#plan-account-row"),
+  account: document.querySelector("#plan-account"),
+  applyReviewed: document.querySelector("#apply-reviewed"),
+  applyFeedback: document.querySelector("#apply-feedback"),
+  localGuarantee: document.querySelector("#local-guarantee"),
+  footerReviewMode: document.querySelector("#footer-review-mode"),
+  footerCredentialState: document.querySelector("#footer-credential-state"),
   reviewStatus: document.querySelector("#review-status"),
   createCount: document.querySelector("#create-count"),
   updateCount: document.querySelector("#update-count"),
@@ -118,16 +132,26 @@ function setView(view, persist = true) {
   }
 }
 
-function setMode(mode) {
-  selectedMode = MODES.includes(mode) ? mode : "preview";
+function syncModeControls() {
   document.querySelectorAll("[data-mode-choice]").forEach((button) => {
     button.setAttribute("aria-checked", String(button.dataset.modeChoice === selectedMode));
   });
   elements.daySectionsToggle.hidden = selectedMode !== "preview";
   elements.changesGroupingControl.hidden = selectedMode !== "changes";
   elements.changesSearchControl.hidden = selectedMode !== "changes";
+}
+
+function setMode(mode) {
+  const destination = MODES.includes(mode) ? mode : "preview";
+  if (destination === selectedMode) {
+    syncModeControls();
+    return;
+  }
   if (currentPlan) {
-    renderSections();
+    renderSections({ mode: destination });
+  } else {
+    selectedMode = destination;
+    syncModeControls();
   }
 }
 
@@ -1063,6 +1087,8 @@ function hierarchyNodeIsVisible(item, operations) {
 }
 
 function setHierarchyNodeExpanded(nodeKey, expanded) {
+  if (expanded) collapsedHierarchyKeys.delete(nodeKey);
+  else collapsedHierarchyKeys.add(nodeKey);
   document.querySelectorAll(".hierarchy-branch").forEach((branch) => {
     if (branch.dataset.nodeKey !== nodeKey) {
       return;
@@ -1470,6 +1496,12 @@ function wireCompactTitleControls() {
     button.setAttribute("aria-expanded", "false");
     button.addEventListener("click", () => {
       const expanded = title.classList.toggle("title-expanded");
+      const row = title.closest("[data-operation-id]");
+      if (row) {
+        const key = `${row.dataset.operationId}:${row.dataset.side}`;
+        if (expanded) expandedTitleKeys.add(key);
+        else expandedTitleKeys.delete(key);
+      }
       button.textContent = expanded ? "Show less" : "Show full";
       button.setAttribute("aria-expanded", String(expanded));
     });
@@ -1497,23 +1529,69 @@ function selectedTitleText(selection) {
     .join("\n");
 }
 
-function renderSections() {
+function captureSectionState() {
+  const anchor = [...elements.sections.querySelectorAll("[data-operation-id]")].find((row) => {
+    const rect = row.getBoundingClientRect();
+    return rect.bottom > 120 && rect.top < window.innerHeight;
+  });
+  return {
+    scrollY: window.scrollY,
+    anchorId: anchor?.dataset.operationId,
+    anchorSide: anchor?.dataset.side,
+    anchorTop: anchor?.getBoundingClientRect().top,
+  };
+}
+
+function restoreSectionState(state) {
+  elements.sections.querySelectorAll(".hierarchy-branch").forEach((branch) => {
+    if (collapsedHierarchyKeys.has(branch.dataset.nodeKey)) {
+      setHierarchyNodeExpanded(branch.dataset.nodeKey, false);
+    }
+  });
+  elements.sections.querySelectorAll(".task-title").forEach((title) => {
+    const row = title.closest("[data-operation-id]");
+    if (!row || !expandedTitleKeys.has(`${row.dataset.operationId}:${row.dataset.side}`)) return;
+    title.classList.add("title-expanded");
+    const button = title.nextElementSibling;
+    if (button?.classList.contains("title-expand")) {
+      button.textContent = "Show less";
+      button.setAttribute("aria-expanded", "true");
+    }
+  });
+  const anchor = [...elements.sections.querySelectorAll("[data-operation-id]")].find((row) => (
+    row.dataset.operationId === state.anchorId && row.dataset.side === state.anchorSide
+  ));
+  if (anchor && typeof state.anchorTop === "number") {
+    window.scrollBy({ top: anchor.getBoundingClientRect().top - state.anchorTop, behavior: "auto" });
+  } else {
+    window.scrollTo({ top: state.scrollY, behavior: "auto" });
+  }
+}
+
+function renderSections({ mode = selectedMode, preserveView = true } = {}) {
+  const previousMode = selectedMode;
+  const state = preserveView ? captureSectionState() : null;
+  selectedMode = mode;
   const operations = new Map(currentPlan.operations.map((operation) => [operation.operation_id, operation]));
   const fragment = document.createDocumentFragment();
   let renderedCount = 0;
-
-  if (selectedMode === "preview") {
-    const result = renderHierarchyPreview(operations);
-    renderedCount = result.renderedCount;
-    fragment.append(result.preview);
-  } else if (selectedView === "split") {
-    const result = renderSplitPreview(operations);
-    renderedCount = result.renderedCount;
-    fragment.append(result.preview);
-  } else {
-    const result = renderStatePane(operations, selectedView);
-    renderedCount = result.renderedCount;
-    fragment.append(result.pane);
+  try {
+    if (selectedMode === "preview") {
+      const result = renderHierarchyPreview(operations);
+      renderedCount = result.renderedCount;
+      fragment.append(result.preview);
+    } else if (selectedView === "split") {
+      const result = renderSplitPreview(operations);
+      renderedCount = result.renderedCount;
+      fragment.append(result.preview);
+    } else {
+      const result = renderStatePane(operations, selectedView);
+      renderedCount = result.renderedCount;
+      fragment.append(result.pane);
+    }
+  } catch (error) {
+    selectedMode = previousMode;
+    throw error;
   }
 
   elements.sections.classList.toggle(
@@ -1530,6 +1608,7 @@ function renderSections() {
     selectedTitleDensity === "compact" && selectedView === "split",
   );
   elements.sections.replaceChildren(fragment);
+  syncModeControls();
   wireCompactTitleControls();
   elements.emptyFilter.hidden = renderedCount !== 0;
   document.querySelectorAll("[data-operation-id]").forEach((element) => {
@@ -1539,16 +1618,21 @@ function renderSections() {
     );
   });
   renderComparisonTray();
+  if (state) restoreSectionState(state);
 }
 
-function renderPlan(plan) {
+function renderPlan(plan, { preserveState = false } = {}) {
   currentPlan = plan;
-  movedOnly = false;
-  searchQuery = "";
-  selectedOperationId = null;
+  if (!preserveState) {
+    movedOnly = false;
+    searchQuery = "";
+    selectedOperationId = null;
+    collapsedHierarchyKeys.clear();
+    expandedTitleKeys.clear();
+  }
   syncActionFilterButtons();
-  elements.changesSearch.value = "";
-  showDaySections = Boolean(plan.previews?.show_day_sections_by_default);
+  elements.changesSearch.value = searchQuery;
+  if (!preserveState) showDaySections = Boolean(plan.previews?.show_day_sections_by_default);
   syncDaySectionToggle();
   elements.summary.textContent = plan.summary;
   const applied = plan.review_state === "applied";
@@ -1589,8 +1673,32 @@ function renderPlan(plan) {
   elements.landing.hidden = true;
   elements.planView.hidden = false;
   document.title = `Marvin Pilot - ${plan.summary}`;
-  renderSections();
-  window.scrollTo({ top: 0, behavior: "auto" });
+  renderSections({ preserveView: preserveState });
+  if (!preserveState) window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+function syncReviewMetadata(result) {
+  currentRevision = result.revision;
+  csrfToken = result.csrf;
+  canApplyReviewed = Boolean(result.can_apply);
+  elements.applyReviewed.hidden = !canApplyReviewed;
+  elements.sourceRow.hidden = !result.source_path;
+  elements.sourcePath.textContent = result.source_path || "";
+  elements.accountRow.hidden = !result.account;
+  elements.account.textContent = result.account
+    ? `${result.account.email} (user ID ${result.account.user_id})` : "";
+  elements.localGuarantee.textContent = canApplyReviewed
+    ? "Credentials load only after you request live preflight. Applying requires explicit confirmation."
+    : "Your plan stays on this computer. No Marvin credential is loaded.";
+  elements.footerReviewMode.textContent = canApplyReviewed
+    ? "Local review with opt-in apply" : "Read-only local review";
+  elements.footerCredentialState.textContent = canApplyReviewed
+    ? "Credential loads only for preflight/apply" : "No credential loaded";
+  if (result.error) {
+    showError(`Watched input could not reload: ${result.error}. The last good view remains visible.`);
+  } else {
+    clearError();
+  }
 }
 
 async function responseJson(response) {
@@ -1628,6 +1736,7 @@ async function loadFile(file) {
       throw new Error(result.error?.message || `Plan validation failed (${response.status}).`);
     }
     renderPlan(result.plan);
+    syncReviewMetadata(result);
   } catch (error) {
     showError(error instanceof Error ? error.message : "Could not load this plan.");
   } finally {
@@ -1637,7 +1746,7 @@ async function loadFile(file) {
   }
 }
 
-async function loadCurrentPlan() {
+async function loadCurrentPlan({ preserveState = false } = {}) {
   try {
     const response = await fetch("api/current", { headers: { Accept: "application/json" } });
     const result = await responseJson(response);
@@ -1645,10 +1754,80 @@ async function loadCurrentPlan() {
       throw new Error(result.error?.message || "Could not load the preselected plan.");
     }
     if (result.plan) {
-      renderPlan(result.plan);
+      renderPlan(result.plan, { preserveState });
     }
+    syncReviewMetadata(result);
   } catch (error) {
     showError(error instanceof Error ? error.message : "The local visualizer stopped.");
+  }
+}
+
+async function pollCurrentPlan() {
+  try {
+    const response = await fetch("api/status", { headers: { Accept: "application/json" } });
+    const status = await responseJson(response);
+    if (!response.ok) return;
+    if (status.revision !== currentRevision) {
+      await loadCurrentPlan({ preserveState: Boolean(currentPlan) });
+    }
+  } catch (_error) {
+    // A foreground reload/apply reports actionable errors; background polling is quiet.
+  }
+}
+
+async function postReviewedAction(route, payload) {
+  const response = await fetch(`api/${route}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Marvin-Pilot-CSRF": csrfToken,
+    },
+    body: JSON.stringify(payload),
+  });
+  const result = await responseJson(response);
+  if (!response.ok) throw new Error(result.error?.message || `${route} failed (${response.status}).`);
+  return result;
+}
+
+async function applyReviewedPlan() {
+  if (!canApplyReviewed || !currentPlan || !csrfToken) return;
+  const identity = {
+    revision: currentRevision,
+    plan_id: currentPlan.plan_id,
+    digest: currentPlan.digest,
+  };
+  elements.applyReviewed.disabled = true;
+  elements.applyFeedback.hidden = false;
+  elements.applyFeedback.textContent = "Checking the live Marvin account and every operation…";
+  try {
+    const checked = await postReviewedAction("preflight", { identity });
+    const details = checked.preflight;
+    const trashWarning = details.trash
+      ? `\n\n${details.trash} Trash operation(s) use Pilot-managed recovery, not Marvin's native Trash.`
+      : "";
+    const warningText = details.warnings.length
+      ? `\n\nWarnings:\n${details.warnings.join("\n")}` : "";
+    const approved = window.confirm(
+      `Apply this exact reviewed plan?\n\nFile: ${elements.sourcePath.textContent}` +
+      `\nPlan ID: ${identity.plan_id}\nDigest: ${identity.digest}` +
+      `\nOperations: ${details.operations}\nAccount: ${details.account}` +
+      `${trashWarning}${warningText}\n\nPilot will live-check again and write a recovery receipt.`
+    );
+    if (!approved) {
+      elements.applyFeedback.textContent = "Apply cancelled. No Marvin changes were made.";
+      return;
+    }
+    elements.applyFeedback.textContent = "Applying and verifying changes; keep this tab open…";
+    const applied = await postReviewedAction("apply", { identity, challenge: checked.challenge });
+    await loadCurrentPlan({ preserveState: true });
+    elements.applyFeedback.textContent = `Applied. Recovery receipt: ${applied.result.receipt_path}`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Browser apply failed.";
+    elements.applyFeedback.textContent = message;
+    showError(message);
+    await pollCurrentPlan();
+  } finally {
+    elements.applyReviewed.disabled = false;
   }
 }
 
@@ -1663,6 +1842,7 @@ wireRadioGroup("[data-mode-choice]", "modeChoice", setMode);
 
 elements.choosePlan.addEventListener("click", () => elements.fileInput.click());
 elements.openAnother.addEventListener("click", () => elements.fileInput.click());
+elements.applyReviewed.addEventListener("click", applyReviewedPlan);
 elements.fileInput.addEventListener("change", () => loadFile(elements.fileInput.files[0]));
 elements.dismissError.addEventListener("click", clearError);
 elements.daySectionsToggle.addEventListener("click", () => {
@@ -1850,3 +2030,4 @@ window.addEventListener("scroll", updateJumpDirections, { passive: true });
 elements.sections.addEventListener("scroll", updateJumpDirections, { passive: true, capture: true });
 
 loadCurrentPlan();
+window.setInterval(pollCurrentPlan, 1500);

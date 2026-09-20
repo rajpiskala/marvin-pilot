@@ -12,7 +12,7 @@ import pytest
 
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.plan_io import parse_plan_bytes
-from marvin_pilot.visualizer_server import VisualizerServer
+from marvin_pilot.visualizer_server import LoadedVisualization, VisualizerServer
 
 pytestmark = [
     pytest.mark.browser,
@@ -1559,3 +1559,199 @@ def test_five_hundred_operation_plan_remains_reviewable(page) -> None:
         assert page.locator(".section-group").count() == 5
         page.locator('[data-action-filter="update"]').click()
         assert page.locator("#empty-filter").is_visible()
+
+
+def test_large_plan_mode_switch_paints_only_coherent_frames(page) -> None:
+    operations = [
+        {
+            "operationId": f"create-{index}",
+            "action": "create",
+            "target": {"type": "task", "id": str(UUID(int=index + 1))},
+            "reason": "Synthetic mode transition coverage.",
+            "display": {"afterSection": f"Section {index % 8}"},
+            "after": {"title": f"Task {index}"},
+        }
+        for index in range(500)
+    ]
+    plan = {
+        "schemaVersion": 1,
+        "planId": "22222222-2222-4222-8222-222222222222",
+        "createdAt": "2026-08-09T08:00:00-07:00",
+        "summary": "Large synthetic mode-switch plan.",
+        "operations": operations,
+    }
+    with running_visualizer(plan_dict=plan) as server:
+        page.goto(server.url)
+        page.locator(".hierarchy-preview").wait_for()
+        page.locator(".hierarchy-branch .tree-toggle").first.click()
+        assert (
+            page.locator(".hierarchy-branch .tree-toggle").first.get_attribute("aria-expanded")
+            == "false"
+        )
+        page.evaluate("window.scrollTo(0, 400)")
+        scroll_before = page.evaluate("window.scrollY")
+        frames = page.evaluate("""async () => {
+          const samples = [];
+          const sample = () => {
+            const preview = document.querySelector('[data-mode-choice="preview"]');
+            const changes = document.querySelector('[data-mode-choice="changes"]');
+            const sections = document.querySelector('#sections');
+            samples.push({
+              mode: preview.getAttribute('aria-checked') === 'true' ? 'preview' : 'changes',
+              previewTree: Boolean(sections.querySelector('.hierarchy-preview')),
+              changesTree: Boolean(sections.querySelector('.split-diff')),
+              dayControl: !document.querySelector('#day-sections-toggle').hidden,
+              groupingControl: !document.querySelector('#changes-grouping-control').hidden,
+              checked: changes.getAttribute('aria-checked') === 'true',
+            });
+          };
+          for (const mode of ['changes', 'preview', 'changes', 'preview']) {
+            document.querySelector(`[data-mode-choice="${mode}"]`).click();
+            await new Promise(requestAnimationFrame);
+            sample();
+          }
+          return samples;
+        }""")
+        assert [sample["mode"] for sample in frames] == ["changes", "preview", "changes", "preview"]
+        assert all(
+            sample["previewTree"] == (sample["mode"] == "preview")
+            and sample["changesTree"] == (sample["mode"] == "changes")
+            and sample["dayControl"] == (sample["mode"] == "preview")
+            and sample["groupingControl"] == (sample["mode"] == "changes")
+            and sample["checked"] == (sample["mode"] == "changes")
+            for sample in frames
+        )
+        assert abs(page.evaluate("window.scrollY") - scroll_before) < 20
+        assert (
+            page.locator(".hierarchy-branch .tree-toggle").first.get_attribute("aria-expanded")
+            == "false"
+        )
+
+
+def test_watched_file_refresh_preserves_mode_and_filters(page, tmp_path: Path) -> None:
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    path = tmp_path / "review.json"
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+
+    def reload_view() -> LoadedVisualization:
+        updated = path.read_bytes()
+        return LoadedVisualization(
+            plan=parse_plan_bytes(updated), source_name=path.name, raw=updated
+        )
+
+    with running_visualizer(
+        plan_dict=source,
+        server_kwargs={
+            "preloaded_raw": raw,
+            "watch_paths": (path,),
+            "reload_visualization": reload_view,
+        },
+    ) as server:
+        page.goto(server.url)
+        page.get_by_role("radio", name="Changes").click()
+        page.locator('[data-action-filter="update"]').click()
+        source["summary"] = "Updated synthetic review"
+        path.write_bytes(json.dumps(source).encode())
+        page.get_by_text("Updated synthetic review", exact=True).wait_for(timeout=10000)
+        assert page.get_by_role("radio", name="Changes").get_attribute("aria-checked") == "true"
+        assert page.locator('[data-action-filter="update"]').get_attribute("aria-pressed") == "true"
+        assert page.locator(".split-diff").count() == 1
+
+
+def test_watched_large_plan_preserves_collapsed_sections_and_scroll(page, tmp_path: Path) -> None:
+    source = {
+        "schemaVersion": 1,
+        "planId": "22222222-2222-4222-8222-222222222222",
+        "createdAt": "2026-08-09T08:00:00-07:00",
+        "summary": "Large watched synthetic review",
+        "operations": [
+            {
+                "operationId": f"create-{index}",
+                "action": "create",
+                "target": {"type": "task", "id": str(UUID(int=index + 1))},
+                "reason": "Synthetic reload coverage.",
+                "display": {"afterSection": f"Section {index % 6}"},
+                "after": {"title": f"Task {index}"},
+            }
+            for index in range(120)
+        ],
+    }
+    path = tmp_path / "review.json"
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+
+    def reload_view() -> LoadedVisualization:
+        updated = path.read_bytes()
+        return LoadedVisualization(
+            plan=parse_plan_bytes(updated), source_name=path.name, raw=updated
+        )
+
+    with running_visualizer(
+        plan_dict=source,
+        server_kwargs={
+            "preloaded_raw": raw,
+            "watch_paths": (path,),
+            "reload_visualization": reload_view,
+        },
+    ) as server:
+        page.goto(server.url)
+        toggle = page.locator(".hierarchy-branch .tree-toggle").first
+        toggle.click()
+        page.evaluate("window.scrollTo(0, 450)")
+        before = page.evaluate("window.scrollY")
+        source["summary"] = "Large watched synthetic review updated"
+        path.write_bytes(json.dumps(source).encode())
+        page.get_by_text("Large watched synthetic review updated", exact=True).wait_for(
+            timeout=10000
+        )
+        assert (
+            page.locator(".hierarchy-branch .tree-toggle").first.get_attribute("aria-expanded")
+            == "false"
+        )
+        assert abs(page.evaluate("window.scrollY") - before) < 30
+
+
+def test_browser_apply_reviews_exact_file_and_shows_receipt(page, tmp_path: Path) -> None:
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    source["expectedAccount"] = {"userId": "123456", "email": "synthetic@example.com"}
+    path = tmp_path / "review.json"
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+    calls = []
+
+    def preflight(plan):
+        calls.append("preflight")
+        return {
+            "operations": len(plan.operations),
+            "account": "synthetic@example.com",
+            "warnings": [],
+            "trash": 0,
+        }
+
+    def apply(_plan, _raw, assert_unchanged, reviewed_preflight):
+        assert_unchanged()
+        assert reviewed_preflight["account"] == "synthetic@example.com"
+        calls.append("apply")
+        return {"receipt_id": "synthetic-receipt", "receipt_path": "synthetic-receipt.json"}
+
+    with running_visualizer(
+        plan_dict=source,
+        server_kwargs={
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "review_preflight": preflight,
+            "review_apply": apply,
+        },
+    ) as server:
+        page.on("dialog", lambda dialog: dialog.accept())
+        page.goto(server.url)
+        button = page.locator("#apply-reviewed")
+        assert button.is_visible()
+        assert page.locator("#plan-source-path").text_content() == str(path.resolve())
+        assert "synthetic@example.com" in page.locator("#plan-account").text_content()
+        button.click()
+        page.get_by_text("Applied. Recovery receipt: synthetic-receipt.json").wait_for()
+        assert page.locator("#review-status").inner_text() == "Applied plan — receipt verified"
+        assert button.is_hidden()
+        assert calls == ["preflight", "apply"]
