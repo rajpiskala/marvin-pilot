@@ -195,6 +195,47 @@ def test_rebase_refreshes_only_lock_metadata_when_before_still_matches() -> None
     assert rebased.operations[0].after == plan.operations[0].after
 
 
+@pytest.mark.parametrize(
+    ("field", "native", "value"),
+    [
+        ("dueDate", "dueDate", "2026-09-04"),
+        ("scheduledDate", "day", "2026-09-04"),
+        ("note", "note", "A reviewed note"),
+    ],
+)
+@pytest.mark.parametrize("clear", [False, True])
+def test_rebase_preserves_explicit_null_before_and_after_values(
+    field: str, native: str, value: str, clear: bool
+) -> None:
+    source = documents()
+    source[-1][native] = value if clear else None
+    intent = draft_value()
+    intent["operations"] = [
+        {
+            "operationId": "change-field",
+            "action": "update",
+            "target": {"type": "task", "id": "task-1"},
+            "after": {field: None if clear else value},
+            "reason": "Retain an explicit clear.",
+        }
+    ]
+    original = prepare_draft(
+        parse_draft_bytes(json.dumps(intent).encode()), SnapshotReader(source), now_ms=NOW_MS
+    )
+    original_bytes = canonical_plan_bytes(original)
+    refreshed = rebase_plan_live(
+        original, SnapshotReader(source), account_reader=AccountReader(), now_ms=NOW_MS + 1000
+    )
+    assert canonical_plan_bytes(original) == original_bytes
+    assert refreshed.operations[0].before.model_dump(exclude_unset=True) == {
+        field: value if clear else None
+    }
+    assert refreshed.operations[0].after.model_dump(exclude_unset=True) == {
+        field: None if clear else value
+    }
+    assert refreshed.planId != original.planId
+
+
 def test_rebase_stops_when_reviewed_before_state_drifted() -> None:
     plan = prepare_draft(
         parse_draft_bytes(json.dumps(draft_value()).encode()),

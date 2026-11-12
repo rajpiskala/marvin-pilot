@@ -608,7 +608,7 @@ def rebase_plan_live(
     """Refresh locks and generated display metadata only when reviewed semantics did not drift."""
 
     verify_expected_account(plan, account_reader)
-    value = plan.model_dump(mode="json", by_alias=True, exclude_none=True)
+    value = json.loads(canonical_plan_bytes(plan))
     processed_targets: set[str] = set()
     for index, operation in enumerate(plan.operations):
         document = reader.get_doc(operation.target.id)
@@ -666,7 +666,7 @@ def rebase_plan_live(
                 behavior=completion_day_behavior(before_day, final_day),
             ).model_dump(mode="json")
         value["operations"][index]["display"] = (
-            display.model_dump(mode="json", exclude_none=True) if display is not None else None
+            display.model_dump(mode="json", exclude_unset=True) if display is not None else None
         )
         updated_at = document.get("updatedAt")
         if operation.target.id in processed_targets:

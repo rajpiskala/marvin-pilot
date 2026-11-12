@@ -4,6 +4,8 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
+- Preserve explicit null clears and before-value presence when refreshing a reviewed plan.
+
 - Fix draft preparation and live refresh of ordered same-target operations, including
   backup-only projection and initial-only concurrency locks.
 
