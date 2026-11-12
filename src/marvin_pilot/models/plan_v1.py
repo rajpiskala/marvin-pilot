@@ -770,6 +770,36 @@ class CreateOperation(BaseOperation):
     action: Literal["create"]
     target: NewItemTarget
     after: CreateItemFields
+    completedAt: StrictStr | None = None
+
+    @field_validator("completedAt")
+    @classmethod
+    def validate_create_completion(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError(
+                "omit completedAt for an open create; explicit null is not a timestamp"
+            )
+        return _rfc3339_with_offset(value, "completedAt")
+
+    @model_validator(mode="after")
+    def restrict_completed_create(self) -> CreateOperation:
+        if self.completedAt is None:
+            return self
+        if self.target.type != "task":
+            raise ValueError("completedAt on create is supported only for ordinary tasks")
+        if not isinstance(self.after, CreateTaskFields):
+            raise ValueError("completedAt on create requires ordinary task fields")
+        if (
+            "scheduledDate" in self.after.model_fields_set
+            and self.after.scheduledDate != completion_local_date(self.completedAt)
+        ):
+            raise ValueError(
+                "a completed create's scheduledDate must equal its completion history day; "
+                "omit scheduledDate to assign history automatically"
+            )
+        if any(item.sourceTask is not None for item in (self.after.subtasks or [])):
+            raise ValueError("completed creates cannot consolidate sourceTask records")
+        return self
 
 
 class TrashOperation(BaseOperation):

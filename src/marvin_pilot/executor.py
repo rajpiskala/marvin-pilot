@@ -292,8 +292,7 @@ def execute_apply(
                 ):
                     receipt_operation.afterDocument = deepcopy(resulting_document)
                 if (
-                    isinstance(checked.operation, CompleteOperation)
-                    and checked.operation.target.type in {"task", "project"}
+                    checked.operation.target.type in {"task", "project"}
                     and receipt_operation.completionHistory is not None
                 ):
                     receipt_operation.completionHistory.documentDayVerified = True

@@ -592,14 +592,18 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                     f"{parent_create.operationId!r}; add it to dependsOnOperations"
                 )
 
-        if isinstance(operation, CompleteOperation):
+        if (
+            isinstance(operation, (CompleteOperation, CreateOperation))
+            and operation.completedAt is not None
+        ):
             completed_at = datetime.fromisoformat(operation.completedAt.replace("Z", "+00:00"))
             if completed_at > plan_created_at:
                 raise PlanSemanticError(
-                    f"complete operation {operation.operationId!r} completedAt is later than "
+                    f"{operation.action} operation {operation.operationId!r} "
+                    "completedAt is later than "
                     "the plan's createdAt"
                 )
-            if operation.target.type == "project":
+            if isinstance(operation, CompleteOperation) and operation.target.type == "project":
                 required = prior_container_mutations.get(operation.target.id, set())
                 missing = sorted(required - set(operation.dependsOnOperations))
                 if missing:

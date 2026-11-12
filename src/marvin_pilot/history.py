@@ -163,6 +163,7 @@ class HistoryStore:
         operations = []
         for checked in preflight.operations:
             operation = checked.operation
+            completed_at = getattr(operation, "completedAt", None)
             planned_before = None
             planned_after = None
             if isinstance(operation, UpdateOperation):
@@ -170,6 +171,10 @@ class HistoryStore:
                 planned_after = operation.after.model_dump(exclude_unset=True, mode="json")
             elif isinstance(operation, CreateOperation):
                 planned_after = operation.after.model_dump(exclude_unset=True, mode="json")
+                if completed_at is not None:
+                    planned_after.update(
+                        completedAt=completed_at, completionDay=completion_local_date(completed_at)
+                    )
             elif isinstance(operation, CompleteOperation):
                 planned_before = {"done": operation.repairHistory}
                 planned_after = {
@@ -197,7 +202,11 @@ class HistoryStore:
                     action=operation.action,
                     targetId=operation.target.id,
                     targetType=operation.target.type,
-                    targetTitle=getattr(operation.target, "title", None),
+                    targetTitle=(
+                        operation.after.title
+                        if isinstance(operation, CreateOperation)
+                        else operation.target.title
+                    ),
                     recurrence=(
                         operation.target.recurrence.model_dump(mode="json")
                         if getattr(operation.target, "recurrence", None) is not None
@@ -215,15 +224,14 @@ class HistoryStore:
                     ),
                     completionHistory=(
                         ReceiptCompletionHistoryV1(
-                            expectedDay=completion_local_date(operation.completedAt),
+                            expectedDay=completion_local_date(completed_at),
                             detail=(
                                 f"Pending verification of the {operation.target.type} document's "
                                 "completion timestamp and history day. Server /doneItems "
                                 "visibility has not been checked."
                             ),
                         )
-                        if isinstance(operation, CompleteOperation)
-                        and operation.target.type in {"task", "project"}
+                        if completed_at is not None and operation.target.type in {"task", "project"}
                         else None
                     ),
                     request=RequestRecord(

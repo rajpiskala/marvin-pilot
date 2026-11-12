@@ -4,6 +4,9 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
+- Create an ordinary task already completed with operation-level `completedAt`, historical
+  completion/subtask timestamps, history-day verification, and exact receipt-backed revert (#21).
+
 - Distinguish proposed completion/Trash actions from current state, show history-day movement,
   and align toolbar buttons and completed checkmarks (#17).
 

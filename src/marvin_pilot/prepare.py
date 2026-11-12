@@ -97,6 +97,7 @@ class DraftCreateOperation(DraftBaseOperation):
     action: Literal["create"]
     target: DraftTarget
     after: CreateItemFields
+    completedAt: StrictStr | None = None
 
     @model_validator(mode="after")
     def validate_create_identity(self) -> DraftCreateOperation:
@@ -496,6 +497,11 @@ def prepare_draft(
                 reason=draft_operation.reason,
                 dependsOnOperations=draft_operation.dependsOnOperations,
                 display=display,
+                **(
+                    {"completedAt": draft_operation.completedAt}
+                    if "completedAt" in draft_operation.model_fields_set
+                    else {}
+                ),
             )
         else:
             if target_id is None:

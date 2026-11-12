@@ -905,6 +905,26 @@ def test_project_completion_is_visible_and_filterable(page, review_state: str) -
         assert page.locator(".action-complete").count() == 2
 
 
+def test_completed_task_create_shows_completion_without_second_operation(page) -> None:
+    plan = copy.deepcopy(EXAMPLE_PLAN)
+    plan["operations"] = [plan["operations"][2]]
+    plan["operations"][0]["after"].pop("scheduledDate", None)
+    plan["operations"][0]["completedAt"] = "2026-08-07T23:30:00-07:00"
+    with running_visualizer(plan_dict=plan) as server:
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+        assert page.locator("#create-count").inner_text() == "1"
+        assert page.locator("#complete-count").inner_text() == "0"
+        after = page.locator(".hierarchy-pane-after .task-card")
+        assert after.locator(".action-badge").text_content() == "Will create completed task"
+        assert (
+            after.locator(".completion-time").get_attribute("datetime")
+            == "2026-08-07T23:30:00-07:00"
+        )
+        assert after.locator(".completion-day").inner_text() == "History assigned 2026-08-07"
+        assert page.locator(".hierarchy-pane-after .task-circle.completed").count() == 1
+
+
 def test_project_completion_history_repair_is_explicit_in_preview(page) -> None:
     plan = {
         "schemaVersion": 1,

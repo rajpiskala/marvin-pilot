@@ -731,7 +731,7 @@ def _change_kinds(
     after_path: tuple[PathNodeView, ...],
 ) -> tuple[str, ...]:
     if isinstance(operation, CreateOperation):
-        return ("created",)
+        return ("created", "completed") if operation.completedAt is not None else ("created",)
     if isinstance(operation, CompleteOperation):
         return ("history repaired",) if operation.repairHistory else ("completed",)
     if isinstance(operation, TrashOperation):
@@ -897,6 +897,12 @@ def _operation_view(
         "before_day_section": _day_section_placement(operation, "before"),
         "after_day_section": _day_section_placement(operation, "after"),
     }
+    if isinstance(operation, CreateOperation) and operation.completedAt is not None:
+        common.update(
+            completed_at=operation.completedAt,
+            completion_day_after=completion_local_date(operation.completedAt),
+            completion_day_behavior="assigned",
+        )
     if isinstance(operation, UpdateOperation):
         before_values = operation.before.model_dump(exclude_unset=True, mode="json")
         after_values = operation.after.model_dump(exclude_unset=True, mode="json")
@@ -936,6 +942,22 @@ def _operation_view(
         )
     if isinstance(operation, CreateOperation):
         after_values = operation.after.model_dump(exclude_unset=True, mode="json")
+        completion_diffs = (
+            (
+                FieldDiffView(
+                    "lifecycle",
+                    "Task state",
+                    FieldValueView("none", "Not present", "null"),
+                    FieldValueView(
+                        "value",
+                        f"Completed at {operation.completedAt}",
+                        _exact_json(operation.completedAt),
+                    ),
+                ),
+            )
+            if operation.completedAt is not None
+            else ()
+        )
         after_card = _card_with_display_parent(
             _task_card(
                 operation.after,
@@ -951,7 +973,8 @@ def _operation_view(
             after=after_card,
             before_empty_label="No before state — created by this plan",
             after_empty_label=None,
-            diffs=_field_diffs(
+            diffs=completion_diffs
+            + _field_diffs(
                 {},
                 after_values,
                 set(after_values),

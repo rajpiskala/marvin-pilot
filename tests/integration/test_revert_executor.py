@@ -1069,3 +1069,64 @@ def test_success_without_state_change_is_recorded_unknown(tmp_path: Path, docume
         )
     receipt = HistoryStore(tmp_path).load(next(tmp_path.glob("partial-revert-*.json")))
     assert receipt.operations[0].status == "unknown"
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+def test_completed_create_receipt_history_and_exact_revert(tmp_path: Path, timeout: bool) -> None:
+    from marvin_pilot.history_status import audit_receipt_live
+
+    value = copy.deepcopy(EXAMPLE_PLAN)
+    value["operations"] = [value["operations"][2]]
+    operation = value["operations"][0]
+    operation["after"].pop("scheduledDate", None)
+    operation["completedAt"] = "2026-08-07T23:30:00-07:00"
+    raw = json.dumps(value).encode()
+    plan = parse_plan_bytes(raw)
+    client = InMemoryMarvin({})
+    if timeout:
+        client.timeout_modes[operation["target"]["id"]] = "apply-then-timeout"
+    clock = Clock()
+    result = execute_apply(
+        plan,
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _: True,
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+    entry = result.receipt.operations[0]
+    assert entry.completionHistory.documentDayVerified is True
+    assert entry.completionHistory.expectedDay == "2026-08-07"
+    assert entry.afterDocument["done"] is True
+    assert len(client.mutations) == 1
+    audit = audit_receipt_live(result.receipt, client)
+    assert audit[0]["completionHistory"]["expectedDay"] == "2026-08-07"
+    client.timeout_modes.clear()
+    revert_fixture(tmp_path, client, result, clock)
+    assert client.documents == {}
+
+
+def test_completed_create_revert_refuses_later_edit(tmp_path: Path) -> None:
+    value = copy.deepcopy(EXAMPLE_PLAN)
+    value["operations"] = [value["operations"][2]]
+    operation = value["operations"][0]
+    operation["after"].pop("scheduledDate", None)
+    operation["completedAt"] = "2026-08-07T23:30:00-07:00"
+    raw = json.dumps(value).encode()
+    client = InMemoryMarvin({})
+    clock = Clock()
+    result = execute_apply(
+        parse_plan_bytes(raw),
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _: True,
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+    client.documents[operation["target"]["id"]]["title"] = "Later human edit"
+    client.mutations.clear()
+    with pytest.raises(LivePreconditionError):
+        revert_fixture(tmp_path, client, result, clock)
+    assert client.mutations == []

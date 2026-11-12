@@ -19,6 +19,20 @@ def completion_local_date(completed_at: str) -> str:
     return datetime.fromisoformat(candidate).date().isoformat()
 
 
+def completion_fields(completed_at: str, *, project: bool = False) -> dict[str, Any]:
+    """Use identical final completion values for existing items and completed creates."""
+
+    candidate = completed_at[:-1] + "+00:00" if completed_at.endswith("Z") else completed_at
+    values: dict[str, Any] = {
+        "done": True,
+        "doneAt": int(datetime.fromisoformat(candidate).timestamp() * 1000),
+        "day": completion_local_date(completed_at),
+    }
+    if project:
+        values["doneDate"] = values["day"]
+    return values
+
+
 def usable_marvin_day(value: Any) -> str | None:
     """Normalize Marvin's missing/unassigned day sentinels to ``None``."""
 

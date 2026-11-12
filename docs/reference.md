@@ -680,6 +680,15 @@ Trash is terminal. Live validation projects each successful intermediate state, 
 hierarchy checks see the planned rename/move rather than stale live state. Apply and reverse-order
 revert replace projected revisions with the actual revision read after every write, retaining
 strict concurrency protection throughout the chain.
+For finished-work capture, an ordinary task `create` supports an optional operation-level
+`completedAt` timestamp (RFC 3339 with an explicit offset, no later than `createdAt`). It writes
+`done`, historical `doneAt`, and the local completion-history day in one create request. Omit
+`scheduledDate` or set it to that same day; a conflicting day or explicit null is rejected.
+Checked subtasks use the parent's historical timestamp; unchecked subtasks remain unchecked.
+This is not supported for projects, categories, recurrence definitions, or `sourceTask`
+consolidation. Review, receipt audit, and conflict-aware revert cover the completed create just
+like any other create; a create plus its subtasks still counts toward the normal impact limit.
+
 Changes to a newly created item must stay coalesced in its single `create` operation; an immediate
 create-then-complete/Trash sequence is rejected as an avoidable or contradictory lifecycle.
 

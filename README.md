@@ -56,6 +56,9 @@ Marvin context  →  AI draft  →  prepare + validate  →  review  →  apply
 
 1. An AI reads current work through a limited-access MCP, verified Pilot context, or a local Marvin backup.
 2. The AI writes a strict plan or compact draft. `prepare` fills verified locks and produces the exact review artifact.
+
+   For finished-work capture, an ordinary task `create` may include operation-level `completedAt`
+   (RFC 3339 with an explicit offset). Pilot creates the completed record in one operation.
 3. You run offline and read-only live validation, then inspect the terminal or browser preview.
 4. Pilot rechecks current state immediately before each write, verifies the result, and journals a receipt.
 

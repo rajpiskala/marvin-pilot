@@ -386,6 +386,10 @@ function paletteClass(value) {
 
 function actionBadgeText(action, changeKinds, sideName) {
   const applied = currentPlan?.review_state === "applied";
+  if (action === "create" && changeKinds.includes("completed")) {
+    return selectedMode === "changes" ? "Create completed task"
+      : applied ? "Created completed task" : "Will create completed task";
+  }
   if (action === "complete") {
     const repair = changeKinds.includes("history repaired");
     if (selectedMode === "changes") return repair ? "Repair history" : "Complete";
@@ -588,7 +592,7 @@ function completionTimestamp(operation, sideName) {
   if (operation.existing_completed_at) {
     return operation.existing_completed_at;
   }
-  return operation.action === "complete" && sideName === "after"
+  return sideName === "after"
     ? operation.completed_at
     : null;
 }
@@ -1203,7 +1207,7 @@ function renderHierarchyNode(item, sideName, operations, depth = 0) {
       }),
       renderOperationDetails(operation),
     );
-    if (operation.action === "complete" && sideName === "after") {
+    if (completedAt && sideName === "after") {
       content.classList.add("terminal-complete");
     }
     row.append(content);
