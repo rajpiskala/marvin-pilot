@@ -123,7 +123,7 @@ The full guide covers [compact draft preparation](https://github.com/rajpiskala/
 | `marvin-pilot doctor` | Verify the configured account and full-token health |
 | `marvin-pilot context …` | Read bounded live or backup-powered Marvin context |
 | `marvin-pilot prepare INPUT …` | Compile a compact draft or safely refresh plan locks |
-| `marvin-pilot visualize PLAN --edit` | Correct a proposal offline and save a separate reviewed plan |
+| `marvin-pilot visualize PLAN --edit` | Edit After text and save exact-ID feedback for AI reconciliation |
 | `marvin-pilot validate PLAN [--live]` | Validate offline or collect read-only live diagnostics |
 | `marvin-pilot describe PLAN` | Render a text, Markdown, or JSON review |
 | `marvin-pilot visualize PLAN` | Open the local hierarchical before/after view |
