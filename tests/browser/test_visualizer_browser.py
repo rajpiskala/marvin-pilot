@@ -846,7 +846,8 @@ def test_split_rows_and_following_sections_share_geometry(page) -> None:
         assert second_section["y"] >= first_section["y"] + first_section["height"]
 
 
-def test_project_completion_is_visible_and_filterable(page) -> None:
+@pytest.mark.parametrize("review_state", ["preview", "applied"])
+def test_project_completion_is_visible_and_filterable(page, review_state: str) -> None:
     plan = {
         "schemaVersion": 1,
         "planId": "55555555-5555-4555-8555-555555555555",
@@ -866,13 +867,17 @@ def test_project_completion_is_visible_and_filterable(page) -> None:
             }
         ],
     }
-    with running_visualizer(plan_dict=plan) as server:
+    with running_visualizer(plan_dict=plan, server_kwargs={"review_state": review_state}) as server:
         page.goto(server.url)
         page.locator("#plan-view").wait_for(state="visible")
         assert page.locator("#complete-count").inner_text() == "1"
         assert page.locator(".action-complete").count() == 2
         assert page.locator(".action-complete .task-card").count() == 2
         assert page.locator(".action-complete .project-flag").count() == 2
+        assert page.locator(".hierarchy-pane-before .action-badge.complete").count() == 0
+        assert page.locator(".hierarchy-pane-after .action-badge.complete").text_content() == (
+            "Will complete" if review_state == "preview" else "Completed"
+        )
         completion_time = page.locator(
             '.hierarchy-pane-after [data-operation-id="complete-project"] .completion-time'
         )
@@ -931,11 +936,11 @@ def test_project_completion_history_repair_is_explicit_in_preview(page) -> None:
         page.locator("#plan-view").wait_for(state="visible")
         before = page.locator('.hierarchy-pane-before [data-operation-id="repair-project-history"]')
         after = page.locator('.hierarchy-pane-after [data-operation-id="repair-project-history"]')
-        assert before.get_by_text("HISTORY REPAIRED").count() == 1
+        assert before.locator(".action-badge.complete").count() == 0
         assert before.locator(".completion-time").count() == 0
-        assert after.get_by_text("HISTORY REPAIRED").count() == 1
+        assert after.locator(".action-badge.complete").text_content() == "Will repair history"
         assert after.locator(".completion-time").count() == 1
-        assert after.locator(".completion-day").inner_text() == "History 2026-07-18"
+        assert after.locator(".completion-day").inner_text() == "History assigned 2026-07-18"
 
         page.locator(".operation-details summary").first.click()
         details = page.locator(".operation-details[open]").inner_text()
@@ -975,12 +980,18 @@ def test_task_completion_shows_history_day_and_replacement_semantics(page) -> No
             '.hierarchy-pane-after [data-operation-id="complete-task-history"] .completion-day'
         )
         assert history_day.count() == 1
-        assert history_day.inner_text() == "History 2026-09-04"
+        assert history_day.inner_text() == "History 2026-09-07 → 2026-09-04"
         assert history_day.get_attribute("datetime") == "2026-09-04"
         assert "replaced" in history_day.get_attribute("title")
         before = page.locator('.hierarchy-pane-before [data-operation-id="complete-task-history"]')
         assert before.locator(".completion-day").count() == 0
         assert before.locator(".task-items").count() == 0
+        assert before.locator(".action-badge.complete").count() == 0
+        page.get_by_role("radio", name="Changes").click()
+        assert all(
+            label == "Complete"
+            for label in page.locator(".action-badge.complete").all_text_contents()
+        )
 
         page.locator(".operation-details summary").first.click()
         details = page.locator(".operation-details[open]").inner_text()

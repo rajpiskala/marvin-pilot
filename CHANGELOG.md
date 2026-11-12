@@ -4,6 +4,9 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
+- Distinguish proposed completion/Trash actions from current state, show history-day movement,
+  and align toolbar buttons and completed checkmarks (#17).
+
 - Explain misplaced ordering fields and support order-only compact drafts without `after` (#20).
 
 - Preserve explicit null clears and before-value presence when refreshing a reviewed plan.

@@ -384,6 +384,21 @@ function paletteClass(value) {
   return `palette-${hash % 6}`;
 }
 
+function actionBadgeText(action, changeKinds, sideName) {
+  const applied = currentPlan?.review_state === "applied";
+  if (action === "complete") {
+    const repair = changeKinds.includes("history repaired");
+    if (selectedMode === "changes") return repair ? "Repair history" : "Complete";
+    if (sideName === "before") return null;
+    if (applied) return repair ? "History repaired" : "Completed";
+    return repair ? "Will repair history" : "Will complete";
+  }
+  if (action === "trash") {
+    return selectedMode === "changes" ? "Trash" : applied ? "Trashed" : "Will trash";
+  }
+  return (changeKinds.length > 0 ? changeKinds : [action]).join(" + ");
+}
+
 function renderCard(
   card,
   sideName,
@@ -397,6 +412,7 @@ function renderCard(
     recurrenceScheduledDate = null,
     completedAt = null,
     completionDay = null,
+    completionDayBefore = null,
     completionDayBehavior = null,
     targetChainPosition = 1,
     targetChainLength = 1,
@@ -430,12 +446,12 @@ function renderCard(
     taskLine.append(chain);
   }
   if (action) {
-    const badgeText = (changeKinds.length > 0 ? changeKinds : [action]).join(" + ");
-    const badge = node("span", `action-badge ${action}`, badgeText);
-    if (badgeTitle) {
-      badge.title = badgeTitle;
+    const badgeText = actionBadgeText(action, changeKinds, sideName);
+    if (badgeText) {
+      const badge = node("span", `action-badge ${action}`, badgeText);
+      if (badgeTitle) badge.title = badgeTitle;
+      taskLine.append(badge);
     }
-    taskLine.append(badge);
   }
   if (recurrenceScope) {
     taskLine.append(recurrenceMarker(recurrenceScope, recurrenceScheduledDate));
@@ -505,7 +521,10 @@ function renderCard(
       const historyDay = node(
         "time",
         "task-item completion-day",
-        `History ${completionDay}`,
+        completionDayBefore && completionDayBehavior === "replaced"
+          ? `History ${completionDayBefore} → ${completionDay}`
+          : completionDayBehavior === "assigned"
+            ? `History assigned ${completionDay}` : `History ${completionDay}`,
       );
       historyDay.dateTime = completionDay;
       historyDay.title = (
@@ -829,6 +848,7 @@ function renderStateOperation(operation, sideName) {
       recurrenceScheduledDate: operation.recurrence_scheduled_date,
       completedAt: completionTimestamp(operation, sideName),
       completionDay: operation.completion_day_after,
+      completionDayBefore: operation.completion_day_before,
       completionDayBehavior: operation.completion_day_behavior,
       targetChainPosition: operation.target_chain_position,
       targetChainLength: operation.target_chain_length,
@@ -850,6 +870,7 @@ function renderDiffCell(operation, sideName) {
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt: completionTimestamp(operation, sideName),
         completionDay: operation.completion_day_after,
+        completionDayBefore: operation.completion_day_before,
         completionDayBehavior: operation.completion_day_behavior,
         targetChainPosition: operation.target_chain_position,
         targetChainLength: operation.target_chain_length,
@@ -1175,6 +1196,7 @@ function renderHierarchyNode(item, sideName, operations, depth = 0) {
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt,
         completionDay: operation.completion_day_after,
+        completionDayBefore: operation.completion_day_before,
         completionDayBehavior: operation.completion_day_behavior,
         targetChainPosition: operation.target_chain_position,
         targetChainLength: operation.target_chain_length,
@@ -1334,6 +1356,7 @@ function renderComparisonSide(operation, sideName) {
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt: completionTimestamp(operation, sideName),
         completionDay: operation.completion_day_after,
+        completionDayBefore: operation.completion_day_before,
         completionDayBehavior: operation.completion_day_behavior,
         targetChainPosition: operation.target_chain_position,
         targetChainLength: operation.target_chain_length,

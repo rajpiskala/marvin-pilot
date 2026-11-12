@@ -2486,6 +2486,14 @@ footer {
   justify-content: flex-end;
 }
 
+.plan-actions .secondary-button {
+  min-height: 32px;
+  padding: 5px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 #apply-reviewed {
   white-space: nowrap;
 }
@@ -2534,6 +2542,8 @@ footer {
 }
 
 .task-circle.completed {
+  display: grid;
+  place-items: center;
   border-color: var(--complete);
   background: var(--complete);
   box-shadow: inset 0 0 0 2px var(--card-background);
@@ -2545,7 +2555,7 @@ footer {
   height: 3px;
   border-left: 1.5px solid var(--card-background);
   border-bottom: 1.5px solid var(--card-background);
-  transform: translate(3px, 3px) rotate(-45deg);
+  transform: translateY(-0.5px) rotate(-45deg);
   display: block;
 }
 
