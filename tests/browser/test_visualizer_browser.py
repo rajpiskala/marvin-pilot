@@ -1830,6 +1830,10 @@ def test_offline_editor_previews_saves_and_requires_fresh_review(page, tmp_path:
         assert revised.operations[2].after.title == "Final reviewed follow-up"
         assert path.read_bytes() == raw
         assert calls == []
+        page.locator('[data-mode-choice="changes"]').click()
+        assert page.locator(".manual-edit-badge").count() == 1
+        page.locator('[data-action-filter="create"]').click()
+        assert page.locator(".manual-edit-badge").count() == 1
 
 
 def test_editor_completion_exclusion_and_discard(page, tmp_path: Path) -> None:

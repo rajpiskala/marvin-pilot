@@ -1663,6 +1663,7 @@ function renderSections({ mode = selectedMode, preserveView = true } = {}) {
     );
   });
   renderComparisonTray();
+  markManualEdits();
   if (state) restoreSectionState(state);
 }
 
@@ -1719,7 +1720,6 @@ function renderPlan(plan, { preserveState = false } = {}) {
   elements.planView.hidden = false;
   document.title = `Marvin Pilot - ${plan.summary}`;
   renderSections({ preserveView: preserveState });
-  markManualEdits();
   if (!preserveState) window.scrollTo({ top: 0, behavior: "auto" });
 }
 
@@ -1858,7 +1858,7 @@ function planIdentity() {
 
 function markManualEdits() {
   elements.sections.querySelectorAll(".manual-edit-badge").forEach((badge) => badge.remove());
-  elements.sections.querySelectorAll(".hierarchy-pane-after .task-card").forEach((card) => {
+  elements.sections.querySelectorAll(".hierarchy-pane-after .task-card, .diff-cell-after .task-card, .operation-row[data-side='after'] .task-card").forEach((card) => {
     const id = card.closest("[data-operation-id]")?.dataset.operationId;
     if (manualOperations.has(id)) {
       card.append(node("span", "manual-edit-badge", "Proposal edited"));
