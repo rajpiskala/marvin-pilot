@@ -147,16 +147,17 @@ class SnapshotReader:
         self._live_cache: dict[str, dict[str, Any] | None] = {}
 
     def get_doc(self, item_id: str) -> dict[str, Any] | None:
+        if item_id in self._live_cache:
+            return deepcopy(self._live_cache[item_id])
         if self.live is not None:
-            if item_id not in self._live_cache:
-                self._live_cache[item_id] = self.live.get_doc(item_id)
+            self._live_cache[item_id] = self.live.get_doc(item_id)
             live = self._live_cache[item_id]
             return deepcopy(live) if live is not None else None
         document = self.documents.get(item_id)
         return deepcopy(document) if document is not None else None
 
     def get_context_doc(self, item_id: str) -> dict[str, Any] | None:
-        if item_id in self._live_cache and self._live_cache[item_id] is not None:
+        if item_id in self._live_cache:
             return deepcopy(self._live_cache[item_id])
         document = self.documents.get(item_id)
         if document is not None:
@@ -468,6 +469,7 @@ def prepare_draft(
     """Fill only identity, locks, before-state, and review metadata."""
 
     operations: list[Operation] = []
+    processed_targets: set[str] = set()
     for draft_operation in draft.operations:
         target_id = draft_operation.target.id
         resolved_by_title = False
@@ -526,6 +528,11 @@ def prepare_draft(
             expected_updated_at = document.get("updatedAt")
             if isinstance(expected_updated_at, bool) or not isinstance(expected_updated_at, int):
                 expected_updated_at = None
+            lock = (
+                {"expectedUpdatedAt": expected_updated_at}
+                if target_id not in processed_targets
+                else {}
+            )
             if draft_operation.action == "update":
                 before = _before_fields(target.type, draft_operation.after, document)
                 display = _display_for(document, draft_operation.after, reader, action="update")
@@ -538,7 +545,7 @@ def prepare_draft(
                     siblingOrder=draft_operation.siblingOrder,
                     reason=draft_operation.reason,
                     dependsOnOperations=draft_operation.dependsOnOperations,
-                    expectedUpdatedAt=expected_updated_at,
+                    **lock,
                     display=display,
                 )
             elif draft_operation.action == "complete":
@@ -561,7 +568,7 @@ def prepare_draft(
                     completionDay=completion_day,
                     reason=draft_operation.reason,
                     dependsOnOperations=draft_operation.dependsOnOperations,
-                    expectedUpdatedAt=expected_updated_at,
+                    **lock,
                     display=display,
                     **repair_fields,
                 )
@@ -573,12 +580,13 @@ def prepare_draft(
                     target=target,
                     reason=draft_operation.reason,
                     dependsOnOperations=draft_operation.dependsOnOperations,
-                    expectedUpdatedAt=expected_updated_at,
+                    **lock,
                     display=display,
                 )
         operations.append(operation)
         compiled = compile_operation(operation, document, now_ms)
         reader.put_projected(target_id, project_compiled_mutation(document, compiled))
+        processed_targets.add(target_id)
     prepared = ChangePlanV1(
         schemaVersion=1,
         planId=str(uuid4()),
@@ -601,14 +609,24 @@ def rebase_plan_live(
 
     verify_expected_account(plan, account_reader)
     value = plan.model_dump(mode="json", by_alias=True, exclude_none=True)
+    processed_targets: set[str] = set()
     for index, operation in enumerate(plan.operations):
+        document = reader.get_doc(operation.target.id)
         if isinstance(operation, CreateOperation):
-            if reader.get_doc(operation.target.id) is not None:
+            if document is not None:
                 raise LivePreconditionError(
                     f"create operation {operation.operationId!r} target now exists"
                 )
+            display = _display_for(None, operation.after, reader, action="create")
+            value["operations"][index]["display"] = (
+                display.model_dump(mode="json", exclude_unset=True) if display is not None else None
+            )
+            reader.put_projected(
+                operation.target.id,
+                project_compiled_mutation(None, compile_operation(operation, None, now_ms)),
+            )
+            processed_targets.add(operation.target.id)
             continue
-        document = reader.get_doc(operation.target.id)
         if document is None:
             raise LivePreconditionError(f"operation {operation.operationId!r} target disappeared")
         if document.get("title") != operation.target.title:
@@ -651,9 +669,19 @@ def rebase_plan_live(
             display.model_dump(mode="json", exclude_none=True) if display is not None else None
         )
         updated_at = document.get("updatedAt")
-        value["operations"][index]["expectedUpdatedAt"] = (
-            updated_at if isinstance(updated_at, int) and not isinstance(updated_at, bool) else None
+        if operation.target.id in processed_targets:
+            value["operations"][index].pop("expectedUpdatedAt", None)
+        else:
+            value["operations"][index]["expectedUpdatedAt"] = (
+                updated_at
+                if isinstance(updated_at, int) and not isinstance(updated_at, bool)
+                else None
+            )
+        reader.put_projected(
+            operation.target.id,
+            project_compiled_mutation(document, compile_operation(operation, document, now_ms)),
         )
+        processed_targets.add(operation.target.id)
     value["createdAt"] = (
         datetime.fromtimestamp(now_ms / 1000, UTC).isoformat().replace("+00:00", "Z")
     )

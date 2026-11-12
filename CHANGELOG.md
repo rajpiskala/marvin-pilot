@@ -4,6 +4,9 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
+- Fix draft preparation and live refresh of ordered same-target operations, including
+  backup-only projection and initial-only concurrency locks.
+
 - Reuse running visualizer sessions for the same inputs and live-reload watched plans, context
   plans, backups, and receipts while preserving review state.
 - Add optional `visualize --allow-apply` with account pinning, exact-file freshness checks,

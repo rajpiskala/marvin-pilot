@@ -4,6 +4,7 @@ import copy
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -19,7 +20,8 @@ from marvin_pilot.errors import (
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.executor import execute_apply
 from marvin_pilot.history import HistoryStore
-from marvin_pilot.plan_io import parse_plan_bytes
+from marvin_pilot.plan_io import canonical_plan_bytes, parse_plan_bytes
+from marvin_pilot.prepare import SnapshotReader, parse_draft_bytes, prepare_draft, rebase_plan_live
 from marvin_pilot.reverter import execute_revert, preflight_revert
 
 APPLY_MS = 1_786_233_600_123
@@ -38,6 +40,9 @@ class Clock:
 
 class InMemoryMarvin:
     api_base_host = "https://marvin.test"
+
+    def check_connection(self):
+        return SimpleNamespace(account_user_id="123456", account_email="pilot@example.com")
 
     def __init__(self, documents: dict[str, dict[str, Any]]) -> None:
         self.documents = copy.deepcopy(documents)
@@ -310,7 +315,10 @@ def test_project_completion_history_repair_stays_completed_and_reverts(tmp_path:
     assert client.documents[project_id]["doneDate"] == "2026-07-18"
 
 
-def test_ordered_same_document_chain_applies_and_reverts_as_one_plan(tmp_path: Path) -> None:
+@pytest.mark.parametrize("authoring_route", ["plan", "draft", "refreshed-draft"])
+def test_ordered_same_document_chain_applies_and_reverts_as_one_plan(
+    tmp_path: Path, authoring_route: str
+) -> None:
     task_id = "ordered-chain-task"
     original = {
         "_id": task_id,
@@ -365,8 +373,34 @@ def test_ordered_same_document_chain_applies_and_reverts_as_one_plan(tmp_path: P
             },
         ],
     }
-    raw = json.dumps(value).encode()
     client = InMemoryMarvin({task_id: original})
+    if authoring_route != "plan":
+        operations = copy.deepcopy(value["operations"])
+        for operation in operations:
+            operation.pop("before", None)
+            operation.pop("expectedUpdatedAt", None)
+        draft = parse_draft_bytes(
+            json.dumps(
+                {
+                    "draftVersion": 1,
+                    "expectedAccount": {"userId": "123456", "email": "pilot@example.com"},
+                    "summary": value["summary"],
+                    "operations": operations,
+                }
+            ).encode()
+        )
+        authoring_ms = int(datetime.fromisoformat(value["createdAt"]).timestamp() * 1000)
+        prepared = prepare_draft(draft, SnapshotReader([], live=client), now_ms=authoring_ms)
+        if authoring_route == "refreshed-draft":
+            prepared = rebase_plan_live(
+                prepared,
+                SnapshotReader([], live=client),
+                account_reader=client,
+                now_ms=authoring_ms + 1000,
+            )
+        raw = canonical_plan_bytes(prepared)
+    else:
+        raw = json.dumps(value).encode()
     clock = Clock()
 
     source = execute_apply(
