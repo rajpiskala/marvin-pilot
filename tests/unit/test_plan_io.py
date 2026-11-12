@@ -726,3 +726,19 @@ def test_load_plan_reads_exact_input_bytes(tmp_path: Path) -> None:
     plan, loaded = load_plan(path)
     assert plan.planId == EXAMPLE_PLAN["planId"]
     assert loaded == raw
+
+
+@pytest.mark.parametrize("field", ["rank", "siblingOrder"])
+def test_ordering_field_schema_errors_include_authoring_guidance(example_plan_dict, field):
+    example_plan_dict["operations"][0]["after"] = {
+        field: 1 if field == "rank" else {"position": "first"}
+    }
+    with pytest.raises(PlanSyntaxError, match="operation-level siblingOrder"):
+        parse_plan_bytes(json.dumps(example_plan_dict).encode())
+
+
+def test_supported_raw_task_ranks_remain_valid(example_plan_dict):
+    operation = example_plan_dict["operations"][0]
+    operation["before"] = {"masterRank": 1, "dayRank": 10}
+    operation["after"] = {"masterRank": 2, "dayRank": 20}
+    parse_plan_bytes(json.dumps(example_plan_dict).encode())

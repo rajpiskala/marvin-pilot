@@ -4,6 +4,8 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
+- Explain misplaced ordering fields and support order-only compact drafts without `after` (#20).
+
 - Preserve explicit null clears and before-value presence when refreshing a reviewed plan.
 
 - Fix draft preparation and live refresh of ordered same-target operations, including

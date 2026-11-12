@@ -2480,6 +2480,12 @@ Relative sibling order (update operations only):
 Pilot resolves this to Marvin's day rank for scheduled tasks, master rank for unscheduled tasks,
 and container rank for projects/categories during live preflight. The anchor must be a compatible
 sibling in the final day/parent. Do not combine siblingOrder with raw dayRank/masterRank changes.
+Put siblingOrder on the operation, not inside after. An order-only full update uses
+"before": {{}} and "after": {{}}. Example project update:
+  {{"operationId":"order-project","action":"update",
+    "target":{{"type":"project","id":"project-id","title":"Project A"}},
+    "reason":"Put Project A after Project B.","before":{{}},"after":{{}},
+    "siblingOrder":{{"afterId":"project-b-id"}}}}
 
 Recurrence targets and fields:
   - An entire recurring-task series uses target.type "recurringTask". Create requires after.title
@@ -2584,6 +2590,11 @@ completion time, and optional siblingOrder. Existing targets may use an exact ID
 exact/normalized backup title. Pilot fills target titles, before-state, updatedAt locks,
 caller-safe create UUIDs, and typed display paths from a local backup and optional live overlay.
 It never invents desired dates, parents, titles, or actions.
+For an order-only draft, after may be omitted when operation-level siblingOrder is supplied.
+For example: {{"operationId":"order-task","action":"update",
+  "target":{{"type":"task","id":"task-id"}},"reason":"Put this task first.",
+  "siblingOrder":{{"position":"first"}}}}
+Preparation expands this to explicit empty before/after objects in the full plan.
 
   marvin-pilot prepare draft.json --backup MarvinBackup.json.lzma -o plan.json
   marvin-pilot prepare draft.json --backup MarvinBackup.json.lzma --live -o plan.json

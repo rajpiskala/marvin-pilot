@@ -45,7 +45,7 @@ from marvin_pilot.models.plan_v1 import (
     TrashOperation,
     UpdateOperation,
 )
-from marvin_pilot.plan_io import canonical_plan_bytes, parse_plan_bytes
+from marvin_pilot.plan_io import canonical_plan_bytes, ordering_authoring_hints, parse_plan_bytes
 from marvin_pilot.preflight import verify_expected_account
 
 
@@ -83,8 +83,14 @@ class DraftBaseOperation(ClosedModel):
 class DraftUpdateOperation(DraftBaseOperation):
     action: Literal["update"]
     target: DraftTarget
-    after: ItemFields
+    after: ItemFields = Field(default_factory=TaskFields)
     siblingOrder: SiblingOrder | None = None
+
+    @model_validator(mode="after")
+    def require_fields_or_order(self) -> DraftUpdateOperation:
+        if not self.after.model_fields_set and self.siblingOrder is None:
+            raise ValueError("update requires after fields or operation-level siblingOrder")
+        return self
 
 
 class DraftCreateOperation(DraftBaseOperation):
@@ -257,7 +263,9 @@ def parse_draft_bytes(raw: bytes) -> ChangeDraftV1:
     try:
         return ChangeDraftV1.model_validate(value)
     except ValidationError as exc:
-        raise PlanSyntaxError(f"invalid Marvin Pilot draft: {exc}") from exc
+        hints = ordering_authoring_hints(value)
+        detail = "\n" + "\n".join(hints) if hints else ""
+        raise PlanSyntaxError(f"invalid Marvin Pilot draft: {exc}{detail}") from exc
 
 
 def _document_type(document: dict[str, Any]) -> str | None:

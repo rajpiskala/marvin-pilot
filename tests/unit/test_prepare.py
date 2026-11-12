@@ -178,6 +178,36 @@ def test_prepare_is_closed_and_never_infers_missing_desired_fields() -> None:
         parse_draft_bytes(json.dumps(value).encode())
 
 
+def test_order_only_draft_expands_to_explicit_empty_before_and_after() -> None:
+    value = draft_value()
+    value["operations"] = [
+        {
+            "operationId": "order-project",
+            "action": "update",
+            "target": {"type": "project", "id": "project-1"},
+            "siblingOrder": {"position": "first"},
+            "reason": "Put this project first.",
+        }
+    ]
+    plan = prepare_draft(
+        parse_draft_bytes(json.dumps(value).encode()), SnapshotReader(documents()), now_ms=NOW_MS
+    )
+    operation = json.loads(canonical_plan_bytes(plan))["operations"][0]
+    assert operation["before"] == operation["after"] == {}
+    assert operation["siblingOrder"] == {"position": "first"}
+    value["operations"][0].pop("siblingOrder")
+    with pytest.raises(PlanSyntaxError, match="requires after fields"):
+        parse_draft_bytes(json.dumps(value).encode())
+
+
+@pytest.mark.parametrize("field", ["rank", "siblingOrder"])
+def test_misplaced_draft_ordering_points_to_operation_clause(field: str) -> None:
+    value = draft_value()
+    value["operations"][0]["after"] = {field: 3 if field == "rank" else {"position": "first"}}
+    with pytest.raises(PlanSyntaxError, match="operation-level siblingOrder"):
+        parse_draft_bytes(json.dumps(value).encode())
+
+
 def test_rebase_refreshes_only_lock_metadata_when_before_still_matches() -> None:
     plan = prepare_draft(
         parse_draft_bytes(json.dumps(draft_value()).encode()),

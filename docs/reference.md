@@ -650,6 +650,23 @@ An update can express stable relative ordering with `siblingOrder: {"beforeId":"
 compatible sibling on the task's final scheduled day or under its final parent, then writes Marvin's
 native rank. Revert restores the original rank. Raw rank edits and `siblingOrder` cannot be mixed.
 
+Place `siblingOrder` on the operation, outside `after`. An order-only **draft** can omit `after`:
+
+```json
+{
+  "operationId": "order-project",
+  "action": "update",
+  "target": {"type": "project", "id": "project-a-id"},
+  "reason": "Put Project A after Project B.",
+  "siblingOrder": {"afterId": "project-b-id"}
+}
+```
+
+The same clause works for tasks (for example `{"position":"first"}`). `prepare` emits explicit
+`before: {}` and `after: {}` in the full plan. Full plans still require those objects. Do not send
+native `rank` or put `siblingOrder` inside `after`; existing supported raw task `dayRank` and
+`masterRank` edits remain available when relative ordering is not used.
+
 Reminder records are separate coupled server state. Pilot does not currently mutate or promise to
 preserve them, so live preflight blocks affected documents with an explicit instruction to remove
 and recreate the reminder in Marvin or make that change by hand. Calendar synchronization,
