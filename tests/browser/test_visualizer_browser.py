@@ -1907,6 +1907,75 @@ def test_inline_subtask_edit_keeps_actions_and_checklist_states(page, tmp_path: 
         )
 
 
+@pytest.mark.parametrize("theme", ["light", "dusk", "night"])
+def test_inline_edits_highlight_entire_card_or_subtask_row(
+    page, tmp_path: Path, theme: str
+) -> None:
+    source = hierarchy_plan()
+    source["operations"][1]["before"]["subtasks"] = []
+    source["operations"][1]["after"]["subtasks"] = [
+        {"id": "edited-step", "title": "First step", "done": False},
+        {"id": "untouched-step", "title": "Second step", "done": False},
+    ]
+    path = tmp_path / "review.json"
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+    with running_visualizer(
+        plan_dict=source,
+        server_kwargs={"preloaded_raw": raw, "plan_path": path, "allow_edit": True},
+    ) as server:
+        page.goto(server.url)
+        page.locator(f'[data-theme-choice="{theme}"]').click()
+        project = page.locator(
+            '.hierarchy-pane-after [data-operation-id="rename-monitoring"] .task-card'
+        )
+        task = page.locator('.hierarchy-pane-after [data-operation-id="rename-task"] .task-card')
+        original_project_background = project.evaluate("el => getComputedStyle(el).backgroundColor")
+        original_task_background = task.evaluate("el => getComputedStyle(el).backgroundColor")
+        project.locator(".task-title").fill("Monitoring launch v3")
+        page.locator('.hierarchy-pane-after [data-subtask-id="edited-step"] .subtask-title').fill(
+            "Revised first step"
+        )
+        row = task.locator('[data-subtask-id="edited-step"]')
+        untouched = task.locator('[data-subtask-id="untouched-step"]')
+        project_background = project.evaluate("el => getComputedStyle(el).backgroundColor")
+        assert project_background != original_project_background
+        assert row.evaluate("el => getComputedStyle(el).backgroundColor") == project_background
+        assert (
+            task.evaluate("el => getComputedStyle(el).backgroundColor") == original_task_background
+        )
+        assert (
+            untouched.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(0, 0, 0, 0)"
+        )
+        assert (
+            project.locator(".task-title").evaluate("el => getComputedStyle(el).backgroundColor")
+            == "rgba(0, 0, 0, 0)"
+        )
+        assert (
+            row.locator(".subtask-title").evaluate("el => getComputedStyle(el).backgroundColor")
+            == "rgba(0, 0, 0, 0)"
+        )
+        assert row.bounding_box()["width"] > row.locator(".subtask-title").bounding_box()["width"]
+        assert page.get_by_text("Your edit", exact=True).count() == 0
+        assert page.locator(".text-edit-original").count() == 0
+        page.locator('[data-mode-choice="changes"]').click()
+        changed_project = page.locator(
+            '[data-operation-id="rename-monitoring"] .diff-cell-after .task-card'
+        )
+        assert (
+            changed_project.evaluate("el => getComputedStyle(el).backgroundColor")
+            == project_background
+        )
+        page.locator("#discard-edits").click()
+        page.locator("#proposal-editor").wait_for(state="hidden")
+        assert (
+            changed_project.evaluate("el => getComputedStyle(el).backgroundColor")
+            == original_project_background
+        )
+        assert page.locator(".text-edited").count() == 0
+        assert path.read_bytes() == raw
+
+
 def test_inline_editor_rejects_deleting_a_title(page, tmp_path: Path) -> None:
     source = copy.deepcopy(EXAMPLE_PLAN)
     source["operations"][1]["dependsOnOperations"] = ["reschedule-wash-dishes"]

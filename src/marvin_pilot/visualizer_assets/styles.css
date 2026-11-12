@@ -57,7 +57,14 @@
   -webkit-line-clamp: unset;
   white-space: pre-wrap;
 }
-.text-edited { background: var(--accent-soft); }
+.task-card:has(> .task-line > .task-title.text-edited),
+.subtask-row:has(> .subtask-title.text-edited) {
+  background: var(--accent-soft);
+}
+.task-title.text-edited[contenteditable],
+.subtask-title.text-edited[contenteditable] {
+  background: transparent;
+}
 
 :root[data-theme="dusk"] {
   color-scheme: dark;
