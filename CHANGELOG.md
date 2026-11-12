@@ -4,6 +4,13 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
+- Allow create-revert when the only change is late assignment of the initial native CouchDB
+  revision. All fields, known revisions, and later revisions retain conflict protection.
+
+- Add opt-in `visualize --edit` for offline title/completion-time corrections and dependency-checked
+  exclusions. Preview and save a new immutable plan, keep the original and locks intact, invalidate
+  previous apply approval, and record private local edit provenance (#18).
+
 - Create an ordinary task already completed with operation-level `completedAt`, historical
   completion/subtask timestamps, history-day verification, and exact receipt-backed revert (#21).
 
