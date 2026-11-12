@@ -11,8 +11,6 @@ All notable changes to Marvin Pilot are documented here.
   text-only feedback (including unparsed Marvin syntax) for AI reconciliation and a second
   validated preview. No status/action changes, exclusions or subtask add/remove controls;
   the source plan stays unchanged and pending feedback cannot be applied (#18).
-  Highlight each human-edited field with a “Your edit” badge and a struck-through original;
-  subtask-only edits do not mark the parent title.
 
 - Create an ordinary task already completed with operation-level `completedAt`, historical
   completion/subtask timestamps, history-day verification, and exact receipt-backed revert (#21).
