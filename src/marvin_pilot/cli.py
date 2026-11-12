@@ -1424,11 +1424,18 @@ def visualize_command(
             help="Opt in to reviewed browser apply for one file-backed, account-pinned plan.",
         ),
     ] = False,
+    edit: Annotated[
+        bool,
+        typer.Option(
+            "--edit",
+            help="Allow narrow offline edits; save a new plan without replacing the source.",
+        ),
+    ] = False,
 ) -> None:
-    """Open a local plan preview; browser apply requires explicit --allow-apply."""
+    """Preview locally; --edit saves revisions, --allow-apply separately enables live apply."""
 
     started = time.perf_counter()
-    key = session_key(plan_path, backup, context_plan or [], receipt, allow_apply)
+    key = session_key(plan_path, backup, context_plan or [], receipt, allow_apply, edit)
     if key is not None:
         reusable = find_reusable_server(key)
         if reusable is not None:
@@ -1439,6 +1446,8 @@ def visualize_command(
     discovery_ms = (time.perf_counter() - started) * 1000
     if allow_apply and (plan_path is None or plan_path == "-" or receipt is not None):
         _fail(PlanSemanticError("--allow-apply requires a file-backed plan without --receipt"))
+    if edit and (plan_path is None or plan_path == "-" or receipt is not None):
+        _fail(PlanSemanticError("--edit requires a file-backed plan without --receipt"))
     input_kind = None
     change_input = None
     raw = None
@@ -1446,6 +1455,8 @@ def visualize_command(
         input_kind, change_input, raw = _read_change_input(plan_path)
     if allow_apply and input_kind != "plan":
         _fail(PlanSemanticError("--allow-apply supports one plan, not a plan set"))
+    if edit and input_kind != "plan":
+        _fail(PlanSemanticError("--edit supports one plan, not a plan set"))
     parsed_ms = (time.perf_counter() - started) * 1000 - discovery_ms
     source_name = "stdin" if plan_path == "-" else Path(plan_path).name if plan_path else None
     try:
@@ -1470,6 +1481,12 @@ def visualize_command(
             value, source_bytes = load_plan(Path(plan_path))
         return _visualization_from_input(
             input_kind, value, source_bytes, source_name, backup, receipt, context_plan or []
+        )
+
+    def reload_plan(path: Path) -> LoadedVisualization:
+        value, source_bytes = load_plan(path)
+        return _visualization_from_input(
+            "plan", value, source_bytes, path.name, backup, None, context_plan or []
         )
 
     def checked_config(plan: ChangePlanV1) -> AppConfig:
@@ -1556,7 +1573,9 @@ def visualize_command(
         review_state=loaded.review_state,
         receipt_id=loaded.receipt_id,
         preloaded_raw=loaded.raw,
-        plan_path=Path(plan_path) if allow_apply and plan_path else None,
+        plan_path=Path(plan_path) if (allow_apply or edit) and plan_path else None,
+        allow_edit=edit,
+        reload_plan=reload_plan if edit else None,
         watch_paths=watch_paths,
         reload_visualization=reload_visualization if watch_paths else None,
         review_preflight=browser_preflight if allow_apply else None,
@@ -2541,6 +2560,10 @@ Container notes:
   - Container moves are rejected if the proposed ancestry would create or inherit a parent cycle.
     Project/category Trash is blocked unless the documented /children read proves every direct
     child was already moved or deleted, including earlier projected operations in this plan.
+  - An ordinary task create can include operation-level completedAt to create finished work in
+    one request. Use RFC3339 with an offset, no later than createdAt. Omit after.scheduledDate or
+    use its completion day. Checked subtasks share the historical timestamp. This does not
+    support project/category/recurringTask creates or sourceTask consolidation.
   - complete.completedAt may not be later than the plan's createdAt. Pilot writes exact historical
     doneAt and assigns day to the local YYYY-MM-DD encoded by completedAt for both tasks and
     projects; projects also receive doneDate. A prepared plan adds completionDay

@@ -18,6 +18,7 @@ def test_reuses_only_live_matching_loopback_session(tmp_path: Path) -> None:
     assert key is not None
     assert session_key("-", None, [], None, False) is None
     assert session_key(str(plan), None, [], None, True) != key
+    assert session_key(str(plan), None, [], None, False, True) != key
     server = VisualizerServer(session_key=key)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

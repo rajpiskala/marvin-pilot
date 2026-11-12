@@ -65,6 +65,7 @@
             </div>
           </div>
           <div class="plan-actions">
+            <button type="button" id="edit-proposal" class="secondary-button" hidden>Edit proposal</button>
             <button type="button" id="apply-reviewed" class="primary-button" hidden>Apply this reviewed plan</button>
             <div class="segmented-control" role="radiogroup" aria-label="Review mode">
               <button type="button" role="radio" data-mode-choice="preview">Preview</button>
@@ -133,6 +134,25 @@
         </div>
 
         <p id="apply-feedback" class="apply-feedback" role="status" hidden></p>
+
+        <section id="proposal-editor" class="proposal-editor" hidden aria-labelledby="editor-heading">
+          <h2 id="editor-heading">Edit this proposal — not your Marvin data</h2>
+          <p>Only proposed titles, completion times and exclusions are editable. Live locks and
+            baseline values stay intact. Saving creates a new JSON file; the original is unchanged.</p>
+          <label>Operation <select id="edit-operation"></select></label>
+          <label id="edit-title-label">Proposed title <input id="edit-title" type="text" maxlength="1000"></label>
+          <label id="edit-completion-label">Completion timestamp (explicit timezone offset)
+            <input id="edit-completion" type="text" placeholder="2026-08-07T18:30:00-07:00">
+          </label>
+          <label class="edit-exclude"><input id="edit-exclude" type="checkbox"> Exclude this operation</label>
+          <p id="edit-summary" role="status"></p>
+          <div class="editor-actions">
+            <button id="preview-edits" type="button" class="secondary-button">Preview edits</button>
+            <button id="save-revision" type="button" class="primary-button" disabled>Save revised plan</button>
+            <button id="discard-edits" type="button" class="secondary-button">Discard edits</button>
+          </div>
+          <p id="edit-feedback" role="status"></p>
+        </section>
 
         <section id="comparison-tray" class="comparison-tray" hidden aria-live="polite"></section>
         <div id="sections" class="sections"></div>

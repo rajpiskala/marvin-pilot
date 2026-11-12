@@ -51,6 +51,11 @@ let currentPlan = null;
 let currentRevision = -1;
 let csrfToken = null;
 let canApplyReviewed = false;
+let editBaseline = null;
+let editChoices = [];
+let revisionToken = null;
+let manualOperations = new Set();
+const proposalEdits = new Map();
 const visibleActions = new Set(ACTIONS);
 const collapsedHierarchyKeys = new Set();
 const expandedTitleKeys = new Set();
@@ -78,6 +83,19 @@ const elements = {
   accountRow: document.querySelector("#plan-account-row"),
   account: document.querySelector("#plan-account"),
   applyReviewed: document.querySelector("#apply-reviewed"),
+  editProposal: document.querySelector("#edit-proposal"),
+  editor: document.querySelector("#proposal-editor"),
+  editOperation: document.querySelector("#edit-operation"),
+  editTitle: document.querySelector("#edit-title"),
+  editTitleLabel: document.querySelector("#edit-title-label"),
+  editCompletion: document.querySelector("#edit-completion"),
+  editCompletionLabel: document.querySelector("#edit-completion-label"),
+  editExclude: document.querySelector("#edit-exclude"),
+  editSummary: document.querySelector("#edit-summary"),
+  previewEdits: document.querySelector("#preview-edits"),
+  saveRevision: document.querySelector("#save-revision"),
+  discardEdits: document.querySelector("#discard-edits"),
+  editFeedback: document.querySelector("#edit-feedback"),
   applyFeedback: document.querySelector("#apply-feedback"),
   localGuarantee: document.querySelector("#local-guarantee"),
   footerReviewMode: document.querySelector("#footer-review-mode"),
@@ -1701,6 +1719,7 @@ function renderPlan(plan, { preserveState = false } = {}) {
   elements.planView.hidden = false;
   document.title = `Marvin Pilot - ${plan.summary}`;
   renderSections({ preserveView: preserveState });
+  markManualEdits();
   if (!preserveState) window.scrollTo({ top: 0, behavior: "auto" });
 }
 
@@ -1708,6 +1727,10 @@ function syncReviewMetadata(result) {
   currentRevision = result.revision;
   csrfToken = result.csrf;
   canApplyReviewed = Boolean(result.can_apply);
+  elements.editProposal.hidden = !result.can_edit || result.editing;
+  elements.openAnother.disabled = Boolean(result.editing);
+  manualOperations = new Set(result.edited_operations || []);
+  markManualEdits();
   elements.applyReviewed.hidden = !canApplyReviewed;
   elements.sourceRow.hidden = !result.source_path;
   elements.sourcePath.textContent = result.source_path || "";
@@ -1721,6 +1744,19 @@ function syncReviewMetadata(result) {
     ? "Local review with opt-in apply" : "Read-only local review";
   elements.footerCredentialState.textContent = canApplyReviewed
     ? "Credential loads only for preflight/apply" : "No credential loaded";
+  if (result.editing) {
+    elements.reviewStatus.textContent = "Editing proposal — apply disabled until saved and re-reviewed";
+    elements.footerReviewMode.textContent = "Offline proposal editor";
+    if (!editBaseline) {
+      elements.editor.hidden = false;
+      editorBusy(true);
+      elements.saveRevision.disabled = true;
+      elements.discardEdits.disabled = false;
+      elements.editSummary.textContent = "An edit session is active after a reload or in another tab. Discard it to review the source plan again.";
+    }
+  } else if (result.can_edit && !canApplyReviewed) {
+    elements.footerReviewMode.textContent = "Local review with opt-in proposal editing";
+  }
   if (result.error) {
     showError(`Watched input could not reload: ${result.error}. The last good view remains visible.`);
   } else {
@@ -1815,6 +1851,148 @@ async function postReviewedAction(route, payload) {
   if (!response.ok) throw new Error(result.error?.message || `${route} failed (${response.status}).`);
   return result;
 }
+
+function planIdentity() {
+  return { revision: currentRevision, plan_id: currentPlan.plan_id, digest: currentPlan.digest };
+}
+
+function markManualEdits() {
+  elements.sections.querySelectorAll(".manual-edit-badge").forEach((badge) => badge.remove());
+  elements.sections.querySelectorAll(".hierarchy-pane-after .task-card").forEach((card) => {
+    const id = card.closest("[data-operation-id]")?.dataset.operationId;
+    if (manualOperations.has(id)) {
+      card.append(node("span", "manual-edit-badge", "Proposal edited"));
+    }
+  });
+}
+
+function showEditOperation() {
+  const choice = editChoices.find((item) => item.operationId === elements.editOperation.value);
+  if (!choice) return;
+  const edit = proposalEdits.get(choice.operationId);
+  elements.editTitleLabel.hidden = choice.title === null;
+  elements.editTitle.value = edit?.title ?? choice.title ?? "";
+  elements.editCompletionLabel.hidden = choice.completedAt === null;
+  elements.editCompletion.value = edit?.completedAt ?? choice.completedAt ?? "";
+  elements.editExclude.checked = Boolean(edit?.exclude);
+  elements.editTitle.disabled = elements.editExclude.checked;
+  elements.editCompletion.disabled = elements.editExclude.checked;
+}
+
+function captureProposalEdit() {
+  if (!editBaseline) return;
+  const choice = editChoices.find((item) => item.operationId === elements.editOperation.value);
+  const edit = { operationId: choice.operationId };
+  if (elements.editExclude.checked) {
+    edit.exclude = true;
+  } else {
+    if (choice.title !== null && elements.editTitle.value !== choice.title) edit.title = elements.editTitle.value;
+    if (choice.completedAt !== null && elements.editCompletion.value !== choice.completedAt) edit.completedAt = elements.editCompletion.value;
+  }
+  if (Object.keys(edit).length > 1) proposalEdits.set(choice.operationId, edit);
+  else proposalEdits.delete(choice.operationId);
+  revisionToken = null;
+  elements.saveRevision.disabled = true;
+  elements.editTitle.disabled = elements.editExclude.checked;
+  elements.editCompletion.disabled = elements.editExclude.checked;
+  elements.editSummary.textContent = `${proposalEdits.size} operation(s) manually revised. Preview before saving.`;
+  elements.editFeedback.textContent = "The view shows the last preview, not unpreviewed form changes.";
+}
+
+async function startProposalEditor() {
+  elements.editProposal.disabled = true;
+  elements.applyReviewed.disabled = true;
+  try {
+    const result = await postReviewedAction("edit-start", { identity: planIdentity() });
+    editBaseline = result.identity;
+    editChoices = result.choices;
+    proposalEdits.clear();
+    revisionToken = null;
+    editorBusy(false);
+    elements.saveRevision.disabled = true;
+    elements.editOperation.replaceChildren(...editChoices.map((choice) => {
+      const option = node("option", "", choice.label);
+      option.value = choice.operationId;
+      return option;
+    }));
+    showEditOperation();
+    elements.editor.hidden = false;
+    elements.editSummary.textContent = "No edits yet. Select an operation to revise it.";
+    elements.editFeedback.textContent = "Discard edits undoes this proposal revision, not an applied Marvin change.";
+    syncReviewMetadata(result);
+    elements.editor.scrollIntoView({ block: "center", behavior: "smooth" });
+  } catch (error) { showError(error.message); }
+  finally { elements.editProposal.disabled = false; elements.applyReviewed.disabled = false; }
+}
+
+function editorBusy(busy) {
+  elements.editOperation.disabled = busy;
+  elements.editTitle.disabled = busy || elements.editExclude.checked;
+  elements.editCompletion.disabled = busy || elements.editExclude.checked;
+  elements.editExclude.disabled = busy;
+  elements.previewEdits.disabled = busy;
+  elements.discardEdits.disabled = busy;
+}
+
+async function previewProposalEdits() {
+  editorBusy(true);
+  elements.saveRevision.disabled = true;
+  revisionToken = null;
+  try {
+    const result = await postReviewedAction("revision-preview", {
+      identity: editBaseline, edits: [...proposalEdits.values()],
+    });
+    revisionToken = result.revision_token;
+    renderPlan(result.plan, { preserveState: true });
+    syncReviewMetadata(result);
+    elements.saveRevision.disabled = false;
+    elements.editFeedback.textContent = "Validated offline. Review the updated preview, then save it as a new plan.";
+  } catch (error) {
+    elements.editFeedback.textContent = error.message;
+    showError(error.message);
+  } finally { editorBusy(false); }
+}
+
+async function saveProposalRevision() {
+  if (!revisionToken) return;
+  editorBusy(true);
+  elements.saveRevision.disabled = true;
+  try {
+    const result = await postReviewedAction("revision-save", {
+      identity: editBaseline, revision_token: revisionToken,
+    });
+    editBaseline = null;
+    revisionToken = null;
+    elements.editor.hidden = true;
+    renderPlan(result.plan, { preserveState: true });
+    syncReviewMetadata(result);
+    elements.applyFeedback.hidden = false;
+    elements.applyFeedback.textContent = `Saved ${result.saved_path}. Nothing applied. Review and live-check this new plan before applying.${result.warning ? ` ${result.warning}` : ""}`;
+  } catch (error) { showError(error.message); }
+  finally { editorBusy(false); }
+}
+
+async function discardProposalEdits() {
+  try {
+    const result = await postReviewedAction("edit-cancel", { identity: editBaseline || {} });
+    editBaseline = null;
+    proposalEdits.clear();
+    revisionToken = null;
+    elements.editor.hidden = true;
+    editorBusy(false);
+    renderPlan(result.plan, { preserveState: true });
+    syncReviewMetadata(result);
+  } catch (error) { showError(error.message); }
+}
+
+elements.editProposal.addEventListener("click", startProposalEditor);
+elements.editOperation.addEventListener("change", showEditOperation);
+elements.editTitle.addEventListener("input", captureProposalEdit);
+elements.editCompletion.addEventListener("input", captureProposalEdit);
+elements.editExclude.addEventListener("change", captureProposalEdit);
+elements.previewEdits.addEventListener("click", previewProposalEdits);
+elements.saveRevision.addEventListener("click", saveProposalRevision);
+elements.discardEdits.addEventListener("click", discardProposalEdits);
 
 async function applyReviewedPlan() {
   if (!canApplyReviewed || !currentPlan || !csrfToken) return;

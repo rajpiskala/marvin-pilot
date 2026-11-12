@@ -680,6 +680,33 @@ Trash is terminal. Live validation projects each successful intermediate state, 
 hierarchy checks see the planned rename/move rather than stale live state. Apply and reverse-order
 revert replace projected revisions with the actual revision read after every write, retaining
 strict concurrency protection throughout the chain.
+### Revising a proposal in the visualizer
+
+Run `marvin-pilot visualize PLAN.json --edit` for an unapplied, file-backed single plan.
+The default visualizer remains read-only. Editing does not load credentials, refresh locks,
+or write Marvin data. `--allow-apply` is a separate opt-in and can be combined with `--edit`.
+
+1. Choose **Edit proposal**, then select the operation.
+2. Correct an existing proposed title or completion timestamp (RFC 3339 with an explicit timezone
+   offset), or exclude an operation. You cannot switch actions, introduce fields/tasks, change
+   recurrence rules, or change source/baseline values. Exclusions that strand a dependency are
+   rejected; dependent operations must be excluded explicitly too.
+3. Choose **Preview edits**. Review the new hierarchy, completion-history day, manual-edit markers,
+   and digest. Further form changes disable saving until previewed again.
+4. Choose **Save revised plan**. Pilot exclusively creates `PLAN.review-UUID.json` beside the source,
+   with a new plan ID/digest and a private `.review.json` provenance sidecar. The source is unchanged.
+   Treat both files as private task data, just like your other plans and receipts.
+
+Apply approval is invalidated when editing begins. Saving is not applying: review/live-validate
+the saved plan before CLI apply, or perform a fresh browser preflight and explicit confirmation
+when `--allow-apply` is enabled. **Discard edits** only discards the local proposal revision;
+undoing an already-applied plan still uses its recovery receipt and `revert`.
+
+If a watched source/context file changes during editing, saving is blocked. Discard edits and
+review the latest file. Editing is unavailable for uploads, stdin, plan sets, or receipt-backed
+applied views. Stable target IDs, account pins, original before-values, and concurrency locks are
+retained; later same-target title references and proposed hierarchy titles are reprojected.
+
 For finished-work capture, an ordinary task `create` supports an optional operation-level
 `completedAt` timestamp (RFC 3339 with an explicit offset, no later than `createdAt`). It writes
 `done`, historical `doneAt`, and the local completion-history day in one create request. Omit

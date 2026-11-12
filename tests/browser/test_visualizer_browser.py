@@ -1787,3 +1787,143 @@ def test_browser_apply_reviews_exact_file_and_shows_receipt(page, tmp_path: Path
         assert page.locator("#review-status").inner_text() == "Applied plan — receipt verified"
         assert button.is_hidden()
         assert calls == ["preflight", "apply"]
+
+
+def test_offline_editor_previews_saves_and_requires_fresh_review(page, tmp_path: Path) -> None:
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    source["expectedAccount"] = {"userId": "123456", "email": "pilot@example.com"}
+    path = tmp_path / "review.json"
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+    calls = []
+    with running_visualizer(
+        plan_dict=source,
+        server_kwargs={
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+            "review_preflight": lambda _: calls.append("preflight"),
+            "review_apply": lambda *_: calls.append("apply"),
+        },
+    ) as server:
+        page.goto(server.url)
+        page.locator("#edit-proposal").click()
+        page.locator("#proposal-editor").wait_for(state="visible")
+        assert page.locator("#apply-reviewed").is_hidden()
+        page.locator("#edit-operation").select_option("create-email-follow-up")
+        page.locator("#edit-title").fill("Reviewed follow-up title")
+        page.locator("#preview-edits").click()
+        page.get_by_text("Validated offline.", exact=False).wait_for()
+        assert page.locator(".manual-edit-badge").text_content() == "Proposal edited"
+        assert page.locator("#save-revision").is_enabled()
+        assert list(tmp_path.iterdir()) == [path]
+        page.locator("#edit-title").fill("Final reviewed follow-up")
+        assert page.locator("#save-revision").is_disabled()
+        page.locator("#preview-edits").click()
+        page.locator("#save-revision").click()
+        page.locator("#proposal-editor").wait_for(state="hidden")
+        assert "Nothing applied" in page.locator("#apply-feedback").inner_text()
+        assert page.locator("#apply-reviewed").is_visible()
+        saved_path = Path(page.locator("#plan-source-path").text_content())
+        revised = parse_plan_bytes(saved_path.read_bytes())
+        assert revised.planId != source["planId"]
+        assert revised.operations[2].after.title == "Final reviewed follow-up"
+        assert path.read_bytes() == raw
+        assert calls == []
+
+
+def test_editor_completion_exclusion_and_discard(page, tmp_path: Path) -> None:
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    source["operations"].append(
+        {
+            "operationId": "finish-existing",
+            "action": "complete",
+            "target": {"type": "task", "id": "finished", "title": "Finished work"},
+            "reason": "Finished",
+            "completedAt": "2026-08-07T18:00:00-07:00",
+            "completionDay": {
+                "before": "2026-08-07",
+                "after": "2026-08-07",
+                "behavior": "preserved",
+            },
+        }
+    )
+    path = tmp_path / "review.json"
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+    with running_visualizer(
+        plan_dict=source,
+        server_kwargs={
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+        },
+    ) as server:
+        page.goto(server.url)
+        page.locator("#edit-proposal").click()
+        page.locator("#edit-operation").select_option("finish-existing")
+        assert page.locator("#edit-title-label").is_hidden()
+        page.locator("#edit-completion").fill("2026-08-06T18:00:00-07:00")
+        page.locator("#edit-operation").select_option(source["operations"][3]["operationId"])
+        page.locator("#edit-exclude").check()
+        page.locator("#preview-edits").click()
+        page.get_by_text("Validated offline.", exact=False).wait_for()
+        assert page.locator("#trash-count").inner_text() == "0"
+        assert "2026-08-07 → 2026-08-06" in page.locator(".completion-day").inner_text()
+        page.locator("#discard-edits").click()
+        page.locator("#proposal-editor").wait_for(state="hidden")
+        assert page.locator("#trash-count").inner_text() == "1"
+        assert page.locator("#plan-id").text_content() == source["planId"]
+        assert list(tmp_path.iterdir()) == [path]
+
+
+def test_editor_dependency_failure_disables_save(page, tmp_path: Path) -> None:
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    source["operations"][1]["dependsOnOperations"] = ["reschedule-wash-dishes"]
+    path = tmp_path / "review.json"
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+    with running_visualizer(
+        plan_dict=source,
+        server_kwargs={
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+        },
+    ) as server:
+        page.goto(server.url)
+        page.locator("#edit-proposal").click()
+        page.locator("#edit-exclude").check()
+        page.locator("#preview-edits").click()
+        page.get_by_text("cannot exclude a dependency", exact=False).first.wait_for()
+        assert page.locator("#save-revision").is_disabled()
+        assert list(tmp_path.iterdir()) == [path]
+
+
+def test_editor_reload_offers_safe_discard(page, tmp_path: Path) -> None:
+    path = tmp_path / "review.json"
+    raw = json.dumps(EXAMPLE_PLAN).encode()
+    path.write_bytes(raw)
+    with running_visualizer(
+        server_kwargs={
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+        }
+    ) as server:
+        page.goto(server.url)
+        page.locator("#edit-proposal").click()
+        page.locator("#edit-operation").select_option("create-email-follow-up")
+        page.locator("#edit-title").fill("Unsaved proposal")
+        page.locator("#preview-edits").click()
+        page.get_by_text("Validated offline.", exact=False).wait_for()
+        page.reload()
+        page.locator("#proposal-editor").wait_for(state="visible")
+        assert "after a reload or in another tab" in page.locator("#edit-summary").inner_text()
+        assert page.locator("#save-revision").is_disabled()
+        page.locator("#discard-edits").click()
+        page.locator("#proposal-editor").wait_for(state="hidden")
+        assert page.locator("#plan-id").text_content() == EXAMPLE_PLAN["planId"]
+        page.locator("#edit-proposal").click()
+        assert page.locator("#edit-operation").is_enabled()
+        assert list(tmp_path.iterdir()) == [path]

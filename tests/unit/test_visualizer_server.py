@@ -9,6 +9,7 @@ from http.client import HTTPConnection
 from pathlib import Path
 
 import httpx
+import pytest
 
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.plan_io import MAX_PLAN_BYTES, parse_plan_bytes
@@ -334,3 +335,156 @@ def test_reviewed_apply_rejects_changed_file_before_any_mutation(tmp_path: Path)
         assert stale.status_code == 409
         assert "changed" in stale.json()["error"]["message"]
         assert calls == []
+
+
+def test_revision_preview_save_preserves_source_and_invalidates_apply(tmp_path: Path) -> None:
+    path = tmp_path / "review.json"
+    raw = json.dumps(
+        {**EXAMPLE_PLAN, "expectedAccount": {"userId": "123456", "email": "pilot@example.com"}}
+    ).encode()
+    path.write_bytes(raw)
+    calls = []
+    with running_server(
+        preload=False,
+        server_kwargs={
+            "preloaded_plan": parse_plan_bytes(raw),
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+            "watch_paths": (path,),
+            "review_preflight": lambda _: {"operations": 4},
+            "review_apply": lambda *_: calls.append("apply"),
+        },
+    ) as (server, client):
+        current = client.get(server.url + "api/current").json()
+        identity = {
+            "revision": current["revision"],
+            "plan_id": current["plan"]["plan_id"],
+            "digest": current["plan"]["digest"],
+        }
+        headers = {"Origin": server.origin, "X-Marvin-Pilot-CSRF": current["csrf"]}
+
+        def post(route, **payload):
+            return client.post(
+                server.url + "api/" + route, json={"identity": identity, **payload}, headers=headers
+            )
+
+        checked = post("preflight").json()
+        assert post("edit-start").status_code == 200
+        started = client.get(server.url + "api/status").json()
+        assert started["editing"] is True
+        assert started["can_apply"] is False
+        stale = post("apply", challenge=checked["challenge"])
+        assert stale.status_code == 409
+        identity["revision"] = started["revision"]
+        edits = [{"operationId": "create-email-follow-up", "title": "A better proposed title"}]
+        preview = post("revision-preview", edits=edits)
+        assert preview.status_code == 200, preview.text
+        candidate = preview.json()
+        assert candidate["plan"]["plan_id"] != current["plan"]["plan_id"]
+        assert list(tmp_path.iterdir()) == [path]
+        denied = post("revision-save", revision_token="wrong")
+        assert denied.status_code == 409
+        saved = post("revision-save", revision_token=candidate["revision_token"])
+        assert saved.status_code == 200, saved.text
+        result = saved.json()
+        destination = Path(result["saved_path"])
+        assert destination.parent == path.parent
+        assert destination != path
+        assert path.read_bytes() == raw
+        assert parse_plan_bytes(destination.read_bytes()).planId == candidate["plan"]["plan_id"]
+        assert result["can_apply"] is True
+        assert result["session_key"] is None
+        assert destination.with_suffix(".review.json").is_file()
+        assert post("revision-save", revision_token=candidate["revision_token"]).status_code == 409
+        assert calls == []
+
+
+@pytest.mark.parametrize("mode", ["csrf", "disabled", "applied", "stale", "unknown-edit"])
+def test_editor_rejects_unsafe_requests_without_writes(tmp_path: Path, mode: str) -> None:
+    path = tmp_path / "review.json"
+    raw = json.dumps(EXAMPLE_PLAN).encode()
+    path.write_bytes(raw)
+    with running_server(
+        preload=False,
+        server_kwargs={
+            "preloaded_plan": parse_plan_bytes(raw),
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": mode != "disabled",
+            "review_state": "applied" if mode == "applied" else "preview",
+        },
+    ) as (server, client):
+        current = client.get(server.url + "api/current").json()
+        identity = {
+            "revision": current["revision"],
+            "plan_id": current["plan"]["plan_id"],
+            "digest": current["plan"]["digest"],
+        }
+        headers = {
+            "Origin": server.origin,
+            "X-Marvin-Pilot-CSRF": "wrong" if mode == "csrf" else current["csrf"],
+        }
+        if mode == "stale":
+            path.write_bytes(raw + b" ")
+        response = client.post(
+            server.url + "api/edit-start", json={"identity": identity}, headers=headers
+        )
+        if mode == "unknown-edit":
+            assert response.status_code == 200
+            identity = response.json()["identity"]
+            response = client.post(
+                server.url + "api/revision-preview",
+                json={"identity": identity, "edits": [{"operationId": "unknown", "exclude": True}]},
+                headers=headers,
+            )
+        assert response.status_code in {403, 409}
+        assert list(tmp_path.iterdir()) == [path]
+
+
+def test_cancel_edit_and_changed_source_cannot_save_stale_candidate(tmp_path: Path) -> None:
+    path = tmp_path / "review.json"
+    raw = json.dumps(EXAMPLE_PLAN).encode()
+    path.write_bytes(raw)
+    with running_server(
+        preload=False,
+        server_kwargs={
+            "preloaded_plan": parse_plan_bytes(raw),
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+        },
+    ) as (server, client):
+        current = client.get(server.url + "api/current").json()
+        identity = {
+            "revision": current["revision"],
+            "plan_id": current["plan"]["plan_id"],
+            "digest": current["plan"]["digest"],
+        }
+        headers = {"Origin": server.origin, "X-Marvin-Pilot-CSRF": current["csrf"]}
+        start = client.post(
+            server.url + "api/edit-start", json={"identity": identity}, headers=headers
+        ).json()
+        identity = start["identity"]
+        preview = client.post(
+            server.url + "api/revision-preview",
+            json={
+                "identity": identity,
+                "edits": [{"operationId": "create-email-follow-up", "title": "Revised title"}],
+            },
+            headers=headers,
+        ).json()
+        path.write_bytes(raw + b" ")
+        saved = client.post(
+            server.url + "api/revision-save",
+            json={"identity": identity, "revision_token": preview["revision_token"]},
+            headers=headers,
+        )
+        assert saved.status_code == 409
+        cancelled = client.post(
+            server.url + "api/edit-cancel", json={"identity": identity}, headers=headers
+        )
+        assert cancelled.status_code == 200
+        assert cancelled.json()["editing"] is False
+        assert cancelled.json()["plan"]["plan_id"] == current["plan"]["plan_id"]
+        assert list(tmp_path.iterdir()) == [path]
