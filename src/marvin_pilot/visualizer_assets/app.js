@@ -1731,7 +1731,8 @@ function syncReviewMetadata(result) {
   }
   elements.editProposal.hidden = true; // Click After text; no separate operation picker.
   elements.openAnother.disabled = Boolean(result.editing);
-  manualOperations = new Set(result.edited_operations || []);
+  // Text feedback is marked per field, never on an otherwise untouched parent card.
+  manualOperations = new Set(result.text_review_path ? [] : result.edited_operations || []);
   markManualEdits();
   elements.applyReviewed.hidden = !canApplyReviewed;
   elements.sourceRow.hidden = !result.source_path;
@@ -1882,6 +1883,30 @@ function textEditKey(edit) {
   return JSON.stringify([edit.operationId, edit.field, edit.subtaskId || null]);
 }
 
+function showFieldEditIndicator(field, edited) {
+  let shell = field.parentElement;
+  if (!shell.classList.contains("text-edit-field")) {
+    const expander = field.nextElementSibling?.classList.contains("title-expand")
+      ? field.nextElementSibling : null;
+    shell = node(field.classList.contains("subtask-title") ? "span" : "div", "text-edit-field");
+    field.before(shell);
+    shell.append(field);
+    if (expander) shell.append(expander);
+    const badge = node("span", "your-edit-badge", "✎ Your edit");
+    badge.contentEditable = "false";
+    const was = node("span", "text-edit-was");
+    was.contentEditable = "false";
+    was.append(node("span", "", "Was: "), node("del", "", field.dataset.originalText));
+    badge.addEventListener("click", (event) => event.stopPropagation());
+    was.addEventListener("click", (event) => event.stopPropagation());
+    shell.append(badge, was);
+  }
+  shell.querySelector(".your-edit-badge").hidden = !edited;
+  shell.querySelector(".text-edit-was").hidden = !edited;
+  shell.classList.toggle("has-your-edit", edited);
+  field.classList.toggle("text-edited", edited);
+}
+
 function updateTextEditSummary() {
   elements.editor.hidden = false;
   elements.editSummary.textContent = `${proposalEdits.size} text edit(s). Actions, dates and completion states remain unchanged until AI reconciliation.`;
@@ -1919,7 +1944,10 @@ function wireAfterTextEditors() {
       if (!field.dataset.originalText) field.dataset.originalText = field.dataset.copyTitle || field.textContent;
       const pending = proposalEdits.get(key);
       if (pending && field !== document.activeElement) field.textContent = pending.text;
-      field.classList.toggle("text-edited", Boolean(pending));
+      // Build the shell before focus/input, so typing never moves the editable node.
+      if (canEditProposal || pending || field.parentElement.classList.contains("text-edit-field")) {
+        showFieldEditIndicator(field, Boolean(pending));
+      }
       field.contentEditable = String(canEditProposal && !textSaveBusy);
       if (!canEditProposal || field.dataset.textEditBound) return;
       field.dataset.textEditBound = "true";
@@ -1933,10 +1961,13 @@ function wireAfterTextEditors() {
         const value = { ...edit, text: field.textContent };
         if (value.text === field.dataset.originalText) proposalEdits.delete(key);
         else proposalEdits.set(key, value);
-        field.classList.toggle("text-edited", proposalEdits.has(key));
+        showFieldEditIndicator(field, proposalEdits.has(key));
         // Synchronize duplicate After renderings without replacing the focused field.
         afterCards.forEach((other) => other.querySelectorAll("[data-text-edit-key]").forEach((node) => {
-          if (node !== field && node.dataset.textEditKey === key) node.textContent = value.text;
+          if (node !== field && node.dataset.textEditKey === key) {
+            node.textContent = value.text;
+            showFieldEditIndicator(node, proposalEdits.has(key));
+          }
         }));
         updateTextEditSummary();
       };

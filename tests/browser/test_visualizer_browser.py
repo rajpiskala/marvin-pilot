@@ -1811,6 +1811,14 @@ def test_inline_text_editor_exports_requests_and_requires_ai_review(page, tmp_pa
             '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
         )
         field.fill("Write the launch-page copy +4d due Nov 30")
+        indicator = field.locator("..").locator(".your-edit-badge")
+        assert indicator.is_visible()
+        assert indicator.inner_text() == "✎ Your edit"
+        assert (
+            field.locator("..").locator(".text-edit-was del").inner_text()
+            == source["operations"][2]["after"]["title"]
+        )
+        assert "Your edit" not in field.inner_text()
         page.locator("#proposal-editor").wait_for(state="visible")
         assert page.locator("#apply-reviewed").is_hidden()
         assert page.locator("#edit-operation, #edit-completion, #edit-exclude").count() == 0
@@ -1822,11 +1830,12 @@ def test_inline_text_editor_exports_requests_and_requires_ai_review(page, tmp_pa
         review = json.loads(saved[0].read_text())
         assert review["requiresAIReconciliation"] is True
         assert review["edits"][0]["operationId"] == "create-email-follow-up"
-        assert review["edits"][0]["text"].endswith("+4d due Nov 30")
+        assert review["edits"][0]["text"] == "Write the launch-page copy +4d due Nov 30"
         assert page.locator("#plan-id").text_content() == source["planId"]
         assert path.read_bytes() == raw
         assert page.locator("#apply-reviewed").is_hidden()
         assert calls == []
+        assert page.locator(".manual-edit-badge").count() == 0
         page.locator('[data-mode-choice="changes"]').click()
         assert (
             page.locator(
@@ -1845,6 +1854,7 @@ def test_inline_text_editor_exports_requests_and_requires_ai_review(page, tmp_pa
             .endswith("+4d due Nov 30")
         )
         assert page.locator("#apply-reviewed").is_hidden()
+        assert page.locator(".your-edit-badge:visible").count() == 1
 
 
 def test_inline_subtask_edit_keeps_actions_and_checklist_states(page, tmp_path: Path) -> None:
@@ -1881,6 +1891,23 @@ def test_inline_subtask_edit_keeps_actions_and_checklist_states(page, tmp_path: 
         page.goto(server.url)
         field = page.locator('.hierarchy-pane-after [data-subtask-id="mobile"] .subtask-title')
         field.fill("Test iPhone layout due Nov 30")
+        assert field.locator("..").locator(".your-edit-badge").is_visible()
+        assert (
+            field.locator("..").locator(".text-edit-was del").inner_text() == "Test mobile layout"
+        )
+        assert (
+            page.locator(
+                '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] '
+                '.task-line .your-edit-badge:visible'
+            ).count()
+            == 0
+        )
+        assert (
+            page.locator(
+                '.hierarchy-pane-after [data-subtask-id="android"] .your-edit-badge:visible'
+            ).count()
+            == 0
+        )
         assert (
             page.locator('.hierarchy-pane-after [data-subtask-id="android"]')
             .get_attribute("class")
@@ -1905,6 +1932,7 @@ def test_inline_subtask_edit_keeps_actions_and_checklist_states(page, tmp_path: 
             ).inner_text()
             == "Test mobile layout"
         )
+        assert page.locator(".your-edit-badge:visible").count() == 0
 
 
 def test_inline_editor_rejects_deleting_a_title(page, tmp_path: Path) -> None:
