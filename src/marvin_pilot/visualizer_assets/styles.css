@@ -37,6 +37,28 @@
   --chip-background: #f0f3f9;
 }
 
+/* Only title/subtask text in the proposed After view can be edited. */
+.task-title[contenteditable="true"],
+.subtask-title[contenteditable="true"] {
+  cursor: text;
+  border-radius: 4px;
+  border-bottom: 1px dashed var(--line-strong);
+  min-width: 2ch;
+}
+.task-title[contenteditable="true"]:hover,
+.subtask-title[contenteditable="true"]:hover { background: var(--accent-soft); }
+.task-title[contenteditable="true"]:focus,
+.subtask-title[contenteditable="true"]:focus {
+  display: block;
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  max-height: none;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+  white-space: pre-wrap;
+}
+.text-edited { background: var(--accent-soft); }
+
 :root[data-theme="dusk"] {
   color-scheme: dark;
   --page-background: #252a48;

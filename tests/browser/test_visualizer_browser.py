@@ -1789,7 +1789,7 @@ def test_browser_apply_reviews_exact_file_and_shows_receipt(page, tmp_path: Path
         assert calls == ["preflight", "apply"]
 
 
-def test_offline_editor_previews_saves_and_requires_fresh_review(page, tmp_path: Path) -> None:
+def test_inline_text_editor_exports_requests_and_requires_ai_review(page, tmp_path: Path) -> None:
     source = copy.deepcopy(EXAMPLE_PLAN)
     source["expectedAccount"] = {"userId": "123456", "email": "pilot@example.com"}
     path = tmp_path / "review.json"
@@ -1807,36 +1807,47 @@ def test_offline_editor_previews_saves_and_requires_fresh_review(page, tmp_path:
         },
     ) as server:
         page.goto(server.url)
-        page.locator("#edit-proposal").click()
+        field = page.locator(
+            '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        )
+        field.fill("Write the launch-page copy +4d due Nov 30")
         page.locator("#proposal-editor").wait_for(state="visible")
         assert page.locator("#apply-reviewed").is_hidden()
-        page.locator("#edit-operation").select_option("create-email-follow-up")
-        page.locator("#edit-title").fill("Reviewed follow-up title")
-        page.locator("#preview-edits").click()
-        page.get_by_text("Validated offline.", exact=False).wait_for()
-        assert page.locator(".manual-edit-badge").text_content() == "Proposal edited"
-        assert page.locator("#save-revision").is_enabled()
-        assert list(tmp_path.iterdir()) == [path]
-        page.locator("#edit-title").fill("Final reviewed follow-up")
-        assert page.locator("#save-revision").is_disabled()
-        page.locator("#preview-edits").click()
+        assert page.locator("#edit-operation, #edit-completion, #edit-exclude").count() == 0
+        assert page.locator('.hierarchy-pane-before [contenteditable="true"]').count() == 0
         page.locator("#save-revision").click()
-        page.locator("#proposal-editor").wait_for(state="hidden")
-        assert "Nothing applied" in page.locator("#apply-feedback").inner_text()
-        assert page.locator("#apply-reviewed").is_visible()
-        saved_path = Path(page.locator("#plan-source-path").text_content())
-        revised = parse_plan_bytes(saved_path.read_bytes())
-        assert revised.planId != source["planId"]
-        assert revised.operations[2].after.title == "Final reviewed follow-up"
+        page.get_by_text("Text edits saved.", exact=False).wait_for()
+        saved = list(tmp_path.glob("review.text-review-*.json"))
+        assert len(saved) == 1
+        review = json.loads(saved[0].read_text())
+        assert review["requiresAIReconciliation"] is True
+        assert review["edits"][0]["operationId"] == "create-email-follow-up"
+        assert review["edits"][0]["text"].endswith("+4d due Nov 30")
+        assert page.locator("#plan-id").text_content() == source["planId"]
         assert path.read_bytes() == raw
+        assert page.locator("#apply-reviewed").is_hidden()
         assert calls == []
         page.locator('[data-mode-choice="changes"]').click()
-        assert page.locator(".manual-edit-badge").count() == 1
-        page.locator('[data-action-filter="create"]').click()
-        assert page.locator(".manual-edit-badge").count() == 1
+        assert (
+            page.locator(
+                '[data-operation-id="create-email-follow-up"] .diff-cell-after .task-title'
+            )
+            .inner_text()
+            .endswith("+4d due Nov 30")
+        )
+        page.reload()
+        page.get_by_text("Saved for AI:", exact=False).first.wait_for()
+        assert (
+            page.locator(
+                '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+            )
+            .inner_text()
+            .endswith("+4d due Nov 30")
+        )
+        assert page.locator("#apply-reviewed").is_hidden()
 
 
-def test_editor_completion_exclusion_and_discard(page, tmp_path: Path) -> None:
+def test_inline_subtask_edit_keeps_actions_and_checklist_states(page, tmp_path: Path) -> None:
     source = copy.deepcopy(EXAMPLE_PLAN)
     source["operations"].append(
         {
@@ -1852,6 +1863,10 @@ def test_editor_completion_exclusion_and_discard(page, tmp_path: Path) -> None:
             },
         }
     )
+    source["operations"][2]["after"]["subtasks"] = [
+        {"id": "mobile", "title": "Test mobile layout", "done": False},
+        {"id": "android", "title": "Test Android layout", "done": True},
+    ]
     path = tmp_path / "review.json"
     raw = json.dumps(source).encode()
     path.write_bytes(raw)
@@ -1864,24 +1879,35 @@ def test_editor_completion_exclusion_and_discard(page, tmp_path: Path) -> None:
         },
     ) as server:
         page.goto(server.url)
-        page.locator("#edit-proposal").click()
-        page.locator("#edit-operation").select_option("finish-existing")
-        assert page.locator("#edit-title-label").is_hidden()
-        page.locator("#edit-completion").fill("2026-08-06T18:00:00-07:00")
-        page.locator("#edit-operation").select_option(source["operations"][3]["operationId"])
-        page.locator("#edit-exclude").check()
-        page.locator("#preview-edits").click()
-        page.get_by_text("Validated offline.", exact=False).wait_for()
-        assert page.locator("#trash-count").inner_text() == "0"
-        assert "2026-08-07 → 2026-08-06" in page.locator(".completion-day").inner_text()
+        field = page.locator('.hierarchy-pane-after [data-subtask-id="mobile"] .subtask-title')
+        field.fill("Test iPhone layout due Nov 30")
+        assert (
+            page.locator('.hierarchy-pane-after [data-subtask-id="android"]')
+            .get_attribute("class")
+            .endswith("done")
+        )
+        assert page.locator("#trash-count").inner_text() == "1"
+        page.locator("#save-revision").click()
+        page.get_by_text("Text edits saved.", exact=False).wait_for()
+        saved = json.loads(next(tmp_path.glob("review.text-review-*.json")).read_text())
+        assert saved["edits"][0]["subtaskId"] == "mobile"
+        assert saved["edits"][0]["field"] == "subtaskTitle"
+        assert saved["edits"][0]["action"] == "create"
+        assert len(saved["edits"]) == 1
+        assert path.read_bytes() == raw
         page.locator("#discard-edits").click()
         page.locator("#proposal-editor").wait_for(state="hidden")
         assert page.locator("#trash-count").inner_text() == "1"
         assert page.locator("#plan-id").text_content() == source["planId"]
-        assert list(tmp_path.iterdir()) == [path]
+        assert (
+            page.locator(
+                '.hierarchy-pane-after [data-subtask-id="mobile"] .subtask-title'
+            ).inner_text()
+            == "Test mobile layout"
+        )
 
 
-def test_editor_dependency_failure_disables_save(page, tmp_path: Path) -> None:
+def test_inline_editor_rejects_deleting_a_title(page, tmp_path: Path) -> None:
     source = copy.deepcopy(EXAMPLE_PLAN)
     source["operations"][1]["dependsOnOperations"] = ["reschedule-wash-dishes"]
     path = tmp_path / "review.json"
@@ -1896,12 +1922,13 @@ def test_editor_dependency_failure_disables_save(page, tmp_path: Path) -> None:
         },
     ) as server:
         page.goto(server.url)
-        page.locator("#edit-proposal").click()
-        page.locator("#edit-exclude").check()
-        page.locator("#preview-edits").click()
-        page.get_by_text("cannot exclude a dependency", exact=False).first.wait_for()
-        assert page.locator("#save-revision").is_disabled()
+        page.locator(
+            '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        ).fill(" ")
+        page.locator("#save-revision").click()
+        page.get_by_text("titles cannot be removed", exact=False).first.wait_for()
         assert list(tmp_path.iterdir()) == [path]
+        page.on("dialog", lambda dialog: dialog.accept())
 
 
 def test_editor_reload_offers_safe_discard(page, tmp_path: Path) -> None:
@@ -1916,11 +1943,12 @@ def test_editor_reload_offers_safe_discard(page, tmp_path: Path) -> None:
         }
     ) as server:
         page.goto(server.url)
-        page.locator("#edit-proposal").click()
-        page.locator("#edit-operation").select_option("create-email-follow-up")
-        page.locator("#edit-title").fill("Unsaved proposal")
-        page.locator("#preview-edits").click()
-        page.get_by_text("Validated offline.", exact=False).wait_for()
+        page.on("dialog", lambda dialog: dialog.accept())
+        field = page.locator(
+            '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        )
+        field.fill("Unsaved proposal")
+        page.locator("#save-revision").wait_for(state="visible")
         page.reload()
         page.locator("#proposal-editor").wait_for(state="visible")
         assert "after a reload or in another tab" in page.locator("#edit-summary").inner_text()
@@ -1928,6 +1956,6 @@ def test_editor_reload_offers_safe_discard(page, tmp_path: Path) -> None:
         page.locator("#discard-edits").click()
         page.locator("#proposal-editor").wait_for(state="hidden")
         assert page.locator("#plan-id").text_content() == EXAMPLE_PLAN["planId"]
-        page.locator("#edit-proposal").click()
-        assert page.locator("#edit-operation").is_enabled()
+        field.fill("Another title")
+        page.locator("#proposal-editor").wait_for(state="visible")
         assert list(tmp_path.iterdir()) == [path]

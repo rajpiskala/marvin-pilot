@@ -337,6 +337,73 @@ def test_reviewed_apply_rejects_changed_file_before_any_mutation(tmp_path: Path)
         assert calls == []
 
 
+def test_text_feedback_is_not_a_plan_and_cannot_be_applied(tmp_path: Path) -> None:
+    path = tmp_path / "review.json"
+    raw = json.dumps(
+        {**EXAMPLE_PLAN, "expectedAccount": {"userId": "123456", "email": "pilot@example.com"}}
+    ).encode()
+    path.write_bytes(raw)
+    calls = []
+    with running_server(
+        preload=False,
+        server_kwargs={
+            "preloaded_plan": parse_plan_bytes(raw),
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+            "review_preflight": lambda _: calls.append("preflight"),
+            "review_apply": lambda *_: calls.append("apply"),
+        },
+    ) as (server, client):
+        current = client.get(server.url + "api/current").json()
+        headers = {"Origin": server.origin, "X-Marvin-Pilot-CSRF": current["csrf"]}
+        identity = {
+            "revision": current["revision"],
+            "plan_id": current["plan"]["plan_id"],
+            "digest": current["plan"]["digest"],
+        }
+        started = client.post(
+            server.url + "api/edit-start", json={"identity": identity}, headers=headers
+        ).json()
+        identity = started["identity"]
+        payload = {
+            "identity": identity,
+            "context": {"timeZone": "America/Los_Angeles", "localDate": "2026-11-11"},
+            "edits": [
+                {
+                    "operationId": "create-email-follow-up",
+                    "field": "title",
+                    "text": "Follow up +4d due Nov 30",
+                }
+            ],
+        }
+        rejected = client.post(
+            server.url + "api/text-review-save",
+            json={**payload, "edits": [{**payload["edits"][0], "action": "trash"}]},
+            headers=headers,
+        )
+        assert rejected.status_code == 409
+        assert list(tmp_path.iterdir()) == [path]
+        saved = client.post(server.url + "api/text-review-save", json=payload, headers=headers)
+        assert saved.status_code == 200, saved.text
+        result = saved.json()
+        review_path = Path(result["saved_path"])
+        assert review_path.parent == path.parent and review_path != path
+        assert json.loads(review_path.read_text())["requiresAIReconciliation"] is True
+        assert result["can_apply"] is False
+        assert path.read_bytes() == raw
+        denied = client.post(
+            server.url + "api/preflight", json={"identity": identity}, headers=headers
+        )
+        assert denied.status_code == 409
+        cancelled = client.post(
+            server.url + "api/edit-cancel", json={"identity": identity}, headers=headers
+        ).json()
+        assert cancelled["can_apply"] is False  # Saved requests still need AI reconciliation.
+        assert cancelled["text_review_path"] == str(review_path)
+        assert calls == []
+
+
 def test_revision_preview_save_preserves_source_and_invalidates_apply(tmp_path: Path) -> None:
     path = tmp_path / "review.json"
     raw = json.dumps(

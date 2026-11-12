@@ -21,6 +21,7 @@ from marvin_pilot.errors import MarvinPilotError, PlanSemanticError
 from marvin_pilot.models.plan_v1 import ChangePlanV1
 from marvin_pilot.plan_io import MAX_PLAN_BYTES, canonical_plan_bytes, parse_plan_bytes, plan_digest
 from marvin_pilot.plan_revision import revise_plan
+from marvin_pilot.text_review import build_text_review, text_choices
 from marvin_pilot.visualizer import build_plan_view
 from marvin_pilot.visualizer_hierarchy import HierarchyContext
 
@@ -131,6 +132,7 @@ class VisualizerServer:
         self._edit_view: dict[str, Any] | None = None
         self._revision_token: str | None = None
         self._revision_edits: list[dict[str, Any]] = []
+        self._text_review_path: str | None = None
         self._hierarchy = hierarchy
         self._hierarchy_sources = hierarchy_sources
         projection_started = time.perf_counter()
@@ -168,6 +170,7 @@ class VisualizerServer:
             and self._current["review_state"] == "preview"
             and self._reload_error is None
             and not self._editing
+            and self._text_review_path is None
         )
 
     def _can_edit(self) -> bool:
@@ -191,6 +194,8 @@ class VisualizerServer:
                 "can_apply": self._can_apply(),
                 "can_edit": self._can_edit(),
                 "editing": self._editing,
+                "text_review_path": self._text_review_path,
+                "text_edits": self._revision_edits if self._text_review_path else [],
                 "edited_operations": [edit["operationId"] for edit in self._revision_edits],
                 "apply_busy": self._apply_busy,
                 "source_path": str(self._plan_path) if self._plan_path else None,
@@ -276,6 +281,7 @@ class VisualizerServer:
                     )
                 return {
                     "choices": choices,
+                    "text_choices": text_choices(plan),
                     "identity": {
                         "revision": self._revision,
                         "plan_id": plan.planId,
@@ -285,6 +291,24 @@ class VisualizerServer:
                 }
             if not self._editing:
                 raise PlanSemanticError("start an edit session first")
+            if route == "api/text-review-save":
+                edits, context = request.get("edits"), request.get("context")
+                if not isinstance(edits, list) or not isinstance(context, dict):
+                    raise PlanSemanticError("text edits and reference context are required")
+                review = build_text_review(plan, edits, context=context)
+                assert self._plan_path is not None
+                destination = self._plan_path.with_name(
+                    f"{self._plan_path.stem}.text-review-{review['reviewId']}.json"
+                )
+                exclusive_write_bytes(
+                    destination, json.dumps(review, ensure_ascii=False, indent=2).encode() + b"\n"
+                )
+                self._text_review_path = str(destination)
+                self._revision_edits = edits
+                self._review_challenge = None
+                # Keep the source plan and locks unchanged. This file is feedback,
+                # not a new plan; only a reconciled second preview may be applied.
+                return {"saved_path": str(destination), "review": review, **self._status()}
             if route == "api/revision-preview":
                 self._pending_revision = None
                 self._revision_token = None
@@ -450,6 +474,13 @@ class VisualizerServer:
                 ):
                     current["review_state"] = "applied"
                     current["receipt_id"] = self._current["receipt_id"]
+                if (
+                    current is not None
+                    and self._current is not None
+                    and current["digest"] != self._current["digest"]
+                ):
+                    self._text_review_path = None
+                    self._revision_edits = []
                 self._plan = loaded.plan
                 self._current = current
                 self._hierarchy = loaded.hierarchy
@@ -589,6 +620,7 @@ class VisualizerServer:
                     "api/edit-cancel",
                     "api/revision-preview",
                     "api/revision-save",
+                    "api/text-review-save",
                 ):
                     self._review_action(route)
                     return
@@ -648,6 +680,7 @@ class VisualizerServer:
                         owner._pending_revision = None
                         owner._revision_token = None
                         owner._revision_edits = []
+                        owner._text_review_path = None
                         owner._revision += 1
                 except MarvinPilotError as exc:
                     self._send_json(

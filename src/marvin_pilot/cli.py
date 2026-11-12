@@ -1428,11 +1428,11 @@ def visualize_command(
         bool,
         typer.Option(
             "--edit",
-            help="Allow narrow offline edits; save a new plan without replacing the source.",
+            help="Edit After titles/subtasks inline; save text requests for AI reconciliation.",
         ),
     ] = False,
 ) -> None:
-    """Preview locally; --edit saves revisions, --allow-apply separately enables live apply."""
+    """Preview locally; --edit captures text feedback, --allow-apply separately enables apply."""
 
     started = time.perf_counter()
     key = session_key(plan_path, backup, context_plan or [], receipt, allow_apply, edit)

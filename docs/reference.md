@@ -686,26 +686,36 @@ Run `marvin-pilot visualize PLAN.json --edit` for an unapplied, file-backed sing
 The default visualizer remains read-only. Editing does not load credentials, refresh locks,
 or write Marvin data. `--allow-apply` is a separate opt-in and can be combined with `--edit`.
 
-1. Choose **Edit proposal**, then select the operation.
-2. Correct an existing proposed title or completion timestamp (RFC 3339 with an explicit timezone
-   offset), or exclude an operation. You cannot switch actions, introduce fields/tasks, change
-   recurrence rules, or change source/baseline values. Exclusions that strand a dependency are
-   rejected; dependent operations must be excluded explicitly too.
-3. Choose **Preview edits**. Review the new hierarchy, completion-history day, manual-edit markers,
-   and digest. Further form changes disable saving until previewed again.
-4. Choose **Save revised plan**. Pilot exclusively creates `PLAN.review-UUID.json` beside the source,
-   with a new plan ID/digest and a private `.review.json` provenance sidecar. The source is unchanged.
-   Treat both files as private task data, just like your other plans and receipts.
+1. Click a task/project title or subtask directly in **After**, then edit its text.
+   The **Now** side, action badges, completion states and date/parent controls are read-only.
+   There are no add/delete-subtask or exclude-operation controls. Enter finishes the field;
+   Escape restores that field's original text. Pasted content is plain text.
+2. You may type Marvin syntax, for example `Write the launch-page copy +4d due Nov 30`.
+   The browser does not parse, execute or silently put these tokens into an executable plan.
+3. Choose **Save edits for AI**. Pilot writes `PLAN.text-review-UUID.json` beside the source.
+   This is a text-feedback document, **not a plan**. It retains source plan ID/digest,
+   operation ID, target ID/type/action, optional subtask ID, original/new text, server timestamp
+   and browser-reported local date/time zone. The source plan, locks and checklist states stay
+   unchanged. Treat the feedback file as private task data.
+4. The AI reads the feedback and exact source plan, reconciles wording and supported syntax,
+   and generates a separately validated plan for a **second visualize/review round**. Resolve
+   relative dates against the recorded context, checking year/time zone and asking if genuinely
+   ambiguous. For a November 11, 2026 reference, `+4d due Nov 30` becomes scheduled November 15
+   and due November 30, 2026; the next preview shows the structured date fields without tokens
+   left in the title. Use exact IDs, not fuzzy title matching. Preserve action types, task/subtask
+   membership and completion states unless Raj separately authorizes a structural/state change.
 
-Apply approval is invalidated when editing begins. Saving is not applying: review/live-validate
-the saved plan before CLI apply, or perform a fresh browser preflight and explicit confirmation
-when `--allow-apply` is enabled. **Discard edits** only discards the local proposal revision;
-undoing an already-applied plan still uses its recovery receipt and `revert`.
+Apply approval is invalidated when text editing begins. A saved feedback file keeps browser Apply
+disabled; saving or reloading is not applying or AI approval. Unsaved edits can be discarded.
+Saved feedback remains on disk for the AI even if the local edit session is discarded. A fresh
+reconciled plan still needs normal offline/live validation and explicit authorized apply.
+Undoing an already-applied plan still uses its recovery receipt and `revert`.
 
 If a watched source/context file changes during editing, saving is blocked. Discard edits and
 review the latest file. Editing is unavailable for uploads, stdin, plan sets, or receipt-backed
 applied views. Stable target IDs, account pins, original before-values, and concurrency locks are
-retained; later same-target title references and proposed hierarchy titles are reprojected.
+retained. The AI must update dependent title references/hierarchy in its reconciled plan; the
+feedback UI deliberately does not project structural interpretations while you type.
 
 For finished-work capture, an ordinary task `create` supports an optional operation-level
 `completedAt` timestamp (RFC 3339 with an explicit offset, no later than `createdAt`). It writes
