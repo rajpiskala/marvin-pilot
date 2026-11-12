@@ -1758,6 +1758,9 @@ function syncReviewMetadata(result) {
       elements.editSummary.textContent = result.text_review_path
         ? `Saved for AI: ${result.text_review_path}`
         : "An edit session is active after a reload or in another tab. Discard unsaved edits to return to the source preview.";
+      elements.editFeedback.hidden = Boolean(result.text_review_path);
+      elements.editFeedback.textContent = result.text_review_path
+        ? "" : "An edit session is active in another tab or after reload. Discard it to start again.";
     }
   } else if (result.can_edit && !canApplyReviewed) {
     elements.footerReviewMode.textContent = "Local review with opt-in proposal editing";
@@ -1883,8 +1886,8 @@ function textEditKey(edit) {
 }
 
 function updateTextEditSummary() {
-  elements.editor.hidden = false;
-  elements.editSummary.textContent = `${proposalEdits.size} text edit(s). Actions, dates and completion states remain unchanged until AI reconciliation.`;
+  elements.editor.hidden = proposalEdits.size === 0 && !editBaseline && !textSessionPromise;
+  elements.editSummary.textContent = `${proposalEdits.size} text edit(s). Nothing applied.`;
   elements.saveRevision.disabled = textSaveBusy || !editBaseline || proposalEdits.size === 0
     || JSON.stringify([...proposalEdits.values()]) === savedTextSignature;
 }
@@ -1928,11 +1931,11 @@ function wireAfterTextEditors() {
       field.setAttribute("aria-multiline", "false");
       field.title = "Click to edit text. Marvin syntax is sent to the AI, not executed here.";
       field.addEventListener("click", (event) => event.stopPropagation());
-      field.addEventListener("focus", () => { startProposalEditor().catch(() => {}); });
       const capture = () => {
         const value = { ...edit, text: field.textContent };
         if (value.text === field.dataset.originalText) proposalEdits.delete(key);
         else proposalEdits.set(key, value);
+        if (proposalEdits.size) startProposalEditor().catch(() => {});
         field.classList.toggle("text-edited", proposalEdits.has(key));
         // Synchronize duplicate After renderings without replacing the focused field.
         afterCards.forEach((other) => other.querySelectorAll("[data-text-edit-key]").forEach((node) => {
@@ -1981,6 +1984,7 @@ async function saveProposalRevision() {
     savedTextSignature = JSON.stringify([...proposalEdits.values()]);
     syncReviewMetadata(result);
     elements.editFeedback.textContent = "Text edits saved. Give the saved file to the AI; review its reconciled second preview before execution.";
+    elements.editFeedback.hidden = false;
   } catch (error) { showError(error.message); }
   finally { textSaveBusy = false; updateTextEditSummary(); wireAfterTextEditors(); }
 }
@@ -1991,6 +1995,8 @@ async function discardProposalEdits() {
     const result = await postReviewedAction("edit-cancel", { identity: editBaseline || {} });
     editBaseline = null; proposalEdits.clear(); savedTextSignature = "";
     elements.editor.hidden = true;
+    elements.editFeedback.hidden = true;
+    elements.editFeedback.textContent = "";
     renderPlan(result.plan, { preserveState: true });
     syncReviewMetadata(result);
   } catch (error) { showError(error.message); }

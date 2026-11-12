@@ -3379,20 +3379,9 @@ footer {
   }
 }
 
-.proposal-editor {
-  border: 1px solid var(--line-strong);
-  border-radius: 12px;
-  padding: 1.25rem;
-  margin: 1rem 0 1.5rem;
-  background: var(--raised-background);
+.text-edit-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
+.text-edit-controls > button {
+  min-height: 32px; padding: 5px 12px; border-radius: 7px; font-size: 12px;
 }
-.proposal-editor label { display: grid; gap: .35rem; margin: .8rem 0; }
-.proposal-editor label[hidden] { display: none; }
-.proposal-editor input[type="text"], .proposal-editor select {
-  font: inherit; color: inherit; background: var(--card-background);
-  border: 1px solid var(--line-strong); border-radius: 6px; padding: .65rem;
-  width: 100%; min-width: 0;
-}
-.proposal-editor .edit-exclude { display: flex; align-items: center; }
-.editor-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+.text-edit-feedback { flex-basis: 100%; color: var(--muted-ink); font-size: 12px; }
 .manual-edit-badge { font-size: .75rem; padding: .2rem .4rem; border: 1px dashed currentColor; }

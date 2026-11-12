@@ -690,6 +690,8 @@ or write Marvin data. `--allow-apply` is a separate opt-in and can be combined w
    The **Now** side, action badges, completion states and date/parent controls are read-only.
    There are no add/delete-subtask or exclude-operation controls. Enter finishes the field;
    Escape restores that field's original text. Pasted content is plain text.
+   Edited titles tint the full task/project card; edited subtasks tint only their own row.
+   Compact Save/Discard controls appear after a text change, without an instructional banner.
 2. You may type Marvin syntax, for example `Write the launch-page copy +4d due Nov 30`.
    The browser does not parse, execute or silently put these tokens into an executable plan.
 3. Choose **Save edits for AI**. Pilot writes `PLAN.text-review-UUID.json` beside the source.

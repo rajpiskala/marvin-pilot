@@ -135,19 +135,12 @@
 
         <p id="apply-feedback" class="apply-feedback" role="status" hidden></p>
 
-        <section id="proposal-editor" class="proposal-editor" hidden aria-labelledby="editor-heading">
-          <h2 id="editor-heading">Edit the After text directly</h2>
-          <p>Click a title or subtask in After and type. You can include Marvin syntax such as
-            <code>+4d due Nov 30</code>. The AI will reconcile your exact-item edits and show a
-            second preview with resolved dates. No actions, completion states or subtasks can be
-            added or removed here. Nothing is applied.</p>
-          <p id="edit-summary" role="status"></p>
-          <div class="editor-actions">
-            <button id="save-revision" type="button" class="primary-button" disabled>Save edits for AI</button>
-            <button id="discard-edits" type="button" class="secondary-button">Discard edits</button>
-          </div>
-          <p id="edit-feedback" role="status"></p>
-        </section>
+        <div id="proposal-editor" class="text-edit-controls" hidden role="group" aria-label="Text edit controls">
+          <button id="save-revision" type="button" class="primary-button" disabled>Save edits for AI</button>
+          <button id="discard-edits" type="button" class="secondary-button">Discard edits</button>
+          <span id="edit-summary" class="visually-hidden" role="status"></span>
+          <span id="edit-feedback" class="text-edit-feedback" role="status" hidden></span>
+        </div>
 
         <section id="comparison-tray" class="comparison-tray" hidden aria-live="polite"></section>
         <div id="sections" class="sections"></div>

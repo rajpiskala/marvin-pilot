@@ -1810,8 +1810,15 @@ def test_inline_text_editor_exports_requests_and_requires_ai_review(page, tmp_pa
         field = page.locator(
             '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
         )
+        assert page.locator("#editor-heading").count() == 0
+        assert page.locator("#proposal-editor").is_hidden()
+        field.focus()
+        assert page.locator("#proposal-editor").is_hidden()
+        assert calls == []
         field.fill("Write the launch-page copy +4d due Nov 30")
         page.locator("#proposal-editor").wait_for(state="visible")
+        assert page.locator("#proposal-editor").bounding_box()["height"] <= 50
+        assert page.locator("#edit-summary").get_attribute("class") == "visually-hidden"
         assert page.locator("#apply-reviewed").is_hidden()
         assert page.locator("#edit-operation, #edit-completion, #edit-exclude").count() == 0
         assert page.locator('.hierarchy-pane-before [contenteditable="true"]').count() == 0

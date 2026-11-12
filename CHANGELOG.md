@@ -4,6 +4,9 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
+- Replace the inline editor's instructional banner with compact Save/Discard controls shown
+  after a text change; retain full-card/row highlights and saved-feedback recovery.
+
 - Allow create-revert when the only change is late assignment of the initial native CouchDB
   revision. All fields, known revisions, and later revisions retain conflict protection.
 
