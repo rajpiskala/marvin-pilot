@@ -565,9 +565,13 @@ Explicit `display.beforePath`/`display.afterPath` values—including an explicit
 over backup inference. Use a current backup: an item absent from the snapshot remains visibly
 unresolved rather than being guessed.
 
-The default **Preview** renders Marvin-like **Now** and **After (preview)** hierarchies. With a
+The default **Preview** renders Marvin-like **Now** and **After applying** hierarchies. Proposed
+badges name actions: **Create**, **Rename**, **Move**, **Reschedule**, **Edit**, **Mark done**,
+and **Delete**. They do not imply a later scheduled action. Delete is the display name for the
+existing receipt-backed `trash` operation, not a move into Marvin's native Trash. With a
 verified `--receipt`, those labels become **Before** and **Applied result**, and the status badge
-identifies the receipt-backed view. Inbox, categories, projects, tasks, recurrence definitions,
+identifies the receipt-backed view; item badges describe past changes, such as **Completed**
+and **Deleted**. Inbox, categories, projects, tasks, recurrence definitions,
 occurrences, and subtasks have distinct Marvin-like visual treatment; projects visibly support
 create, rename, move, schedule, complete, and Trash transitions. A generated occurrence keeps its
 task circle and shows a compact recurrence-loop icon on the right, while a recurrence definition

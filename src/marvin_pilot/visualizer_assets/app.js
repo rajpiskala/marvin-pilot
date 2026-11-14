@@ -8,6 +8,14 @@ const THEMES = ["light", "dusk", "night"];
 const VIEWS = ["split", "before", "after"];
 const MODES = ["preview", "changes"];
 const ACTIONS = ["create", "update", "complete", "trash"];
+const PREVIEW_CHANGE_LABELS = {
+  created: "Create",
+  renamed: "Rename",
+  moved: "Move",
+  rescheduled: "Reschedule",
+  edited: "Edit",
+  updated: "Update",
+};
 const CHANGE_GROUPINGS = ["after", "before", "plan", "day"];
 const SELECTION_MODES = ["titles", "full"];
 const TITLE_DENSITIES = ["compact", "full"];
@@ -123,7 +131,7 @@ function sideLabel(sideName) {
   if (currentPlan?.review_state === "applied") {
     return sideName === "before" ? "Before" : "Applied result";
   }
-  return sideName === "before" ? "Now" : "After (preview)";
+  return sideName === "before" ? "Now" : "After applying";
 }
 
 function setTheme(theme, persist = true) {
@@ -405,20 +413,20 @@ function paletteClass(value) {
 function actionBadgeText(action, changeKinds, sideName) {
   const applied = currentPlan?.review_state === "applied";
   if (action === "create" && changeKinds.includes("completed")) {
-    return selectedMode === "changes" ? "Create completed task"
-      : applied ? "Created completed task" : "Will create completed task";
+    return applied ? "Created completed task" : "Create completed task";
   }
   if (action === "complete") {
     const repair = changeKinds.includes("history repaired");
-    if (selectedMode === "changes") return repair ? "Repair history" : "Complete";
-    if (sideName === "before") return null;
+    if (selectedMode !== "changes" && sideName === "before") return null;
     if (applied) return repair ? "History repaired" : "Completed";
-    return repair ? "Will repair history" : "Will complete";
+    return repair ? "Repair history" : "Mark done";
   }
   if (action === "trash") {
-    return selectedMode === "changes" ? "Trash" : applied ? "Trashed" : "Will trash";
+    return applied ? "Deleted" : "Delete";
   }
-  return (changeKinds.length > 0 ? changeKinds : [action]).join(" + ");
+  return (changeKinds.length > 0 ? changeKinds : [action])
+    .map((kind) => applied ? kind : PREVIEW_CHANGE_LABELS[kind] || kind)
+    .join(" + ");
 }
 
 function renderCard(

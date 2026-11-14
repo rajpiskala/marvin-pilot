@@ -541,7 +541,7 @@ def test_preloaded_plan_themes_views_and_preferences(page) -> None:
 
         page.get_by_role("radio", name="After only").click()
         assert page.locator(".hierarchy-pane .preview-pane-header h2").inner_text() == (
-            "After (preview)"
+            "After applying"
         )
         assert page.locator(".context-title").all_inner_texts() == [
             "Household",
@@ -876,7 +876,7 @@ def test_project_completion_is_visible_and_filterable(page, review_state: str) -
         assert page.locator(".action-complete .project-flag").count() == 2
         assert page.locator(".hierarchy-pane-before .action-badge.complete").count() == 0
         assert page.locator(".hierarchy-pane-after .action-badge.complete").text_content() == (
-            "Will complete" if review_state == "preview" else "Completed"
+            "Mark done" if review_state == "preview" else "Completed"
         )
         completion_time = page.locator(
             '.hierarchy-pane-after [data-operation-id="complete-project"] .completion-time'
@@ -916,7 +916,7 @@ def test_completed_task_create_shows_completion_without_second_operation(page) -
         assert page.locator("#create-count").inner_text() == "1"
         assert page.locator("#complete-count").inner_text() == "0"
         after = page.locator(".hierarchy-pane-after .task-card")
-        assert after.locator(".action-badge").text_content() == "Will create completed task"
+        assert after.locator(".action-badge").text_content() == "Create completed task"
         assert (
             after.locator(".completion-time").get_attribute("datetime")
             == "2026-08-07T23:30:00-07:00"
@@ -958,7 +958,7 @@ def test_project_completion_history_repair_is_explicit_in_preview(page) -> None:
         after = page.locator('.hierarchy-pane-after [data-operation-id="repair-project-history"]')
         assert before.locator(".action-badge.complete").count() == 0
         assert before.locator(".completion-time").count() == 0
-        assert after.locator(".action-badge.complete").text_content() == "Will repair history"
+        assert after.locator(".action-badge.complete").text_content() == "Repair history"
         assert after.locator(".completion-time").count() == 1
         assert after.locator(".completion-day").inner_text() == "History assigned 2026-07-18"
 
@@ -1009,7 +1009,7 @@ def test_task_completion_shows_history_day_and_replacement_semantics(page) -> No
         assert before.locator(".action-badge.complete").count() == 0
         page.get_by_role("radio", name="Changes").click()
         assert all(
-            label == "Complete"
+            label == "Mark done"
             for label in page.locator(".action-badge.complete").all_text_contents()
         )
 
@@ -1073,7 +1073,7 @@ def test_completed_task_move_is_visibly_completed_on_both_sides(page) -> None:
                 '.task-circle.completed[aria-label="Completed task"]'
             )
             assert completed_icon.count() == 1
-            assert "MOVED" in operation.locator(".action-badge").inner_text()
+            assert "MOVE" in operation.locator(".action-badge").inner_text()
 
         page.get_by_role("radio", name="Changes").click()
         row = page.locator('[data-operation-id="move-completed-task"].diff-row')
@@ -1111,6 +1111,61 @@ def test_every_project_action_is_a_first_class_hierarchy_row(page) -> None:
 
         page.get_by_role("radio", name="Changes").click()
         assert page.locator(".diff-row").count() == 4
+
+
+@pytest.mark.parametrize("review_state", ["preview", "applied"])
+def test_action_first_badges_and_applied_results_are_consistent_across_views(page, review_state):
+    plan = project_actions_plan()
+    plan["operations"][1]["before"]["note"] = "Old note"
+    plan["operations"][1]["after"]["note"] = "Revised note"
+    raw = json.dumps(plan).encode()
+    applied = review_state == "applied"
+    expected = {
+        "create-project": "created" if applied else "Create",
+        "update-project": (
+            "renamed + moved + rescheduled + edited"
+            if applied
+            else "Rename + Move + Reschedule + Edit"
+        ),
+        "complete-project": "Completed" if applied else "Mark done",
+        "trash-project": "Deleted" if applied else "Delete",
+    }
+    with running_visualizer(plan_dict=plan, server_kwargs={"review_state": review_state}) as server:
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+        assert (
+            page.get_by_role(
+                "heading", name="Applied result" if applied else "After applying", exact=True
+            ).count()
+            == 1
+        )
+        assert (
+            " ".join(page.locator('[data-action-filter="complete"]').inner_text().split())
+            == "1 Mark done"
+        )
+        assert (
+            " ".join(page.locator('[data-action-filter="trash"]').inner_text().split())
+            == "1 Delete"
+        )
+        for mode in ("Preview", "Changes"):
+            page.get_by_role("radio", name=mode, exact=True).click()
+            for identifier, label in expected.items():
+                badges = page.locator(
+                    f'[data-operation-id="{identifier}"] .action-badge'
+                ).all_text_contents()
+                assert badges and all(text == label for text in badges)
+            assert not any(
+                "Will " in text for text in page.locator(".action-badge").all_text_contents()
+            )
+        # These are presentation labels, not renamed JSON actions or a rewritten plan.
+        current = page.request.get(server.url + "api/current").json()
+        assert [operation["action"] for operation in current["plan"]["operations"]] == [
+            "create",
+            "update",
+            "complete",
+            "trash",
+        ]
+        assert json.dumps(plan).encode() == raw
 
 
 def test_marvin_hierarchy_icons_day_sections_and_counterpart_highlighting(page) -> None:
@@ -1249,7 +1304,7 @@ def test_regression_01_has_exact_cross_pane_indentation_and_move_navigation(page
             f'[data-operation-id="{moved_task["operationId"]}"] .action-badge'
         ).all_inner_texts()
         assert len(move_badges) == 2
-        assert all("MOVED" in badge for badge in move_badges)
+        assert all("MOVE" in badge for badge in move_badges)
 
         # A far-moving item remains understandable without vertically aligning its two homes.
         moved_row = page.locator(f'[data-operation-id="{moved_task["operationId"]}"]').first

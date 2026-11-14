@@ -4,6 +4,9 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
+- Use action-first preview badges (Mark done, Delete, Rename, Move, Create, Edit) and an
+  After applying heading. Receipt-backed applied views retain past-tense result labels.
+
 - Autosave inline edits per title/subtask, merge independent tabs and local servers, and sync
   open previews without replacing focused text. Retain feedback across reloads/restarts, retry
   uncertain saves idempotently, and show a compact save status instead of Save/Discard controls.
