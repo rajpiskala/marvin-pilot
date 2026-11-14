@@ -1428,7 +1428,10 @@ def visualize_command(
         bool,
         typer.Option(
             "--edit",
-            help="Edit After titles/subtasks inline; save text requests for AI reconciliation.",
+            help=(
+                "Edit After titles/subtasks inline; autosave and sync text feedback "
+                "across tabs for AI reconciliation."
+            ),
         ),
     ] = False,
 ) -> None:

@@ -14,6 +14,9 @@ plans/
 dev/
 history/
 receipts/
+*.text-review-*.json
+*.text-review-*.lock
+.*.text-review-*.tmp
 .marvin-pilot/
 .tools/
 pending-*.json

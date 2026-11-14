@@ -8,6 +8,7 @@ import secrets
 import threading
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +23,7 @@ from marvin_pilot.models.plan_v1 import ChangePlanV1
 from marvin_pilot.plan_io import MAX_PLAN_BYTES, canonical_plan_bytes, parse_plan_bytes, plan_digest
 from marvin_pilot.plan_revision import revise_plan
 from marvin_pilot.text_review import build_text_review, text_choices
+from marvin_pilot.text_review_store import TextReviewStore, review_lock
 from marvin_pilot.visualizer import build_plan_view
 from marvin_pilot.visualizer_hierarchy import HierarchyContext
 
@@ -123,7 +125,7 @@ class VisualizerServer:
         self._source_hash = hashlib.sha256(preloaded_raw).hexdigest() if preloaded_raw else None
         self._review_preflight = review_preflight
         self._review_apply = review_apply
-        self._review_challenge: tuple[str, str, int, float, dict[str, Any]] | None = None
+        self._review_challenge: tuple[str, str, int, float, dict[str, Any], int] | None = None
         self._apply_busy = False
         self._allow_edit = allow_edit
         self._reload_plan = reload_plan
@@ -133,6 +135,8 @@ class VisualizerServer:
         self._revision_token: str | None = None
         self._revision_edits: list[dict[str, Any]] = []
         self._text_review_path: str | None = None
+        self._autosave_store: TextReviewStore | None = None
+        self._autosave_source: tuple[Path, str] | None = None
         self._hierarchy = hierarchy
         self._hierarchy_sources = hierarchy_sources
         projection_started = time.perf_counter()
@@ -158,6 +162,25 @@ class VisualizerServer:
         self.origin = f"http://{self.expected_host}"
         self.url = f"{self.origin}/{self.session_token}/"
 
+    def _text_store(self) -> TextReviewStore | None:
+        if self._plan_path is None or self._plan is None or self._current is None:
+            return None
+        source = (self._plan_path, self._current["digest"])
+        if self._autosave_source != source:
+            self._autosave_store = TextReviewStore(self._plan_path, self._plan)
+            self._autosave_source = source
+        return self._autosave_store
+
+    def _text_state(self) -> dict[str, Any]:
+        store = self._text_store()
+        saved = store.snapshot() if store is not None else {"version": 0, "edits": []}
+        return {
+            "version": saved["version"],
+            "edits": saved["edits"],
+            "path": str(store.path) if store is not None and saved["version"] else None,
+            "source_digest": self._current["digest"] if self._current else None,
+        }
+
     def _can_apply(self) -> bool:
         return (
             self._plan_path is not None
@@ -171,6 +194,7 @@ class VisualizerServer:
             and self._reload_error is None
             and not self._editing
             and self._text_review_path is None
+            and not self._text_state()["edits"]
         )
 
     def _can_edit(self) -> bool:
@@ -185,17 +209,24 @@ class VisualizerServer:
             and self._reload_error is None
         )
 
-    def _status(self) -> dict[str, Any]:
+    def _status(self, *, include_text: bool = True) -> dict[str, Any]:
         with self._lock:
             account = self._plan.expectedAccount if self._plan is not None else None
+            text = self._text_state()
             return {
                 "revision": self._revision,
                 "error": self._reload_error,
                 "can_apply": self._can_apply(),
                 "can_edit": self._can_edit(),
                 "editing": self._editing,
-                "text_review_path": self._text_review_path,
-                "text_edits": self._revision_edits if self._text_review_path else [],
+                "text_review_path": text["path"] or self._text_review_path,
+                "text_version": text["version"],
+                "text_pending": bool(text["edits"]) or self._text_review_path is not None,
+                "text_edits": (
+                    text["edits"] or (self._revision_edits if self._text_review_path else [])
+                )
+                if include_text
+                else [],
                 "edited_operations": [edit["operationId"] for edit in self._revision_edits],
                 "apply_busy": self._apply_busy,
                 "source_path": str(self._plan_path) if self._plan_path else None,
@@ -256,6 +287,24 @@ class VisualizerServer:
             if not self._can_edit():
                 raise PlanSemanticError("editing requires --edit and an unapplied file-backed plan")
             plan, _raw = self._assert_file_source(request["identity"])
+            if route == "api/text-review-patch":
+                if self._editing:
+                    raise PlanSemanticError("a legacy edit session is active; finish it first")
+                edits, context = request.get("edits"), request.get("context")
+                if not isinstance(edits, list) or not isinstance(context, dict):
+                    raise PlanSemanticError(
+                        "changed text fields and reference context are required"
+                    )
+                store = self._text_store()
+                assert store is not None
+                self._review_challenge = None
+                store.patch(
+                    edits,
+                    context=context,
+                    client_id=request.get("clientId"),
+                    sequence=request.get("sequence"),
+                )
+                return {"text_state": self._text_state(), **self._status()}
             if route == "api/edit-start":
                 if self._editing:
                     raise PlanSemanticError("an edit session is already active")
@@ -597,13 +646,25 @@ class VisualizerServer:
                         _asset_bytes("favicon-64.png"),
                     )
                 elif route == "api/current":
-                    with owner._lock:
-                        self._send_json(
-                            HTTPStatus.OK,
-                            {"plan": owner._edit_view or owner._current, **owner._status()},
-                        )
-                elif route == "api/status":
-                    self._send_json(HTTPStatus.OK, owner._status())
+                    try:
+                        with owner._lock:
+                            self._send_json(
+                                HTTPStatus.OK,
+                                {"plan": owner._edit_view or owner._current, **owner._status()},
+                            )
+                    except MarvinPilotError as exc:
+                        self._send_json(HTTPStatus.CONFLICT, {"error": {"message": str(exc)}})
+                elif route in ("api/status", "api/text-state"):
+                    try:
+                        with owner._lock:
+                            result = (
+                                owner._text_state()
+                                if route == "api/text-state"
+                                else owner._status(include_text=False)
+                            )
+                            self._send_json(HTTPStatus.OK, result)
+                    except MarvinPilotError as exc:
+                        self._send_json(HTTPStatus.CONFLICT, {"error": {"message": str(exc)}})
                 else:
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": {"message": "not found"}})
 
@@ -621,6 +682,7 @@ class VisualizerServer:
                     "api/revision-preview",
                     "api/revision-save",
                     "api/text-review-save",
+                    "api/text-review-patch",
                 ):
                     self._review_action(route)
                     return
@@ -739,6 +801,7 @@ class VisualizerServer:
                             if owner._apply_busy:
                                 raise PlanSemanticError("another apply is already in progress")
                         plan, _raw = owner._assert_reviewed_source(identity)
+                        text_version = owner._text_state()["version"]
                         assert owner._review_preflight is not None
                         result = owner._review_preflight(plan)
                         owner._assert_reviewed_source(identity)
@@ -750,6 +813,7 @@ class VisualizerServer:
                                 owner._revision,
                                 time.monotonic() + 300,
                                 result,
+                                text_version,
                             )
                         self._send_json(
                             HTTPStatus.OK, {"challenge": challenge, "preflight": result}
@@ -766,17 +830,26 @@ class VisualizerServer:
                             or owner._source_hash != issued[1]
                             or owner._revision != issued[2]
                             or time.monotonic() >= issued[3]
+                            or owner._text_state()["version"] != issued[5]
                         ):
                             raise PlanSemanticError(
                                 "preflight approval expired; review and preflight again"
                             )
                         owner._apply_busy = True
                     try:
-                        plan, raw = owner._assert_reviewed_source(identity)
-                        assert owner._review_apply is not None
-                        result = owner._review_apply(
-                            plan, raw, lambda: owner._assert_reviewed_source(identity), issued[4]
-                        )
+                        store = owner._text_store()
+                        # Also exclude autosaves from a second visualizer process while applying.
+                        with review_lock(store.lock_path) if store else nullcontext():
+                            if owner._text_state()["version"] != issued[5]:
+                                raise PlanSemanticError("text feedback changed; preflight again")
+                            plan, raw = owner._assert_reviewed_source(identity)
+                            assert owner._review_apply is not None
+                            result = owner._review_apply(
+                                plan,
+                                raw,
+                                lambda: owner._assert_reviewed_source(identity),
+                                issued[4],
+                            )
                         with owner._lock:
                             if owner._current is not None:
                                 owner._current["review_state"] = "applied"

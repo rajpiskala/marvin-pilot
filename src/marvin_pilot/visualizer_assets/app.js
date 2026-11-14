@@ -51,11 +51,19 @@ let currentPlan = null;
 let currentRevision = -1;
 let csrfToken = null;
 let canApplyReviewed = false;
-let editBaseline = null;
 let canEditProposal = false;
-let textSessionPromise = null;
 let textSaveBusy = false;
-let savedTextSignature = "";
+let textVersion = -1;
+let textGeneration = 0;
+let textSequence = 0;
+let textSaveTimer = null;
+let textRequest = null;
+let textSaveError = "";
+let textReviewPath = null;
+let pollingCurrent = false;
+const textClientId = crypto.randomUUID();
+const pendingTextEdits = new Map();
+const savedTextEdits = new Map();
 let manualOperations = new Set();
 const proposalEdits = new Map();
 const visibleActions = new Set(ACTIONS);
@@ -87,9 +95,6 @@ const elements = {
   applyReviewed: document.querySelector("#apply-reviewed"),
   editProposal: document.querySelector("#edit-proposal"),
   editor: document.querySelector("#proposal-editor"),
-  editSummary: document.querySelector("#edit-summary"),
-  saveRevision: document.querySelector("#save-revision"),
-  discardEdits: document.querySelector("#discard-edits"),
   editFeedback: document.querySelector("#edit-feedback"),
   applyFeedback: document.querySelector("#apply-feedback"),
   localGuarantee: document.querySelector("#local-guarantee"),
@@ -1564,7 +1569,7 @@ function selectedTitleText(selection) {
         return false;
       }
     }))
-    .map((title) => title.dataset.copyTitle)
+    .map((title) => title.dataset.textEditKey ? title.textContent : title.dataset.copyTitle)
     .filter(Boolean)
     .join("\n");
 }
@@ -1723,12 +1728,10 @@ function syncReviewMetadata(result) {
   currentRevision = result.revision;
   csrfToken = result.csrf;
   canApplyReviewed = Boolean(result.can_apply);
-  canEditProposal = Boolean(result.can_edit) && (!result.editing || Boolean(editBaseline));
-  if (!editBaseline && result.text_review_path) {
-    proposalEdits.clear();
-    (result.text_edits || []).forEach((edit) => proposalEdits.set(textEditKey(edit), edit));
-    savedTextSignature = JSON.stringify([...proposalEdits.values()]);
-  }
+  canEditProposal = Boolean(result.can_edit) && !result.editing;
+  if (Array.isArray(result.text_edits)) acceptTextState({
+    version: result.text_version, edits: result.text_edits, path: result.text_review_path,
+  });
   elements.editProposal.hidden = true; // Click After text; no separate operation picker.
   elements.openAnother.disabled = Boolean(result.editing);
   manualOperations = new Set(result.edited_operations || []);
@@ -1747,21 +1750,8 @@ function syncReviewMetadata(result) {
   elements.footerCredentialState.textContent = canApplyReviewed
     ? "Credential loads only for preflight/apply" : "No credential loaded";
   if (result.editing) {
-    elements.reviewStatus.textContent = result.text_review_path
-      ? "Edits saved for AI — waiting for a reconciled second preview"
-      : "Editing After text — nothing applied";
+    elements.reviewStatus.textContent = "Legacy edit session active — finish it before editing here";
     elements.footerReviewMode.textContent = "Text-only proposal feedback";
-    if (!editBaseline) {
-      elements.editor.hidden = false;
-      elements.saveRevision.disabled = true;
-      elements.discardEdits.disabled = false;
-      elements.editSummary.textContent = result.text_review_path
-        ? `Saved for AI: ${result.text_review_path}`
-        : "An edit session is active after a reload or in another tab. Discard unsaved edits to return to the source preview.";
-      elements.editFeedback.hidden = Boolean(result.text_review_path);
-      elements.editFeedback.textContent = result.text_review_path
-        ? "" : "An edit session is active in another tab or after reload. Discard it to start again.";
-    }
   } else if (result.can_edit && !canApplyReviewed) {
     elements.footerReviewMode.textContent = "Local review with opt-in proposal editing";
   }
@@ -1770,11 +1760,7 @@ function syncReviewMetadata(result) {
   } else {
     clearError();
   }
-  if (result.text_review_path) {
-    elements.applyReviewed.hidden = true;
-    elements.applyFeedback.hidden = false;
-    elements.applyFeedback.textContent = `Saved for AI: ${result.text_review_path}. Ask the AI to reconcile this file with the source plan, then visualize the revised plan. Nothing applied.`;
-  }
+  updateTextEditSummary();
   wireAfterTextEditors();
 }
 
@@ -1789,6 +1775,10 @@ async function responseJson(response) {
 async function loadFile(file) {
   clearError();
   if (!file) {
+    return;
+  }
+  if (pendingTextEdits.size || textRequest) {
+    showError("Wait for text edits to finish saving before opening another plan.");
     return;
   }
   if (file.size > MAX_PLAN_BYTES) {
@@ -1812,6 +1802,7 @@ async function loadFile(file) {
     if (!response.ok) {
       throw new Error(result.error?.message || `Plan validation failed (${response.status}).`);
     }
+    resetTextState();
     renderPlan(result.plan);
     syncReviewMetadata(result);
   } catch (error) {
@@ -1840,17 +1831,32 @@ async function loadCurrentPlan({ preserveState = false } = {}) {
 }
 
 async function pollCurrentPlan() {
-  if (textSessionPromise || editBaseline) return; // Never replace a field mid-keystroke.
+  if (pollingCurrent) return;
+  pollingCurrent = true;
   try {
     const response = await fetch("api/status", { headers: { Accept: "application/json" } });
     const status = await responseJson(response);
     if (!response.ok) return;
     if (status.revision !== currentRevision) {
+      if (pendingTextEdits.size || textRequest || document.activeElement?.isContentEditable) {
+        elements.errorPanel.hidden = false;
+        elements.errorMessage.textContent = "The source preview changed. Your text is kept here; copy any unsaved text before reloading.";
+        return;
+      }
+      resetTextState();
       await loadCurrentPlan({ preserveState: Boolean(currentPlan) });
+    } else {
+      canApplyReviewed = Boolean(status.can_apply);
+      if (status.text_version > textVersion) {
+        const saved = await fetch("api/text-state", { headers: { Accept: "application/json" } });
+        const result = await responseJson(saved);
+        if (!saved.ok) throw new Error(result.error?.message || "Could not read saved edits.");
+        if (result.source_digest === currentPlan?.digest) acceptTextState(result);
+      }
+      updateTextEditSummary();
     }
-  } catch (_error) {
-    // A foreground reload/apply reports actionable errors; background polling is quiet.
-  }
+  } catch (_error) { /* Autosave reports connection failures beside the edit status. */ }
+  finally { pollingCurrent = false; }
 }
 
 async function postReviewedAction(route, payload) {
@@ -1863,7 +1869,11 @@ async function postReviewedAction(route, payload) {
     body: JSON.stringify(payload),
   });
   const result = await responseJson(response);
-  if (!response.ok) throw new Error(result.error?.message || `${route} failed (${response.status}).`);
+  if (!response.ok) {
+    const error = new Error(result.error?.message || `${route} failed (${response.status}).`);
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }
 
@@ -1886,25 +1896,89 @@ function textEditKey(edit) {
 }
 
 function updateTextEditSummary() {
-  elements.editor.hidden = proposalEdits.size === 0 && !editBaseline && !textSessionPromise;
-  elements.editSummary.textContent = `${proposalEdits.size} text edit(s). Nothing applied.`;
-  elements.saveRevision.disabled = textSaveBusy || !editBaseline || proposalEdits.size === 0
-    || JSON.stringify([...proposalEdits.values()]) === savedTextSignature;
+  const unsaved = pendingTextEdits.size > 0 || Boolean(textRequest);
+  elements.editor.hidden = !unsaved && !proposalEdits.size && !textSaveError;
+  elements.editor.dataset.saveState = textSaveError ? "error" : unsaved ? "saving" : "saved";
+  elements.editFeedback.textContent = textSaveError
+    ? `Not saved: ${textSaveError}` : unsaved ? "Saving edits…" : "Saved for AI · Nothing applied";
+  elements.editFeedback.title = textReviewPath
+    ? `Feedback: ${textReviewPath}. The AI must reconcile these edits into a second preview.` : "";
+  elements.applyReviewed.hidden = !canApplyReviewed || unsaved || proposalEdits.size > 0;
 }
 
-async function startProposalEditor() {
-  if (editBaseline) return;
-  if (textSessionPromise) return textSessionPromise;
-  elements.applyReviewed.hidden = true;
-  textSessionPromise = (async () => {
-    const result = await postReviewedAction("edit-start", { identity: planIdentity() });
-    editBaseline = result.identity;
+function resetTextState() {
+  savedTextEdits.clear(); proposalEdits.clear();
+  textVersion = -1; textReviewPath = null; textSaveError = "";
+}
+
+function mergeTextEdits() {
+  proposalEdits.clear();
+  savedTextEdits.forEach((edit, key) => proposalEdits.set(key, edit));
+  pendingTextEdits.forEach(({ edit, original }, key) => {
+    if (edit.text === original) proposalEdits.delete(key);
+    else proposalEdits.set(key, edit);
+  });
+}
+
+function acceptTextState(state) {
+  if (state.version < textVersion) return;
+  textVersion = state.version;
+  textReviewPath = state.path;
+  savedTextEdits.clear();
+  (state.edits || []).forEach((edit) => savedTextEdits.set(textEditKey(edit), edit));
+  mergeTextEdits();
+  wireAfterTextEditors();
+  updateTextEditSummary();
+}
+
+function scheduleTextSave(delay = 300) {
+  window.clearTimeout(textSaveTimer);
+  textSaveTimer = window.setTimeout(flushTextEdits, delay);
+}
+
+async function flushTextEdits() {
+  if (textSaveBusy || !currentPlan) return;
+  if (!textRequest) {
+    const fields = [...pendingTextEdits.entries()].filter(([, value]) =>
+      value.edit.text.trim() && value.edit.text.length <= 4000);
+    if (!fields.length) { updateTextEditSummary(); return; }
+    const now = new Date();
+    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    textRequest = {
+      fields,
+      payload: {
+        identity: planIdentity(), clientId: textClientId, sequence: ++textSequence,
+        edits: fields.map(([, value]) => value.edit),
+        context: { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, localDate },
+      },
+    };
+  }
+  textSaveBusy = true;
+  updateTextEditSummary();
+  try {
+    const request = textRequest;
+    const result = await postReviewedAction("text-review-patch", request.payload);
+    request.fields.forEach(([key, value]) => {
+      if (pendingTextEdits.get(key)?.generation === value.generation) pendingTextEdits.delete(key);
+    });
+    textRequest = null;
+    textSaveError = "";
     syncReviewMetadata(result);
+  } catch (error) {
+    textSaveError = error.message;
+    // An uncertain network response retries the identical request/sequence. Never replay
+    // an old edit as a new write over a newer tab's edit.
+    if (!error.status || error.status >= 500 || /busy/.test(error.message)) scheduleTextSave(1500);
+    else textRequest = null; // Invalid/stale requests need a correction, not an endless retry.
+  } finally {
+    textSaveBusy = false;
+    if (!textSaveError && pendingTextEdits.size) {
+      const invalid = [...pendingTextEdits.values()].some(({ edit }) => !edit.text.trim() || edit.text.length > 4000);
+      if (invalid) textSaveError = "Titles must contain 1–4000 characters. Your other edits are saved.";
+      else scheduleTextSave();
+    }
     updateTextEditSummary();
-  })();
-  try { await textSessionPromise; }
-  catch (error) { showError(error.message); throw error; }
-  finally { textSessionPromise = null; }
+  }
 }
 
 function wireAfterTextEditors() {
@@ -1921,30 +1995,36 @@ function wireAfterTextEditors() {
       const key = textEditKey(edit);
       if (!field.dataset.originalText) field.dataset.originalText = field.dataset.copyTitle || field.textContent;
       const pending = proposalEdits.get(key);
-      if (pending && field !== document.activeElement) field.textContent = pending.text;
-      field.classList.toggle("text-edited", Boolean(pending));
-      field.contentEditable = String(canEditProposal && !textSaveBusy);
+      const text = pending?.text ?? field.dataset.originalText;
+      if (field !== document.activeElement && field.textContent !== text) {
+        field.textContent = text;
+      }
+      field.classList.toggle("text-edited", field.textContent !== field.dataset.originalText);
+      field.contentEditable = String(canEditProposal);
+      field.dataset.textEditKey = key;
       if (!canEditProposal || field.dataset.textEditBound) return;
       field.dataset.textEditBound = "true";
       field.setAttribute("role", "textbox");
       field.setAttribute("aria-label", `Edit After ${edit.field === "title" ? "title" : "subtask"}: ${field.dataset.originalText}`);
       field.setAttribute("aria-multiline", "false");
-      field.title = "Click to edit text. Marvin syntax is sent to the AI, not executed here.";
+      field.title = "Edits save automatically for AI reconciliation. Escape restores this field's original text. Nothing is applied here.";
       field.addEventListener("click", (event) => event.stopPropagation());
       const capture = () => {
         const value = { ...edit, text: field.textContent };
-        if (value.text === field.dataset.originalText) proposalEdits.delete(key);
-        else proposalEdits.set(key, value);
-        if (proposalEdits.size) startProposalEditor().catch(() => {});
-        field.classList.toggle("text-edited", proposalEdits.has(key));
+        pendingTextEdits.set(key, { edit: value, original: field.dataset.originalText, generation: ++textGeneration });
+        textSaveError = value.text.trim() && value.text.length <= 4000
+          ? "" : "Titles must contain 1–4000 characters. This field has not been saved.";
+        mergeTextEdits();
+        field.classList.toggle("text-edited", value.text !== field.dataset.originalText);
         // Synchronize duplicate After renderings without replacing the focused field.
         afterCards.forEach((other) => other.querySelectorAll("[data-text-edit-key]").forEach((node) => {
           if (node !== field && node.dataset.textEditKey === key) node.textContent = value.text;
         }));
         updateTextEditSummary();
+        scheduleTextSave();
       };
-      field.dataset.textEditKey = key;
       field.addEventListener("input", capture);
+      field.addEventListener("blur", () => { wireAfterTextEditors(); flushTextEdits(); });
       field.addEventListener("keydown", (event) => {
         event.stopPropagation();
         if (event.isComposing) return;
@@ -1968,45 +2048,8 @@ function wireAfterTextEditors() {
   });
 }
 
-async function saveProposalRevision() {
-  await startProposalEditor();
-  if (!editBaseline || !proposalEdits.size || textSaveBusy) return;
-  textSaveBusy = true;
-  updateTextEditSummary();
-  wireAfterTextEditors();
-  try {
-    const now = new Date();
-    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    const result = await postReviewedAction("text-review-save", {
-      identity: editBaseline, edits: [...proposalEdits.values()],
-      context: { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, localDate },
-    });
-    savedTextSignature = JSON.stringify([...proposalEdits.values()]);
-    syncReviewMetadata(result);
-    elements.editFeedback.textContent = "Text edits saved. Give the saved file to the AI; review its reconciled second preview before execution.";
-    elements.editFeedback.hidden = false;
-  } catch (error) { showError(error.message); }
-  finally { textSaveBusy = false; updateTextEditSummary(); wireAfterTextEditors(); }
-}
-
-async function discardProposalEdits() {
-  if (textSessionPromise) await textSessionPromise;
-  try {
-    const result = await postReviewedAction("edit-cancel", { identity: editBaseline || {} });
-    editBaseline = null; proposalEdits.clear(); savedTextSignature = "";
-    elements.editor.hidden = true;
-    elements.editFeedback.hidden = true;
-    elements.editFeedback.textContent = "";
-    renderPlan(result.plan, { preserveState: true });
-    syncReviewMetadata(result);
-  } catch (error) { showError(error.message); }
-}
-
-elements.saveRevision.addEventListener("click", () => { saveProposalRevision().catch((error) => showError(error.message)); });
-elements.discardEdits.addEventListener("click", discardProposalEdits);
 window.addEventListener("beforeunload", (event) => {
-  if (editBaseline && proposalEdits.size && !textSaveBusy
-      && JSON.stringify([...proposalEdits.values()]) !== savedTextSignature) {
+  if (pendingTextEdits.size || textRequest) {
     event.preventDefault(); event.returnValue = "";
   }
 });
@@ -2095,6 +2138,7 @@ elements.titleDensity.addEventListener("change", () => {
   setTitleDensity(elements.titleDensity.value);
 });
 elements.sections.addEventListener("copy", (event) => {
+  if (document.activeElement?.isContentEditable) return; // Native selection within an editor.
   if (selectedSelectionMode !== "titles") {
     return;
   }
@@ -2252,4 +2296,4 @@ window.addEventListener("scroll", updateJumpDirections, { passive: true });
 elements.sections.addEventListener("scroll", updateJumpDirections, { passive: true, capture: true });
 
 loadCurrentPlan();
-window.setInterval(pollCurrentPlan, 1500);
+window.setInterval(pollCurrentPlan, 750);

@@ -4,13 +4,14 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
-- Replace the inline editor's instructional banner with compact Save/Discard controls shown
-  after a text change; retain full-card/row highlights and saved-feedback recovery.
+- Autosave inline edits per title/subtask, merge independent tabs and local servers, and sync
+  open previews without replacing focused text. Retain feedback across reloads/restarts, retry
+  uncertain saves idempotently, and show a compact save status instead of Save/Discard controls.
 
 - Allow create-revert when the only change is late assignment of the initial native CouchDB
   revision. All fields, known revisions, and later revisions retain conflict protection.
 
-- Add opt-in `visualize --edit` with click-to-edit After titles and subtasks. Save exact-ID,
+- Add opt-in `visualize --edit` with click-to-edit After titles and subtasks. Autosave exact-ID,
   text-only feedback (including unparsed Marvin syntax) for AI reconciliation and a second
   validated preview. No status/action changes, exclusions or subtask add/remove controls;
   the source plan stays unchanged and pending feedback cannot be applied (#18).

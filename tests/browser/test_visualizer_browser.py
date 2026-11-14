@@ -1818,12 +1818,11 @@ def test_inline_text_editor_exports_requests_and_requires_ai_review(page, tmp_pa
         field.fill("Write the launch-page copy +4d due Nov 30")
         page.locator("#proposal-editor").wait_for(state="visible")
         assert page.locator("#proposal-editor").bounding_box()["height"] <= 50
-        assert page.locator("#edit-summary").get_attribute("class") == "visually-hidden"
+        assert page.locator("#save-revision, #discard-edits").count() == 0
         assert page.locator("#apply-reviewed").is_hidden()
         assert page.locator("#edit-operation, #edit-completion, #edit-exclude").count() == 0
         assert page.locator('.hierarchy-pane-before [contenteditable="true"]').count() == 0
-        page.locator("#save-revision").click()
-        page.get_by_text("Text edits saved.", exact=False).wait_for()
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
         saved = list(tmp_path.glob("review.text-review-*.json"))
         assert len(saved) == 1
         review = json.loads(saved[0].read_text())
@@ -1843,7 +1842,7 @@ def test_inline_text_editor_exports_requests_and_requires_ai_review(page, tmp_pa
             .endswith("+4d due Nov 30")
         )
         page.reload()
-        page.get_by_text("Saved for AI:", exact=False).first.wait_for()
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
         assert (
             page.locator(
                 '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
@@ -1894,15 +1893,14 @@ def test_inline_subtask_edit_keeps_actions_and_checklist_states(page, tmp_path: 
             .endswith("done")
         )
         assert page.locator("#trash-count").inner_text() == "1"
-        page.locator("#save-revision").click()
-        page.get_by_text("Text edits saved.", exact=False).wait_for()
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
         saved = json.loads(next(tmp_path.glob("review.text-review-*.json")).read_text())
         assert saved["edits"][0]["subtaskId"] == "mobile"
         assert saved["edits"][0]["field"] == "subtaskTitle"
         assert saved["edits"][0]["action"] == "create"
         assert len(saved["edits"]) == 1
         assert path.read_bytes() == raw
-        page.locator("#discard-edits").click()
+        field.press("Escape")
         page.locator("#proposal-editor").wait_for(state="hidden")
         assert page.locator("#trash-count").inner_text() == "1"
         assert page.locator("#plan-id").text_content() == source["planId"]
@@ -1973,7 +1971,10 @@ def test_inline_edits_highlight_entire_card_or_subtask_row(
             changed_project.evaluate("el => getComputedStyle(el).backgroundColor")
             == project_background
         )
-        page.locator("#discard-edits").click()
+        changed_project.locator(".task-title").press("Escape")
+        page.locator('.diff-cell-after [data-subtask-id="edited-step"] .subtask-title').press(
+            "Escape"
+        )
         page.locator("#proposal-editor").wait_for(state="hidden")
         assert (
             changed_project.evaluate("el => getComputedStyle(el).backgroundColor")
@@ -2001,13 +2002,12 @@ def test_inline_editor_rejects_deleting_a_title(page, tmp_path: Path) -> None:
         page.locator(
             '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
         ).fill(" ")
-        page.locator("#save-revision").click()
-        page.get_by_text("titles cannot be removed", exact=False).first.wait_for()
+        page.locator('#proposal-editor[data-save-state="error"]').wait_for()
         assert list(tmp_path.iterdir()) == [path]
         page.on("dialog", lambda dialog: dialog.accept())
 
 
-def test_editor_reload_offers_safe_discard(page, tmp_path: Path) -> None:
+def test_editor_reload_restores_autosaved_edits_and_remains_editable(page, tmp_path: Path) -> None:
     path = tmp_path / "review.json"
     raw = json.dumps(EXAMPLE_PLAN).encode()
     path.write_bytes(raw)
@@ -2023,15 +2023,226 @@ def test_editor_reload_offers_safe_discard(page, tmp_path: Path) -> None:
         field = page.locator(
             '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
         )
-        field.fill("Unsaved proposal")
-        page.locator("#save-revision").wait_for(state="visible")
+        field.fill("Autosaved proposal")
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
         page.reload()
         page.locator("#proposal-editor").wait_for(state="visible")
-        assert "after a reload or in another tab" in page.locator("#edit-summary").inner_text()
-        assert page.locator("#save-revision").is_disabled()
-        page.locator("#discard-edits").click()
+        assert field.inner_text() == "Autosaved proposal"
+        assert field.get_attribute("contenteditable") == "true"
+        field.press("Escape")
         page.locator("#proposal-editor").wait_for(state="hidden")
         assert page.locator("#plan-id").text_content() == EXAMPLE_PLAN["planId"]
         field.fill("Another title")
-        page.locator("#proposal-editor").wait_for(state="visible")
-        assert list(tmp_path.iterdir()) == [path]
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+        assert path.read_bytes() == raw
+
+
+def autosave_text(page, field, text):
+    with page.expect_response(
+        lambda r: r.url.endswith("api/text-review-patch") and r.request.method == "POST"
+    ) as response:
+        field.fill(text)
+        field.press("Tab")
+    assert response.value.ok, response.value.text()
+    page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+
+
+def test_autosave_tabs_merge_live_and_focused_stale_writer_wins_only_its_field(page, tmp_path):
+    from playwright.sync_api import expect
+
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    source["operations"][2]["after"]["subtasks"] = [
+        {"id": "step-a", "title": "Step A", "done": False},
+        {"id": "step-b", "title": "Step B", "done": True},
+    ]
+    raw = json.dumps(source).encode()
+    path = tmp_path / "review.json"
+    path.write_bytes(raw)
+    options = {"preloaded_raw": raw, "plan_path": path, "allow_edit": True}
+    a_title = '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+    b_title = '.hierarchy-pane-after [data-operation-id="reschedule-wash-dishes"] .task-title'
+    with (
+        running_visualizer(plan_dict=source, server_kwargs=options) as a,
+        running_visualizer(plan_dict=source, server_kwargs=options) as b,
+    ):
+        page.goto(a.url)
+        tab_b = page.context.new_page()
+        stale_d = page.context.new_page()
+        tab_b.goto(b.url)
+        stale_d.goto(a.url, wait_until="domcontentloaded")
+        original = stale_d.locator(a_title).inner_text()
+        stale_d.locator(a_title).focus()
+        autosave_text(page, page.locator(a_title), "Task A by tab A +4d")
+        expect(tab_b.locator(a_title)).to_have_text("Task A by tab A +4d")
+        assert stale_d.locator(a_title).inner_text() == original  # Never stomp a focused editor.
+        autosave_text(tab_b, tab_b.locator(b_title), "Task B by tab B")
+        tab_c = page.context.new_page()
+        tab_c.goto(a.url)
+        expect(tab_c.locator(a_title)).to_have_text("Task A by tab A +4d")
+        expect(tab_c.locator(b_title)).to_have_text("Task B by tab B")
+        autosave_text(stale_d, stale_d.locator(a_title), "Task A by stale tab D")
+        expect(page.locator(a_title)).to_have_text("Task A by stale tab D")
+        expect(page.locator(b_title)).to_have_text("Task B by tab B")
+        autosave_text(
+            page,
+            page.locator('.hierarchy-pane-after [data-subtask-id="step-a"] .subtask-title'),
+            "Step A by A",
+        )
+        autosave_text(
+            tab_b,
+            tab_b.locator('.hierarchy-pane-after [data-subtask-id="step-b"] .subtask-title'),
+            "Step B by B",
+        )
+        expect(
+            tab_c.locator('.hierarchy-pane-after [data-subtask-id="step-a"] .subtask-title')
+        ).to_have_text("Step A by A")
+        expect(
+            tab_c.locator('.hierarchy-pane-after [data-subtask-id="step-b"] .subtask-title')
+        ).to_have_text("Step B by B")
+        with page.expect_response(lambda r: r.url.endswith("api/text-review-patch")):
+            page.locator(a_title).press("Escape")
+        expect(tab_c.locator(a_title)).to_have_text(original)
+        expect(tab_c.locator(b_title)).to_have_text("Task B by tab B")
+        saved = json.loads(next(tmp_path.glob("*.text-review-*.json")).read_bytes())
+        assert len(saved["edits"]) == 3
+        assert {e["text"] for e in saved["edits"]} == {
+            "Task B by tab B",
+            "Step A by A",
+            "Step B by B",
+        }
+        assert path.read_bytes() == raw
+        assert all(e["referenceContext"]["timeZone"] for e in saved["edits"])
+        assert page.locator("#save-revision").count() == 0
+        with running_visualizer(
+            plan_dict=source, server_kwargs={**options, "allow_edit": False}
+        ) as readonly:
+            readonly_tab = page.context.new_page()
+            readonly_tab.goto(readonly.url)
+            expect(readonly_tab.locator(b_title)).to_have_text("Task B by tab B")
+            assert readonly_tab.locator('[contenteditable="true"]').count() == 0
+            readonly_tab.close()
+
+
+def test_source_change_keeps_unsaved_text_and_caret(page, tmp_path):
+    from playwright.sync_api import expect
+
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    raw = json.dumps(source).encode()
+    path = tmp_path / "review.json"
+    path.write_bytes(raw)
+
+    def reload_view():
+        updated = path.read_bytes()
+        return LoadedVisualization(
+            plan=parse_plan_bytes(updated), source_name=path.name, raw=updated
+        )
+
+    with running_visualizer(
+        server_kwargs={
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+            "watch_paths": (path,),
+            "reload_visualization": reload_view,
+        }
+    ) as server:
+        page.goto(server.url)
+        page.on("dialog", lambda dialog: dialog.accept())
+        page.route(
+            "**/api/text-review-patch",
+            lambda route: route.fulfill(
+                status=409,
+                content_type="application/json",
+                body=json.dumps({"error": {"message": "Source changed"}}),
+            ),
+        )
+        field = page.locator(
+            '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        )
+        field.fill("Keep this unsaved title")
+        source["summary"] = "Changed source outside this tab"
+        path.write_bytes(json.dumps(source).encode())
+        expect(page.locator("#error-message")).to_contain_text("source preview changed")
+        expect(field).to_have_text("Keep this unsaved title")
+        assert field.evaluate("el => el === document.activeElement")
+        assert not list(tmp_path.glob("*.text-review-*.json"))
+
+
+def test_autosave_lost_ack_retry_does_not_overwrite_another_tab(page, tmp_path):
+    from playwright.sync_api import expect
+
+    raw = json.dumps(EXAMPLE_PLAN).encode()
+    path = tmp_path / "review.json"
+    path.write_bytes(raw)
+    with running_visualizer(
+        server_kwargs={"preloaded_raw": raw, "plan_path": path, "allow_edit": True}
+    ) as server:
+        page.goto(server.url)
+        field_selector = (
+            '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        )
+        other = page.context.new_page()
+        other.goto(server.url)
+        lost_ack = []
+
+        def lose_response(route):
+            if lost_ack:
+                route.continue_()
+            else:
+                response = route.fetch()
+                assert response.ok
+                lost_ack.append(response.json())
+                route.abort("failed")
+
+        page.route("**/api/text-review-patch", lose_response)
+        page.locator(field_selector).fill("First writer")
+        page.locator(field_selector).press("Tab")
+        page.locator('#proposal-editor[data-save-state="error"]').wait_for()
+        autosave_text(other, other.locator(field_selector), "Newer writer")
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+        expect(page.locator(field_selector)).to_have_text("Newer writer")
+        assert lost_ack
+        assert (
+            json.loads(next(tmp_path.glob("*.text-review-*.json")).read_bytes())["edits"][0]["text"]
+            == "Newer writer"
+        )
+
+
+def test_autosave_changes_during_inflight_request_are_saved_next(page, tmp_path):
+    from playwright.sync_api import expect
+
+    raw = json.dumps(EXAMPLE_PLAN).encode()
+    path = tmp_path / "review.json"
+    path.write_bytes(raw)
+    with running_visualizer(
+        server_kwargs={"preloaded_raw": raw, "plan_path": path, "allow_edit": True}
+    ) as server:
+        page.goto(server.url)
+        selector = '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        # Delay the first response after it was persisted, then type more while it is in flight.
+        captured = []
+
+        def hold_first(route):
+            response = route.fetch()
+            if not captured:
+                captured.append((route, response))
+            else:
+                route.fulfill(response=response)
+
+        page.route("**/api/text-review-patch", hold_first)
+        page.locator(selector).fill("Initial text")
+        page.wait_for_function("() => textSaveBusy")
+        page.wait_for_function("() => textRequest !== null")
+        # Pump browser events until the handler captured the acknowledgement.
+        page.locator('#proposal-editor[data-save-state="saving"]').wait_for()
+        while not captured:
+            page.wait_for_timeout(25)
+        page.locator(selector).fill("Typed while saving")
+        captured[0][0].fulfill(response=captured[0][1])
+        page.locator("#plan-summary").click()
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+        expect(page.locator(selector)).to_have_text("Typed while saving")
+        assert (
+            json.loads(next(tmp_path.glob("*.text-review-*.json")).read_bytes())["edits"][0]["text"]
+            == "Typed while saving"
+        )

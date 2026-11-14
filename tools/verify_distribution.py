@@ -12,6 +12,7 @@ REQUIRED_SUFFIXES = (
     "marvin_pilot/visualizer.py",
     "marvin_pilot/visualizer_fields.py",
     "marvin_pilot/visualizer_server.py",
+    "marvin_pilot/text_review_store.py",
     "marvin_pilot/visualizer_assets/__init__.py",
     "marvin_pilot/visualizer_assets/index.html",
     "marvin_pilot/visualizer_assets/styles.css",

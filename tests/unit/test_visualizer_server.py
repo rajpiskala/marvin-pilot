@@ -7,6 +7,7 @@ import time
 from contextlib import contextmanager
 from http.client import HTTPConnection
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -402,6 +403,173 @@ def test_text_feedback_is_not_a_plan_and_cannot_be_applied(tmp_path: Path) -> No
         assert cancelled["can_apply"] is False  # Saved requests still need AI reconciliation.
         assert cancelled["text_review_path"] == str(review_path)
         assert calls == []
+
+
+def test_autosave_shared_across_servers_restart_and_blocks_apply(tmp_path: Path) -> None:
+    path = tmp_path / "review.json"
+    raw = json.dumps(
+        {**EXAMPLE_PLAN, "expectedAccount": {"userId": "123456", "email": "pilot@example.com"}}
+    ).encode()
+    path.write_bytes(raw)
+    calls = []
+    options = {
+        "preloaded_plan": parse_plan_bytes(raw),
+        "preloaded_raw": raw,
+        "plan_path": path,
+        "allow_edit": True,
+        "review_preflight": lambda _: {"operations": 6},
+        "review_apply": lambda *_: calls.append("apply"),
+    }
+    with (
+        running_server(server_kwargs=options) as (a, client),
+        running_server(server_kwargs=options) as (b, other),
+    ):
+        current = client.get(a.url + "api/current").json()
+        identity = {
+            "revision": current["revision"],
+            "plan_id": current["plan"]["plan_id"],
+            "digest": current["plan"]["digest"],
+        }
+        headers = {"Origin": a.origin, "X-Marvin-Pilot-CSRF": current["csrf"]}
+        checked = client.post(a.url + "api/preflight", json={"identity": identity}, headers=headers)
+        assert checked.status_code == 200
+        payload = {
+            "identity": identity,
+            "clientId": str(uuid4()),
+            "sequence": 1,
+            "context": {"timeZone": "UTC", "localDate": "2026-11-13"},
+            "edits": [
+                {"operationId": "create-email-follow-up", "field": "title", "text": "Edited by B"}
+            ],
+        }
+        denied = client.post(a.url + "api/text-review-patch", json=payload)
+        assert denied.status_code == 403
+        saved = other.post(
+            b.url + "api/text-review-patch",
+            json=payload,
+            headers={"Origin": b.origin, "X-Marvin-Pilot-CSRF": b.csrf_token},
+        )
+        assert saved.status_code == 200, saved.text
+        assert (
+            saved.json()["revision"] == current["revision"]
+        )  # Another tab's identity stays valid.
+        assert not saved.json()["editing"]
+        status = client.get(a.url + "api/status").json()
+        assert status["text_version"] == 1 and status["text_pending"]
+        assert status["text_edits"] == []  # Polls do not retransmit all feedback.
+        assert not status["can_apply"]
+        state = client.get(a.url + "api/text-state").json()
+        assert state["edits"][0]["text"] == "Edited by B"
+        assert Path(state["path"]).parent == path.parent
+        blocked = client.post(
+            a.url + "api/apply",
+            json={"identity": identity, "challenge": checked.json()["challenge"]},
+            headers=headers,
+        )
+        assert blocked.status_code == 409 and calls == []
+        replay = other.post(
+            b.url + "api/text-review-patch",
+            json=payload,
+            headers={"Origin": b.origin, "X-Marvin-Pilot-CSRF": b.csrf_token},
+        )
+        assert replay.json()["text_version"] == 1
+        # An edit-and-restore in another process still invalidates old approval.
+        original_title = EXAMPLE_PLAN["operations"][2]["after"]["title"]
+        reset = other.post(
+            b.url + "api/text-review-patch",
+            json={
+                **payload,
+                "sequence": 2,
+                "edits": [{**payload["edits"][0], "text": original_title}],
+            },
+            headers={"Origin": b.origin, "X-Marvin-Pilot-CSRF": b.csrf_token},
+        )
+        assert reset.json()["can_apply"]
+        checked = client.post(a.url + "api/preflight", json={"identity": identity}, headers=headers)
+        assert checked.status_code == 200
+        for sequence, text in ((3, "Temporary edit"), (4, original_title)):
+            changed = other.post(
+                b.url + "api/text-review-patch",
+                json={
+                    **payload,
+                    "sequence": sequence,
+                    "edits": [{**payload["edits"][0], "text": text}],
+                },
+                headers={"Origin": b.origin, "X-Marvin-Pilot-CSRF": b.csrf_token},
+            )
+            assert changed.status_code == 200
+        expired = client.post(
+            a.url + "api/apply",
+            json={"identity": identity, "challenge": checked.json()["challenge"]},
+            headers=headers,
+        )
+        assert expired.status_code == 409 and "preflight" in expired.json()["error"]["message"]
+        other.post(
+            b.url + "api/text-review-patch",
+            json={**payload, "sequence": 5},
+            headers={"Origin": b.origin, "X-Marvin-Pilot-CSRF": b.csrf_token},
+        ).raise_for_status()
+        path.write_bytes(raw + b" ")
+        stale = client.post(
+            a.url + "api/text-review-patch", json={**payload, "sequence": 2}, headers=headers
+        )
+        assert stale.status_code == 409 and "changed" in stale.json()["error"]["message"]
+        path.write_bytes(raw)
+    with running_server(server_kwargs=options) as (fresh, client):
+        restored = client.get(fresh.url + "api/current").json()
+        assert restored["text_edits"][0]["text"] == "Edited by B"
+        assert not restored["can_apply"] and restored["can_edit"]
+        assert path.read_bytes() == raw
+
+
+@pytest.mark.parametrize(
+    "damage", ["empty", "context", "structure", "writer", "sequence", "identity", "corrupt"]
+)
+def test_autosave_rejects_invalid_or_corrupt_feedback(tmp_path: Path, damage: str) -> None:
+    path = tmp_path / "review.json"
+    raw = json.dumps(EXAMPLE_PLAN).encode()
+    path.write_bytes(raw)
+    with running_server(
+        server_kwargs={"preloaded_raw": raw, "plan_path": path, "allow_edit": True}
+    ) as (server, client):
+        current = client.get(server.url + "api/current").json()
+        payload = {
+            "identity": {
+                "revision": current["revision"],
+                "plan_id": current["plan"]["plan_id"],
+                "digest": current["plan"]["digest"],
+            },
+            "clientId": str(uuid4()),
+            "sequence": 1,
+            "context": {"timeZone": "UTC", "localDate": "2026-11-13"},
+            "edits": [
+                {"operationId": "create-email-follow-up", "field": "title", "text": "Changed"}
+            ],
+        }
+        if damage == "empty":
+            payload["edits"] = None
+        if damage == "context":
+            payload["context"] = None
+        if damage == "structure":
+            payload["edits"][0]["action"] = "trash"
+        if damage == "writer":
+            payload["clientId"] = "bad"
+        if damage == "sequence":
+            payload["sequence"] = False
+        if damage == "identity":
+            payload["identity"]["revision"] += 1
+        if damage == "corrupt":
+            server._text_store().path.write_bytes(b"broken")
+        rejected = client.post(
+            server.url + "api/text-review-patch",
+            json=payload,
+            headers={"Origin": server.origin, "X-Marvin-Pilot-CSRF": server.csrf_token},
+        )
+        assert rejected.status_code == 409, rejected.text
+        assert path.read_bytes() == raw
+        if damage == "corrupt":
+            for route in ("api/current", "api/status", "api/text-state"):
+                assert client.get(server.url + route).status_code == 409
 
 
 def test_revision_preview_save_preserves_source_and_invalidates_apply(tmp_path: Path) -> None:

@@ -70,7 +70,9 @@ def main() -> None:
                         '.hierarchy-pane-after [data-subtask-id="subtask-headline"] .subtask-title'
                     ).fill("Draft the opening headline")
                     page.locator("#plan-summary").click()
-                    expect(page.locator("#save-revision")).to_be_enabled()
+                    expect(page.locator("#edit-feedback")).to_have_text(
+                        "Saved for AI · Nothing applied"
+                    )
                     assert page.locator("#editor-heading").count() == 0
                     assert page.locator("#apply-reviewed").is_hidden()
                     assert page.locator(".text-edited").count() == 2

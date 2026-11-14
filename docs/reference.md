@@ -691,13 +691,23 @@ or write Marvin data. `--allow-apply` is a separate opt-in and can be combined w
    There are no add/delete-subtask or exclude-operation controls. Enter finishes the field;
    Escape restores that field's original text. Pasted content is plain text.
    Edited titles tint the full task/project card; edited subtasks tint only their own row.
-   Compact Save/Discard controls appear after a text change, without an instructional banner.
+   Edits save automatically after a short typing pause or when you leave the field. A compact
+   status shows **Saving edits…**, **Saved for AI**, or a save error. No Save button is needed.
 2. You may type Marvin syntax, for example `Write the launch-page copy +4d due Nov 30`.
    The browser does not parse, execute or silently put these tokens into an executable plan.
-3. Choose **Save edits for AI**. Pilot writes `PLAN.text-review-UUID.json` beside the source.
+3. Pilot autosaves `PLAN.text-review-DIGEST.json` beside the source, shared by every tab and
+   local visualizer process viewing that exact source plan. Only the title or subtask you
+   changed is patched: editing task A in one tab and task B in another retains both edits.
+   The last save to the same field wins, including a deliberate edit from an older tab.
+   Open tabs pick up saved changes automatically, without replacing the field you are typing
+   in. A new tab or restarted visualizer loads the saved edits. Escape restores only that
+   field's original text; it never discards another field's edits. Uncertain network responses
+   are retried idempotently, so an old retry cannot undo a newer tab's save. Closing with
+   unsaved text prompts you; wait for **Saved for AI** before leaving. Errors are visible and
+   unsaved text is retained in the tab, not silently dropped or stored in browser storage.
    This is a text-feedback document, **not a plan**. It retains source plan ID/digest,
    operation ID, target ID/type/action, optional subtask ID, original/new text, server timestamp
-   and browser-reported local date/time zone. The source plan, locks and checklist states stay
+   and per-field browser-reported local date/time zone. The source plan, locks and checklist states stay
    unchanged. Treat the feedback file as private task data.
 4. The AI reads the feedback and exact source plan, reconciles wording and supported syntax,
    and generates a separately validated plan for a **second visualize/review round**. Resolve
@@ -707,14 +717,16 @@ or write Marvin data. `--allow-apply` is a separate opt-in and can be combined w
    left in the title. Use exact IDs, not fuzzy title matching. Preserve action types, task/subtask
    membership and completion states unless Raj separately authorizes a structural/state change.
 
-Apply approval is invalidated when text editing begins. A saved feedback file keeps browser Apply
-disabled; saving or reloading is not applying or AI approval. Unsaved edits can be discarded.
-Saved feedback remains on disk for the AI even if the local edit session is discarded. A fresh
+Apply approval is invalidated when text editing begins. Pending text feedback keeps browser Apply
+disabled across tabs and local servers; autosaving or reloading is not applying or AI approval.
+Saved feedback remains on disk for the AI. Restoring every edited field to its source text removes
+the pending feedback, but requires a fresh browser preflight before any apply. A fresh
 reconciled plan still needs normal offline/live validation and explicit authorized apply.
 Undoing an already-applied plan still uses its recovery receipt and `revert`.
 
-If a watched source/context file changes during editing, saving is blocked. Discard edits and
-review the latest file. Editing is unavailable for uploads, stdin, plan sets, or receipt-backed
+If a watched source/context file changes during editing, saving is blocked. Copy any unsaved
+text before reloading and reviewing the latest file. Edits are pinned to the exact source digest;
+a revised plan does not inherit another plan's feedback. Editing is unavailable for uploads, stdin, plan sets, or receipt-backed
 applied views. Stable target IDs, account pins, original before-values, and concurrency locks are
 retained. The AI must update dependent title references/hierarchy in its reconciled plan; the
 feedback UI deliberately does not project structural interpretations while you type.

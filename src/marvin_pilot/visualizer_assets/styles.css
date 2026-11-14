@@ -3380,8 +3380,6 @@ footer {
 }
 
 .text-edit-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
-.text-edit-controls > button {
-  min-height: 32px; padding: 5px 12px; border-radius: 7px; font-size: 12px;
-}
-.text-edit-feedback { flex-basis: 100%; color: var(--muted-ink); font-size: 12px; }
+.text-edit-feedback { color: var(--muted-ink); font-size: 12px; }
+.text-edit-controls[data-save-state="error"] .text-edit-feedback { color: var(--danger-ink, #c33349); }
 .manual-edit-badge { font-size: .75rem; padding: .2rem .4rem; border: 1px dashed currentColor; }

@@ -50,7 +50,11 @@ def text_choices(plan: ChangePlanV1) -> list[dict[str, Any]]:
 
 
 def build_text_review(
-    plan: ChangePlanV1, edits: list[dict[str, Any]], *, context: dict[str, Any]
+    plan: ChangePlanV1,
+    edits: list[dict[str, Any]],
+    *,
+    context: dict[str, Any],
+    allow_original: bool = False,
 ) -> dict[str, Any]:
     choices = {(c["operationId"], c["field"], c["subtaskId"]): c for c in text_choices(plan)}
     if not edits or len(edits) > len(choices):
@@ -76,7 +80,7 @@ def build_text_review(
         choice = choices[key]
         if not edit.text.strip():
             raise PlanSemanticError("titles cannot be removed; edit the text instead")
-        if edit.text == choice["originalText"]:
+        if edit.text == choice["originalText"] and not allow_original:
             raise PlanSemanticError("text edit does not change the proposal")
         result.append({**choice, "text": edit.text})
     return {
