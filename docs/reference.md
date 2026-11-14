@@ -284,7 +284,7 @@ marvin-pilot apply plans/first-plan.json
 Marvin Pilot shows a compact preflight progress bar with the current operation ID, then presents a
 color-enhanced terminal review. Every operation has a textual `CREATE`, `UPDATE`, `COMPLETE`, or
 `TRASH` label; a distinct task, project, recurring-series, or occurrence marker; target and
-operation IDs; Marvin hierarchy; and an exact Now/After field table. Marvin emoji and `#RRGGBB`
+operation IDs; Marvin hierarchy; and an exact current/after field table. Marvin emoji and `#RRGGBB`
 metadata are used when supplied by the plan or live document. Color chips automatically choose
 black or white text for WCAG contrast, and textual labels plus encoding-safe fallbacks keep all
 meaning available in monochrome, redirected, and legacy Windows terminals.
@@ -565,7 +565,7 @@ Explicit `display.beforePath`/`display.afterPath` values—including an explicit
 over backup inference. Use a current backup: an item absent from the snapshot remains visibly
 unresolved rather than being guessed.
 
-The default **Preview** renders Marvin-like **Now** and **After applying** hierarchies. Proposed
+The default **Preview** renders Marvin-like **Current state** and **After applying** hierarchies. Proposed
 badges name actions: **Create**, **Rename**, **Move**, **Reschedule**, **Edit**, **Mark done**,
 and **Delete**. They do not imply a later scheduled action. Delete is the display name for the
 existing receipt-backed `trash` operation, not a move into Marvin's native Trash. With a
@@ -588,7 +588,7 @@ within each pane, and single-state views provide the full content width.
 
 Use **Day sections: Show/Hide** to layer explicit Today-list groupings over the hierarchy. Day
 sections such as Waiting or Main are visually distinct from categories and projects. Switch to
-**Changes** for an aligned operation diff grouped by typed After location, Now location, plan order,
+**Changes** for an aligned operation diff grouped by typed After location, current location, plan order,
 or supplied Today section. Uneven before/after cards keep their natural heights, so a short loose
 task is not stretched to match a long checklist. Consolidated subtasks use a compact **From source
 task** chip; its tooltip retains the full source title and ID without squeezing the subtask title.
@@ -691,7 +691,7 @@ The default visualizer remains read-only. Editing does not load credentials, ref
 or write Marvin data. `--allow-apply` is a separate opt-in and can be combined with `--edit`.
 
 1. Click a task/project title or subtask directly in **After**, then edit its text.
-   The **Now** side, action badges, completion states and date/parent controls are read-only.
+   The **Current state** side, action badges, completion states and date/parent controls are read-only.
    There are no add/delete-subtask or exclude-operation controls. Enter finishes the field;
    Escape restores that field's original text. Pasted content is plain text.
    Edited titles tint the full task/project card; edited subtasks tint only their own row.

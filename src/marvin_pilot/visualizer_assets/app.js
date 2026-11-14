@@ -131,7 +131,7 @@ function sideLabel(sideName) {
   if (currentPlan?.review_state === "applied") {
     return sideName === "before" ? "Before" : "Applied result";
   }
-  return sideName === "before" ? "Now" : "After applying";
+  return sideName === "before" ? "Current state" : "After applying";
 }
 
 function setTheme(theme, persist = true) {
@@ -792,7 +792,7 @@ function renderOperationDetails(operation) {
   const locations = node("dl", "location-details");
   [
     [
-      "Now location",
+      "Current location",
       operation.before
         ? describePath(operation.before_path, operation.before_path_state)
         : "No before state",
@@ -804,7 +804,7 @@ function renderOperationDetails(operation) {
         : "No active after state",
     ],
     [
-      "Now day section",
+      "Current day section",
       operation.before ? describeDaySection(operation.before_day_section) : "No before state",
     ],
     [
@@ -1044,7 +1044,7 @@ function renderChangeGroupHeader(group) {
   const label = selectedChangeGrouping === "day"
     ? "Today section"
     : selectedChangeGrouping === "before"
-      ? "Now location"
+      ? "Current location"
       : selectedChangeGrouping === "after"
         ? "After location"
         : "Review sequence";
@@ -1420,7 +1420,10 @@ function updateJumpDirections() {
     );
     if (!operation?.[sideName]) {
       button.disabled = true;
-      button.textContent = `No ${sideLabel(sideName)} state`;
+      const state = sideName === "before"
+        ? currentPlan?.review_state === "applied" ? "before" : "current"
+        : "after";
+      button.textContent = `No ${state} state`;
       return;
     }
     button.disabled = false;
@@ -1691,6 +1694,8 @@ function renderPlan(plan, { preserveState = false } = {}) {
   syncDaySectionToggle();
   elements.summary.textContent = plan.summary;
   const applied = plan.review_state === "applied";
+  document.querySelector('[data-view-choice="before"]').textContent = applied
+    ? "Before only" : "Current state only";
   elements.sections.dataset.reviewState = applied ? "applied" : "preview";
   elements.reviewStatus.className = `status-badge ${applied ? "applied" : "preview"}`;
   elements.reviewStatus.textContent = applied

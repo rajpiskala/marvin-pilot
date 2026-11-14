@@ -2394,7 +2394,7 @@ footer {
   }
 
   .diff-cell-before::before {
-    content: "Now";
+    content: "Current state";
   }
 
   .diff-cell-before {
@@ -2407,7 +2407,7 @@ footer {
   }
 
   .diff-cell-after::before {
-    content: "After (preview)";
+    content: "After applying";
   }
 
   .sections[data-review-state="applied"] .diff-cell-before::before {

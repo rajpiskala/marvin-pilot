@@ -526,7 +526,9 @@ def test_preloaded_plan_themes_views_and_preferences(page) -> None:
         page.get_by_role("radio", name="Dusk theme").click()
         assert page.locator(".hierarchy-preview-before").count() == 1
         assert page.locator(".hierarchy-pane").count() == 1
-        assert page.locator(".hierarchy-pane .preview-pane-header h2").inner_text() == "Now"
+        assert (
+            page.locator(".hierarchy-pane .preview-pane-header h2").inner_text() == "Current state"
+        )
         assert page.locator(".operation-row").count() == 3
         assert page.locator(".context-title").all_inner_texts() == [
             "Household",
@@ -537,7 +539,10 @@ def test_preloaded_plan_themes_views_and_preferences(page) -> None:
         page.reload()
         page.locator("#plan-view").wait_for(state="visible")
         assert page.get_by_role("radio", name="Dusk theme").get_attribute("aria-checked") == "true"
-        assert page.get_by_role("radio", name="Now only").get_attribute("aria-checked") == "true"
+        assert (
+            page.get_by_role("radio", name="Current state only").get_attribute("aria-checked")
+            == "true"
+        )
 
         page.get_by_role("radio", name="After only").click()
         assert page.locator(".hierarchy-pane .preview-pane-header h2").inner_text() == (
@@ -711,7 +716,7 @@ def test_compact_titles_expand_and_single_views_remain_full(page) -> None:
         button.click()
         assert title.bounding_box()["height"] > compact_height
 
-        page.get_by_role("radio", name="Now only").click()
+        page.get_by_role("radio", name="Current state only").click()
         single_title = page.locator(
             '.hierarchy-pane-before [data-operation-id="reschedule-wash-dishes"] .task-title'
         )
@@ -1096,7 +1101,7 @@ def test_every_project_action_is_a_first_class_hierarchy_row(page) -> None:
         assert page.locator(".action-trash.operation-row").count() == 1
 
         page.locator('[data-operation-id="create-project"]').click()
-        no_now = page.get_by_role("button", name="No Now state")
+        no_now = page.get_by_role("button", name="No current state")
         assert no_now.is_disabled()
 
         page.locator(
@@ -1140,6 +1145,18 @@ def test_action_first_badges_and_applied_results_are_consistent_across_views(pag
             == 1
         )
         assert (
+            page.get_by_role(
+                "heading", name="Before" if applied else "Current state", exact=True
+            ).count()
+            == 1
+        )
+        assert (
+            page.get_by_role(
+                "radio", name="Before only" if applied else "Current state only", exact=True
+            ).count()
+            == 1
+        )
+        assert (
             " ".join(page.locator('[data-action-filter="complete"]').inner_text().split())
             == "1 Mark done"
         )
@@ -1166,6 +1183,13 @@ def test_action_first_badges_and_applied_results_are_consistent_across_views(pag
             "trash",
         ]
         assert json.dumps(plan).encode() == raw
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.locator(".diff-cell-before").first.evaluate(
+            "el => getComputedStyle(el, '::before').content"
+        ) == ('"Before"' if applied else '"Current state"')
+        assert page.locator(".diff-cell-after").first.evaluate(
+            "el => getComputedStyle(el, '::before').content"
+        ) == ('"Applied result"' if applied else '"After applying"')
 
 
 def test_marvin_hierarchy_icons_day_sections_and_counterpart_highlighting(page) -> None:
@@ -1330,7 +1354,9 @@ def test_regression_01_has_exact_cross_pane_indentation_and_move_navigation(page
         assert page.locator(".diff-row").count() == int(page.locator("#moved-count").inner_text())
         page.locator("#moved-filter").click()
         page.locator("#changes-grouping").select_option("before")
-        assert "now location" in page.locator(".hierarchy-group-header").first.inner_text().lower()
+        assert (
+            "current location" in page.locator(".hierarchy-group-header").first.inner_text().lower()
+        )
         day_option = page.locator('#changes-grouping option[value="day"]')
         assert not day_option.is_disabled()
         page.locator("#changes-grouping").select_option("day")
@@ -1485,7 +1511,7 @@ def test_deep_hierarchy_scrolls_inside_each_pane_and_single_view_is_wider(page) 
             "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
         )
 
-        page.get_by_role("radio", name="Now only").click()
+        page.get_by_role("radio", name="Current state only").click()
         single_scroll = page.locator(".hierarchy-pane-before .hierarchy-scroll")
         single_metrics = single_scroll.evaluate(
             "element => ({clientWidth: element.clientWidth, scrollWidth: element.scrollWidth})"
