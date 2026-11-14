@@ -1632,7 +1632,9 @@ footer {
 
 .plan-actions {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 8px;
 }

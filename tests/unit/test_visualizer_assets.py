@@ -52,7 +52,8 @@ def test_assets_are_offline_external_and_have_expected_controls() -> None:
     assert 'data-view-choice="before"' in html
     assert 'data-view-choice="after"' in html
     assert "Side by side" in html
-    assert "Now only" in html
+    assert "Current state only" in html
+    assert "Now only" not in html
     assert "After only" in html
     assert 'id="plan-hierarchy-source"' in html
     assert "Review options" not in html

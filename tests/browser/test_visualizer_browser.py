@@ -1494,11 +1494,21 @@ def test_ordered_subtasks_and_loose_task_conversion_are_visually_traceable(page)
         assert page.locator(".hierarchy-group-header .project-flag").count() == 1
 
 
-def test_deep_hierarchy_scrolls_inside_each_pane_and_single_view_is_wider(page) -> None:
+@pytest.mark.parametrize("larger_controls", [False, True])
+def test_deep_hierarchy_scrolls_inside_each_pane_and_single_view_is_wider(
+    page, larger_controls
+) -> None:
     with running_visualizer(plan_dict=hierarchy_plan(depth=12)) as server:
         page.set_viewport_size({"width": 1100, "height": 900})
         page.goto(server.url)
         page.locator("#plan-view").wait_for(state="visible")
+        if larger_controls:
+            # Wider font metrics must wrap the toolbar, not overflow the page.
+            page.locator(".plan-actions").evaluate(
+                """el => el.querySelectorAll('button,select').forEach(control => {
+                    control.style.fontSize = '16px';
+                })"""
+            )
 
         before_scroll = page.locator(".hierarchy-pane-before .hierarchy-scroll")
         split_metrics = before_scroll.evaluate(
