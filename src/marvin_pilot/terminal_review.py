@@ -191,6 +191,13 @@ def _changes_table(checked: PreflightOperation) -> Table:
                 "(not present)",
                 format_plan_value(field, new_value),
             )
+        if operation.completedAt is not None:
+            table.add_row(
+                "completion", "(not present)", f"created completed at {operation.completedAt}"
+            )
+            table.add_row(
+                "completion history day", "(not present)", checked.compiled.desired_fields["day"]
+            )
     elif isinstance(operation, CompleteOperation):
         before_state = "completed; timestamp missing" if operation.repairHistory else "open"
         table.add_row("completion", before_state, f"completed at {operation.completedAt}")

@@ -526,7 +526,9 @@ def test_preloaded_plan_themes_views_and_preferences(page) -> None:
         page.get_by_role("radio", name="Dusk theme").click()
         assert page.locator(".hierarchy-preview-before").count() == 1
         assert page.locator(".hierarchy-pane").count() == 1
-        assert page.locator(".hierarchy-pane .preview-pane-header h2").inner_text() == "Now"
+        assert (
+            page.locator(".hierarchy-pane .preview-pane-header h2").inner_text() == "Current state"
+        )
         assert page.locator(".operation-row").count() == 3
         assert page.locator(".context-title").all_inner_texts() == [
             "Household",
@@ -537,11 +539,14 @@ def test_preloaded_plan_themes_views_and_preferences(page) -> None:
         page.reload()
         page.locator("#plan-view").wait_for(state="visible")
         assert page.get_by_role("radio", name="Dusk theme").get_attribute("aria-checked") == "true"
-        assert page.get_by_role("radio", name="Now only").get_attribute("aria-checked") == "true"
+        assert (
+            page.get_by_role("radio", name="Current state only").get_attribute("aria-checked")
+            == "true"
+        )
 
         page.get_by_role("radio", name="After only").click()
         assert page.locator(".hierarchy-pane .preview-pane-header h2").inner_text() == (
-            "After (preview)"
+            "After applying"
         )
         assert page.locator(".context-title").all_inner_texts() == [
             "Household",
@@ -711,7 +716,7 @@ def test_compact_titles_expand_and_single_views_remain_full(page) -> None:
         button.click()
         assert title.bounding_box()["height"] > compact_height
 
-        page.get_by_role("radio", name="Now only").click()
+        page.get_by_role("radio", name="Current state only").click()
         single_title = page.locator(
             '.hierarchy-pane-before [data-operation-id="reschedule-wash-dishes"] .task-title'
         )
@@ -846,7 +851,8 @@ def test_split_rows_and_following_sections_share_geometry(page) -> None:
         assert second_section["y"] >= first_section["y"] + first_section["height"]
 
 
-def test_project_completion_is_visible_and_filterable(page) -> None:
+@pytest.mark.parametrize("review_state", ["preview", "applied"])
+def test_project_completion_is_visible_and_filterable(page, review_state: str) -> None:
     plan = {
         "schemaVersion": 1,
         "planId": "55555555-5555-4555-8555-555555555555",
@@ -866,13 +872,17 @@ def test_project_completion_is_visible_and_filterable(page) -> None:
             }
         ],
     }
-    with running_visualizer(plan_dict=plan) as server:
+    with running_visualizer(plan_dict=plan, server_kwargs={"review_state": review_state}) as server:
         page.goto(server.url)
         page.locator("#plan-view").wait_for(state="visible")
         assert page.locator("#complete-count").inner_text() == "1"
         assert page.locator(".action-complete").count() == 2
         assert page.locator(".action-complete .task-card").count() == 2
         assert page.locator(".action-complete .project-flag").count() == 2
+        assert page.locator(".hierarchy-pane-before .action-badge.complete").count() == 0
+        assert page.locator(".hierarchy-pane-after .action-badge.complete").text_content() == (
+            "Mark done" if review_state == "preview" else "Completed"
+        )
         completion_time = page.locator(
             '.hierarchy-pane-after [data-operation-id="complete-project"] .completion-time'
         )
@@ -898,6 +908,26 @@ def test_project_completion_is_visible_and_filterable(page) -> None:
 
         page.locator('[data-action-filter="complete"]').click()
         assert page.locator(".action-complete").count() == 2
+
+
+def test_completed_task_create_shows_completion_without_second_operation(page) -> None:
+    plan = copy.deepcopy(EXAMPLE_PLAN)
+    plan["operations"] = [plan["operations"][2]]
+    plan["operations"][0]["after"].pop("scheduledDate", None)
+    plan["operations"][0]["completedAt"] = "2026-08-07T23:30:00-07:00"
+    with running_visualizer(plan_dict=plan) as server:
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+        assert page.locator("#create-count").inner_text() == "1"
+        assert page.locator("#complete-count").inner_text() == "0"
+        after = page.locator(".hierarchy-pane-after .task-card")
+        assert after.locator(".action-badge").text_content() == "Create completed task"
+        assert (
+            after.locator(".completion-time").get_attribute("datetime")
+            == "2026-08-07T23:30:00-07:00"
+        )
+        assert after.locator(".completion-day").inner_text() == "History assigned 2026-08-07"
+        assert page.locator(".hierarchy-pane-after .task-circle.completed").count() == 1
 
 
 def test_project_completion_history_repair_is_explicit_in_preview(page) -> None:
@@ -931,11 +961,11 @@ def test_project_completion_history_repair_is_explicit_in_preview(page) -> None:
         page.locator("#plan-view").wait_for(state="visible")
         before = page.locator('.hierarchy-pane-before [data-operation-id="repair-project-history"]')
         after = page.locator('.hierarchy-pane-after [data-operation-id="repair-project-history"]')
-        assert before.get_by_text("HISTORY REPAIRED").count() == 1
+        assert before.locator(".action-badge.complete").count() == 0
         assert before.locator(".completion-time").count() == 0
-        assert after.get_by_text("HISTORY REPAIRED").count() == 1
+        assert after.locator(".action-badge.complete").text_content() == "Repair history"
         assert after.locator(".completion-time").count() == 1
-        assert after.locator(".completion-day").inner_text() == "History 2026-07-18"
+        assert after.locator(".completion-day").inner_text() == "History assigned 2026-07-18"
 
         page.locator(".operation-details summary").first.click()
         details = page.locator(".operation-details[open]").inner_text()
@@ -975,12 +1005,18 @@ def test_task_completion_shows_history_day_and_replacement_semantics(page) -> No
             '.hierarchy-pane-after [data-operation-id="complete-task-history"] .completion-day'
         )
         assert history_day.count() == 1
-        assert history_day.inner_text() == "History 2026-09-04"
+        assert history_day.inner_text() == "History 2026-09-07 → 2026-09-04"
         assert history_day.get_attribute("datetime") == "2026-09-04"
         assert "replaced" in history_day.get_attribute("title")
         before = page.locator('.hierarchy-pane-before [data-operation-id="complete-task-history"]')
         assert before.locator(".completion-day").count() == 0
         assert before.locator(".task-items").count() == 0
+        assert before.locator(".action-badge.complete").count() == 0
+        page.get_by_role("radio", name="Changes").click()
+        assert all(
+            label == "Mark done"
+            for label in page.locator(".action-badge.complete").all_text_contents()
+        )
 
         page.locator(".operation-details summary").first.click()
         details = page.locator(".operation-details[open]").inner_text()
@@ -1042,7 +1078,7 @@ def test_completed_task_move_is_visibly_completed_on_both_sides(page) -> None:
                 '.task-circle.completed[aria-label="Completed task"]'
             )
             assert completed_icon.count() == 1
-            assert "MOVED" in operation.locator(".action-badge").inner_text()
+            assert "MOVE" in operation.locator(".action-badge").inner_text()
 
         page.get_by_role("radio", name="Changes").click()
         row = page.locator('[data-operation-id="move-completed-task"].diff-row')
@@ -1065,7 +1101,7 @@ def test_every_project_action_is_a_first_class_hierarchy_row(page) -> None:
         assert page.locator(".action-trash.operation-row").count() == 1
 
         page.locator('[data-operation-id="create-project"]').click()
-        no_now = page.get_by_role("button", name="No Now state")
+        no_now = page.get_by_role("button", name="No current state")
         assert no_now.is_disabled()
 
         page.locator(
@@ -1080,6 +1116,80 @@ def test_every_project_action_is_a_first_class_hierarchy_row(page) -> None:
 
         page.get_by_role("radio", name="Changes").click()
         assert page.locator(".diff-row").count() == 4
+
+
+@pytest.mark.parametrize("review_state", ["preview", "applied"])
+def test_action_first_badges_and_applied_results_are_consistent_across_views(page, review_state):
+    plan = project_actions_plan()
+    plan["operations"][1]["before"]["note"] = "Old note"
+    plan["operations"][1]["after"]["note"] = "Revised note"
+    raw = json.dumps(plan).encode()
+    applied = review_state == "applied"
+    expected = {
+        "create-project": "created" if applied else "Create",
+        "update-project": (
+            "renamed + moved + rescheduled + edited"
+            if applied
+            else "Rename + Move + Reschedule + Edit"
+        ),
+        "complete-project": "Completed" if applied else "Mark done",
+        "trash-project": "Deleted" if applied else "Delete",
+    }
+    with running_visualizer(plan_dict=plan, server_kwargs={"review_state": review_state}) as server:
+        page.goto(server.url)
+        page.locator("#plan-view").wait_for(state="visible")
+        assert (
+            page.get_by_role(
+                "heading", name="Applied result" if applied else "After applying", exact=True
+            ).count()
+            == 1
+        )
+        assert (
+            page.get_by_role(
+                "heading", name="Before" if applied else "Current state", exact=True
+            ).count()
+            == 1
+        )
+        assert (
+            page.get_by_role(
+                "radio", name="Before only" if applied else "Current state only", exact=True
+            ).count()
+            == 1
+        )
+        assert (
+            " ".join(page.locator('[data-action-filter="complete"]').inner_text().split())
+            == "1 Mark done"
+        )
+        assert (
+            " ".join(page.locator('[data-action-filter="trash"]').inner_text().split())
+            == "1 Delete"
+        )
+        for mode in ("Preview", "Changes"):
+            page.get_by_role("radio", name=mode, exact=True).click()
+            for identifier, label in expected.items():
+                badges = page.locator(
+                    f'[data-operation-id="{identifier}"] .action-badge'
+                ).all_text_contents()
+                assert badges and all(text == label for text in badges)
+            assert not any(
+                "Will " in text for text in page.locator(".action-badge").all_text_contents()
+            )
+        # These are presentation labels, not renamed JSON actions or a rewritten plan.
+        current = page.request.get(server.url + "api/current").json()
+        assert [operation["action"] for operation in current["plan"]["operations"]] == [
+            "create",
+            "update",
+            "complete",
+            "trash",
+        ]
+        assert json.dumps(plan).encode() == raw
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.locator(".diff-cell-before").first.evaluate(
+            "el => getComputedStyle(el, '::before').content"
+        ) == ('"Before"' if applied else '"Current state"')
+        assert page.locator(".diff-cell-after").first.evaluate(
+            "el => getComputedStyle(el, '::before').content"
+        ) == ('"Applied result"' if applied else '"After applying"')
 
 
 def test_marvin_hierarchy_icons_day_sections_and_counterpart_highlighting(page) -> None:
@@ -1218,7 +1328,7 @@ def test_regression_01_has_exact_cross_pane_indentation_and_move_navigation(page
             f'[data-operation-id="{moved_task["operationId"]}"] .action-badge'
         ).all_inner_texts()
         assert len(move_badges) == 2
-        assert all("MOVED" in badge for badge in move_badges)
+        assert all("MOVE" in badge for badge in move_badges)
 
         # A far-moving item remains understandable without vertically aligning its two homes.
         moved_row = page.locator(f'[data-operation-id="{moved_task["operationId"]}"]').first
@@ -1244,7 +1354,9 @@ def test_regression_01_has_exact_cross_pane_indentation_and_move_navigation(page
         assert page.locator(".diff-row").count() == int(page.locator("#moved-count").inner_text())
         page.locator("#moved-filter").click()
         page.locator("#changes-grouping").select_option("before")
-        assert "now location" in page.locator(".hierarchy-group-header").first.inner_text().lower()
+        assert (
+            "current location" in page.locator(".hierarchy-group-header").first.inner_text().lower()
+        )
         day_option = page.locator('#changes-grouping option[value="day"]')
         assert not day_option.is_disabled()
         page.locator("#changes-grouping").select_option("day")
@@ -1382,11 +1494,21 @@ def test_ordered_subtasks_and_loose_task_conversion_are_visually_traceable(page)
         assert page.locator(".hierarchy-group-header .project-flag").count() == 1
 
 
-def test_deep_hierarchy_scrolls_inside_each_pane_and_single_view_is_wider(page) -> None:
+@pytest.mark.parametrize("larger_controls", [False, True])
+def test_deep_hierarchy_scrolls_inside_each_pane_and_single_view_is_wider(
+    page, larger_controls
+) -> None:
     with running_visualizer(plan_dict=hierarchy_plan(depth=12)) as server:
         page.set_viewport_size({"width": 1100, "height": 900})
         page.goto(server.url)
         page.locator("#plan-view").wait_for(state="visible")
+        if larger_controls:
+            # Wider font metrics must wrap the toolbar, not overflow the page.
+            page.locator(".plan-actions").evaluate(
+                """el => el.querySelectorAll('button,select').forEach(control => {
+                    control.style.fontSize = '16px';
+                })"""
+            )
 
         before_scroll = page.locator(".hierarchy-pane-before .hierarchy-scroll")
         split_metrics = before_scroll.evaluate(
@@ -1399,7 +1521,7 @@ def test_deep_hierarchy_scrolls_inside_each_pane_and_single_view_is_wider(page) 
             "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
         )
 
-        page.get_by_role("radio", name="Now only").click()
+        page.get_by_role("radio", name="Current state only").click()
         single_scroll = page.locator(".hierarchy-pane-before .hierarchy-scroll")
         single_metrics = single_scroll.evaluate(
             "element => ({clientWidth: element.clientWidth, scrollWidth: element.scrollWidth})"
@@ -1756,3 +1878,462 @@ def test_browser_apply_reviews_exact_file_and_shows_receipt(page, tmp_path: Path
         assert page.locator("#review-status").inner_text() == "Applied plan — receipt verified"
         assert button.is_hidden()
         assert calls == ["preflight", "apply"]
+
+
+def test_inline_text_editor_exports_requests_and_requires_ai_review(page, tmp_path: Path) -> None:
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    source["expectedAccount"] = {"userId": "123456", "email": "pilot@example.com"}
+    path = tmp_path / "review.json"
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+    calls = []
+    with running_visualizer(
+        plan_dict=source,
+        server_kwargs={
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+            "review_preflight": lambda _: calls.append("preflight"),
+            "review_apply": lambda *_: calls.append("apply"),
+        },
+    ) as server:
+        page.goto(server.url)
+        field = page.locator(
+            '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        )
+        assert page.locator("#editor-heading").count() == 0
+        assert page.locator("#proposal-editor").is_hidden()
+        field.focus()
+        assert page.locator("#proposal-editor").is_hidden()
+        assert calls == []
+        field.fill("Write the launch-page copy +4d due Nov 30")
+        page.locator("#proposal-editor").wait_for(state="visible")
+        assert page.locator("#proposal-editor").bounding_box()["height"] <= 50
+        assert page.locator("#save-revision, #discard-edits").count() == 0
+        assert page.locator("#apply-reviewed").is_hidden()
+        assert page.locator("#edit-operation, #edit-completion, #edit-exclude").count() == 0
+        assert page.locator('.hierarchy-pane-before [contenteditable="true"]').count() == 0
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+        saved = list(tmp_path.glob("review.text-review-*.json"))
+        assert len(saved) == 1
+        review = json.loads(saved[0].read_text())
+        assert review["requiresAIReconciliation"] is True
+        assert review["edits"][0]["operationId"] == "create-email-follow-up"
+        assert review["edits"][0]["text"].endswith("+4d due Nov 30")
+        assert page.locator("#plan-id").text_content() == source["planId"]
+        assert path.read_bytes() == raw
+        assert page.locator("#apply-reviewed").is_hidden()
+        assert calls == []
+        page.locator('[data-mode-choice="changes"]').click()
+        assert (
+            page.locator(
+                '[data-operation-id="create-email-follow-up"] .diff-cell-after .task-title'
+            )
+            .inner_text()
+            .endswith("+4d due Nov 30")
+        )
+        page.reload()
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+        assert (
+            page.locator(
+                '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+            )
+            .inner_text()
+            .endswith("+4d due Nov 30")
+        )
+        assert page.locator("#apply-reviewed").is_hidden()
+
+
+def test_inline_subtask_edit_keeps_actions_and_checklist_states(page, tmp_path: Path) -> None:
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    source["operations"].append(
+        {
+            "operationId": "finish-existing",
+            "action": "complete",
+            "target": {"type": "task", "id": "finished", "title": "Finished work"},
+            "reason": "Finished",
+            "completedAt": "2026-08-07T18:00:00-07:00",
+            "completionDay": {
+                "before": "2026-08-07",
+                "after": "2026-08-07",
+                "behavior": "preserved",
+            },
+        }
+    )
+    source["operations"][2]["after"]["subtasks"] = [
+        {"id": "mobile", "title": "Test mobile layout", "done": False},
+        {"id": "android", "title": "Test Android layout", "done": True},
+    ]
+    path = tmp_path / "review.json"
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+    with running_visualizer(
+        plan_dict=source,
+        server_kwargs={
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+        },
+    ) as server:
+        page.goto(server.url)
+        field = page.locator('.hierarchy-pane-after [data-subtask-id="mobile"] .subtask-title')
+        field.fill("Test iPhone layout due Nov 30")
+        assert (
+            page.locator('.hierarchy-pane-after [data-subtask-id="android"]')
+            .get_attribute("class")
+            .endswith("done")
+        )
+        assert page.locator("#trash-count").inner_text() == "1"
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+        saved = json.loads(next(tmp_path.glob("review.text-review-*.json")).read_text())
+        assert saved["edits"][0]["subtaskId"] == "mobile"
+        assert saved["edits"][0]["field"] == "subtaskTitle"
+        assert saved["edits"][0]["action"] == "create"
+        assert len(saved["edits"]) == 1
+        assert path.read_bytes() == raw
+        field.press("Escape")
+        page.locator("#proposal-editor").wait_for(state="hidden")
+        assert page.locator("#trash-count").inner_text() == "1"
+        assert page.locator("#plan-id").text_content() == source["planId"]
+        assert (
+            page.locator(
+                '.hierarchy-pane-after [data-subtask-id="mobile"] .subtask-title'
+            ).inner_text()
+            == "Test mobile layout"
+        )
+
+
+@pytest.mark.parametrize("theme", ["light", "dusk", "night"])
+def test_inline_edits_highlight_entire_card_or_subtask_row(
+    page, tmp_path: Path, theme: str
+) -> None:
+    source = hierarchy_plan()
+    source["operations"][1]["before"]["subtasks"] = []
+    source["operations"][1]["after"]["subtasks"] = [
+        {"id": "edited-step", "title": "First step", "done": False},
+        {"id": "untouched-step", "title": "Second step", "done": False},
+    ]
+    path = tmp_path / "review.json"
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+    with running_visualizer(
+        plan_dict=source,
+        server_kwargs={"preloaded_raw": raw, "plan_path": path, "allow_edit": True},
+    ) as server:
+        page.goto(server.url)
+        page.locator(f'[data-theme-choice="{theme}"]').click()
+        project = page.locator(
+            '.hierarchy-pane-after [data-operation-id="rename-monitoring"] .task-card'
+        )
+        task = page.locator('.hierarchy-pane-after [data-operation-id="rename-task"] .task-card')
+        original_project_background = project.evaluate("el => getComputedStyle(el).backgroundColor")
+        original_task_background = task.evaluate("el => getComputedStyle(el).backgroundColor")
+        project.locator(".task-title").fill("Monitoring launch v3")
+        page.locator('.hierarchy-pane-after [data-subtask-id="edited-step"] .subtask-title').fill(
+            "Revised first step"
+        )
+        row = task.locator('[data-subtask-id="edited-step"]')
+        untouched = task.locator('[data-subtask-id="untouched-step"]')
+        project_background = project.evaluate("el => getComputedStyle(el).backgroundColor")
+        assert project_background != original_project_background
+        assert row.evaluate("el => getComputedStyle(el).backgroundColor") == project_background
+        assert (
+            task.evaluate("el => getComputedStyle(el).backgroundColor") == original_task_background
+        )
+        assert (
+            untouched.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(0, 0, 0, 0)"
+        )
+        assert (
+            project.locator(".task-title").evaluate("el => getComputedStyle(el).backgroundColor")
+            == "rgba(0, 0, 0, 0)"
+        )
+        assert (
+            row.locator(".subtask-title").evaluate("el => getComputedStyle(el).backgroundColor")
+            == "rgba(0, 0, 0, 0)"
+        )
+        assert row.bounding_box()["width"] > row.locator(".subtask-title").bounding_box()["width"]
+        assert page.get_by_text("Your edit", exact=True).count() == 0
+        assert page.locator(".text-edit-original").count() == 0
+        page.locator('[data-mode-choice="changes"]').click()
+        changed_project = page.locator(
+            '[data-operation-id="rename-monitoring"] .diff-cell-after .task-card'
+        )
+        assert (
+            changed_project.evaluate("el => getComputedStyle(el).backgroundColor")
+            == project_background
+        )
+        changed_project.locator(".task-title").press("Escape")
+        page.locator('.diff-cell-after [data-subtask-id="edited-step"] .subtask-title').press(
+            "Escape"
+        )
+        page.locator("#proposal-editor").wait_for(state="hidden")
+        assert (
+            changed_project.evaluate("el => getComputedStyle(el).backgroundColor")
+            == original_project_background
+        )
+        assert page.locator(".text-edited").count() == 0
+        assert path.read_bytes() == raw
+
+
+def test_inline_editor_rejects_deleting_a_title(page, tmp_path: Path) -> None:
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    source["operations"][1]["dependsOnOperations"] = ["reschedule-wash-dishes"]
+    path = tmp_path / "review.json"
+    raw = json.dumps(source).encode()
+    path.write_bytes(raw)
+    with running_visualizer(
+        plan_dict=source,
+        server_kwargs={
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+        },
+    ) as server:
+        page.goto(server.url)
+        page.locator(
+            '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        ).fill(" ")
+        page.locator('#proposal-editor[data-save-state="error"]').wait_for()
+        assert list(tmp_path.iterdir()) == [path]
+        page.on("dialog", lambda dialog: dialog.accept())
+
+
+def test_editor_reload_restores_autosaved_edits_and_remains_editable(page, tmp_path: Path) -> None:
+    path = tmp_path / "review.json"
+    raw = json.dumps(EXAMPLE_PLAN).encode()
+    path.write_bytes(raw)
+    with running_visualizer(
+        server_kwargs={
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+        }
+    ) as server:
+        page.goto(server.url)
+        page.on("dialog", lambda dialog: dialog.accept())
+        field = page.locator(
+            '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        )
+        field.fill("Autosaved proposal")
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+        page.reload()
+        page.locator("#proposal-editor").wait_for(state="visible")
+        assert field.inner_text() == "Autosaved proposal"
+        assert field.get_attribute("contenteditable") == "true"
+        field.press("Escape")
+        page.locator("#proposal-editor").wait_for(state="hidden")
+        assert page.locator("#plan-id").text_content() == EXAMPLE_PLAN["planId"]
+        field.fill("Another title")
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+        assert path.read_bytes() == raw
+
+
+def autosave_text(page, field, text):
+    with page.expect_response(
+        lambda r: r.url.endswith("api/text-review-patch") and r.request.method == "POST"
+    ) as response:
+        field.fill(text)
+        field.press("Tab")
+    assert response.value.ok, response.value.text()
+    page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+
+
+def test_autosave_tabs_merge_live_and_focused_stale_writer_wins_only_its_field(page, tmp_path):
+    from playwright.sync_api import expect
+
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    source["operations"][2]["after"]["subtasks"] = [
+        {"id": "step-a", "title": "Step A", "done": False},
+        {"id": "step-b", "title": "Step B", "done": True},
+    ]
+    raw = json.dumps(source).encode()
+    path = tmp_path / "review.json"
+    path.write_bytes(raw)
+    options = {"preloaded_raw": raw, "plan_path": path, "allow_edit": True}
+    a_title = '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+    b_title = '.hierarchy-pane-after [data-operation-id="reschedule-wash-dishes"] .task-title'
+    with (
+        running_visualizer(plan_dict=source, server_kwargs=options) as a,
+        running_visualizer(plan_dict=source, server_kwargs=options) as b,
+    ):
+        page.goto(a.url)
+        tab_b = page.context.new_page()
+        stale_d = page.context.new_page()
+        tab_b.goto(b.url)
+        stale_d.goto(a.url, wait_until="domcontentloaded")
+        original = stale_d.locator(a_title).inner_text()
+        stale_d.locator(a_title).focus()
+        autosave_text(page, page.locator(a_title), "Task A by tab A +4d")
+        expect(tab_b.locator(a_title)).to_have_text("Task A by tab A +4d")
+        assert stale_d.locator(a_title).inner_text() == original  # Never stomp a focused editor.
+        autosave_text(tab_b, tab_b.locator(b_title), "Task B by tab B")
+        tab_c = page.context.new_page()
+        tab_c.goto(a.url)
+        expect(tab_c.locator(a_title)).to_have_text("Task A by tab A +4d")
+        expect(tab_c.locator(b_title)).to_have_text("Task B by tab B")
+        autosave_text(stale_d, stale_d.locator(a_title), "Task A by stale tab D")
+        expect(page.locator(a_title)).to_have_text("Task A by stale tab D")
+        expect(page.locator(b_title)).to_have_text("Task B by tab B")
+        autosave_text(
+            page,
+            page.locator('.hierarchy-pane-after [data-subtask-id="step-a"] .subtask-title'),
+            "Step A by A",
+        )
+        autosave_text(
+            tab_b,
+            tab_b.locator('.hierarchy-pane-after [data-subtask-id="step-b"] .subtask-title'),
+            "Step B by B",
+        )
+        expect(
+            tab_c.locator('.hierarchy-pane-after [data-subtask-id="step-a"] .subtask-title')
+        ).to_have_text("Step A by A")
+        expect(
+            tab_c.locator('.hierarchy-pane-after [data-subtask-id="step-b"] .subtask-title')
+        ).to_have_text("Step B by B")
+        with page.expect_response(lambda r: r.url.endswith("api/text-review-patch")):
+            page.locator(a_title).press("Escape")
+        expect(tab_c.locator(a_title)).to_have_text(original)
+        expect(tab_c.locator(b_title)).to_have_text("Task B by tab B")
+        saved = json.loads(next(tmp_path.glob("*.text-review-*.json")).read_bytes())
+        assert len(saved["edits"]) == 3
+        assert {e["text"] for e in saved["edits"]} == {
+            "Task B by tab B",
+            "Step A by A",
+            "Step B by B",
+        }
+        assert path.read_bytes() == raw
+        assert all(e["referenceContext"]["timeZone"] for e in saved["edits"])
+        assert page.locator("#save-revision").count() == 0
+        with running_visualizer(
+            plan_dict=source, server_kwargs={**options, "allow_edit": False}
+        ) as readonly:
+            readonly_tab = page.context.new_page()
+            readonly_tab.goto(readonly.url)
+            expect(readonly_tab.locator(b_title)).to_have_text("Task B by tab B")
+            assert readonly_tab.locator('[contenteditable="true"]').count() == 0
+            readonly_tab.close()
+
+
+def test_source_change_keeps_unsaved_text_and_caret(page, tmp_path):
+    from playwright.sync_api import expect
+
+    source = copy.deepcopy(EXAMPLE_PLAN)
+    raw = json.dumps(source).encode()
+    path = tmp_path / "review.json"
+    path.write_bytes(raw)
+
+    def reload_view():
+        updated = path.read_bytes()
+        return LoadedVisualization(
+            plan=parse_plan_bytes(updated), source_name=path.name, raw=updated
+        )
+
+    with running_visualizer(
+        server_kwargs={
+            "preloaded_raw": raw,
+            "plan_path": path,
+            "allow_edit": True,
+            "watch_paths": (path,),
+            "reload_visualization": reload_view,
+        }
+    ) as server:
+        page.goto(server.url)
+        page.on("dialog", lambda dialog: dialog.accept())
+        page.route(
+            "**/api/text-review-patch",
+            lambda route: route.fulfill(
+                status=409,
+                content_type="application/json",
+                body=json.dumps({"error": {"message": "Source changed"}}),
+            ),
+        )
+        field = page.locator(
+            '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        )
+        field.fill("Keep this unsaved title")
+        source["summary"] = "Changed source outside this tab"
+        path.write_bytes(json.dumps(source).encode())
+        expect(page.locator("#error-message")).to_contain_text("source preview changed")
+        expect(field).to_have_text("Keep this unsaved title")
+        assert field.evaluate("el => el === document.activeElement")
+        assert not list(tmp_path.glob("*.text-review-*.json"))
+
+
+def test_autosave_lost_ack_retry_does_not_overwrite_another_tab(page, tmp_path):
+    from playwright.sync_api import expect
+
+    raw = json.dumps(EXAMPLE_PLAN).encode()
+    path = tmp_path / "review.json"
+    path.write_bytes(raw)
+    with running_visualizer(
+        server_kwargs={"preloaded_raw": raw, "plan_path": path, "allow_edit": True}
+    ) as server:
+        page.goto(server.url)
+        field_selector = (
+            '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        )
+        other = page.context.new_page()
+        other.goto(server.url)
+        lost_ack = []
+
+        def lose_response(route):
+            if lost_ack:
+                route.continue_()
+            else:
+                response = route.fetch()
+                assert response.ok
+                lost_ack.append(response.json())
+                route.abort("failed")
+
+        page.route("**/api/text-review-patch", lose_response)
+        page.locator(field_selector).fill("First writer")
+        page.locator(field_selector).press("Tab")
+        page.locator('#proposal-editor[data-save-state="error"]').wait_for()
+        autosave_text(other, other.locator(field_selector), "Newer writer")
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+        expect(page.locator(field_selector)).to_have_text("Newer writer")
+        assert lost_ack
+        assert (
+            json.loads(next(tmp_path.glob("*.text-review-*.json")).read_bytes())["edits"][0]["text"]
+            == "Newer writer"
+        )
+
+
+def test_autosave_changes_during_inflight_request_are_saved_next(page, tmp_path):
+    from playwright.sync_api import expect
+
+    raw = json.dumps(EXAMPLE_PLAN).encode()
+    path = tmp_path / "review.json"
+    path.write_bytes(raw)
+    with running_visualizer(
+        server_kwargs={"preloaded_raw": raw, "plan_path": path, "allow_edit": True}
+    ) as server:
+        page.goto(server.url)
+        selector = '.hierarchy-pane-after [data-operation-id="create-email-follow-up"] .task-title'
+        # Delay the first response after it was persisted, then type more while it is in flight.
+        captured = []
+
+        def hold_first(route):
+            response = route.fetch()
+            if not captured:
+                captured.append((route, response))
+            else:
+                route.fulfill(response=response)
+
+        page.route("**/api/text-review-patch", hold_first)
+        page.locator(selector).fill("Initial text")
+        page.wait_for_function("() => textSaveBusy")
+        page.wait_for_function("() => textRequest !== null")
+        # Pump browser events until the handler captured the acknowledgement.
+        page.locator('#proposal-editor[data-save-state="saving"]').wait_for()
+        while not captured:
+            page.wait_for_timeout(25)
+        page.locator(selector).fill("Typed while saving")
+        captured[0][0].fulfill(response=captured[0][1])
+        page.locator("#plan-summary").click()
+        page.get_by_text("Saved for AI · Nothing applied", exact=True).wait_for()
+        expect(page.locator(selector)).to_have_text("Typed while saving")
+        assert (
+            json.loads(next(tmp_path.glob("*.text-review-*.json")).read_bytes())["edits"][0]["text"]
+            == "Typed while saving"
+        )

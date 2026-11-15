@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -58,6 +59,22 @@ class RevertResult:
 
 def _snapshot_matches(document: dict[str, Any], expected: dict[str, dict[str, Any]]) -> bool:
     return all(field_snapshot(document, field) == snapshot for field, snapshot in expected.items())
+
+
+def _created_document_matches(document: dict[str, Any], recorded: dict[str, Any]) -> bool:
+    """Allow only late assignment of an initial CouchDB revision, never a later edit."""
+
+    if document == recorded:
+        return True
+    revision = document.get("_rev")
+    if (
+        "_rev" in recorded
+        or not isinstance(revision, str)
+        or not re.fullmatch(r"1-[0-9a-f]{32}", revision)
+    ):
+        return False
+    without_revision = {key: value for key, value in document.items() if key != "_rev"}
+    return without_revision == recorded
 
 
 def _revision_snapshot(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -360,7 +377,7 @@ def preflight_revert(
                         f"operation {source_operation.operationId!r} was recorded before exact "
                         "create snapshots and cannot be safely deleted"
                     )
-                if live != source_operation.afterDocument:
+                if not _created_document_matches(live, source_operation.afterDocument):
                     raise LivePreconditionError(
                         f"operation {source_operation.operationId!r} cannot be reverted because "
                         "the created document changed after apply"
@@ -413,7 +430,7 @@ def recheck_revert_operation(
             f"operation {checked.source_operation.operationId!r} target disappeared after preflight"
         )
     if checked.source_operation.action == "create":
-        if current != checked.source_operation.afterDocument:
+        if not _created_document_matches(current, checked.source_operation.afterDocument):
             raise LivePreconditionError(
                 f"operation {checked.source_operation.operationId!r} created document changed "
                 "after preflight"

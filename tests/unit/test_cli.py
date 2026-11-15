@@ -491,6 +491,52 @@ def test_visualize_preloads_without_credentials_and_opens_browser(
     assert "No Marvin credential" in result.stdout
 
 
+@pytest.mark.parametrize(
+    "arguments", [["--edit"], ["-", "--edit"], ["--edit", "--receipt", "receipt.json"]]
+)
+def test_visualize_editor_requires_unapplied_file(arguments) -> None:
+    result = runner.invoke(app, ["visualize", *arguments, "--no-open"])
+    assert result.exit_code != 0
+    assert "--edit requires a file-backed plan" in result.stderr
+
+
+def test_visualize_editor_opt_in_stays_offline_and_reloads_saved_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "review.json"
+    write_plan(path)
+    calls = {}
+
+    class FakeServer:
+        url = "http://127.0.0.1:1234/session/"
+
+        def __init__(self, **kwargs):
+            calls.update(kwargs)
+
+        def serve_forever(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(cli_module, "VisualizerServer", FakeServer)
+    monkeypatch.setattr(
+        cli_module, "_build_client", lambda *_: pytest.fail("editor must stay offline")
+    )
+    result = runner.invoke(app, ["visualize", str(path), "--edit", "--no-open"])
+    assert result.exit_code == 0, result.stdout
+    assert calls["allow_edit"] is True
+    assert calls["review_preflight"] is None
+    assert calls["review_apply"] is None
+    assert calls["plan_path"] == path
+    replacement = tmp_path / "replacement.json"
+    value = json.loads(path.read_bytes())
+    value["summary"] = "Saved replacement proposal"
+    replacement.write_text(json.dumps(value), encoding="utf-8")
+    assert calls["reload_plan"](replacement).plan.summary == "Saved replacement proposal"
+    assert calls["reload_visualization"]().plan.summary != "Saved replacement proposal"
+
+
 def test_visualize_no_open_and_missing_path_behavior(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
-from marvin_pilot.completion import completion_local_date
+from marvin_pilot.completion import completion_fields
 from marvin_pilot.field_registry import (
     FIELD_SPECS,
     compile_fields_for_target,
@@ -187,6 +186,9 @@ def compile_create(operation: CreateOperation, now_ms: int) -> CompiledMutation:
     """Compile a complete minimal task or project document with a caller-generated UUID."""
 
     after = operation.after.model_dump(exclude_unset=True, mode="json")
+    completed = (
+        completion_fields(operation.completedAt) if operation.completedAt is not None else {}
+    )
     if operation.target.type == "recurringTask":
         document: dict[str, Any] = {
             "_id": operation.target.id,
@@ -254,7 +256,7 @@ def compile_create(operation: CreateOperation, now_ms: int) -> CompiledMutation:
     for plan_field, plan_value in after.items():
         marvin_field, marvin_value = compile_plan_field(plan_field, plan_value)
         if plan_field == "subtasks":
-            marvin_value = _merge_subtasks(plan_value, None, now_ms=now_ms)
+            marvin_value = _merge_subtasks(plan_value, None, now_ms=completed.get("doneAt", now_ms))
         if is_project and plan_field == "scheduledDate" and plan_value is None:
             marvin_value = None
         document[marvin_field] = marvin_value
@@ -262,6 +264,8 @@ def compile_create(operation: CreateOperation, now_ms: int) -> CompiledMutation:
     if after.get("scheduledDate") is not None:
         document["firstScheduled"] = after["scheduledDate"]
         field_updates["firstScheduled"] = now_ms
+    document.update(completed)
+    field_updates.update(dict.fromkeys(completed, now_ms))
     document["fieldUpdates"] = field_updates
     desired = {
         key: value for key, value in document.items() if key not in {"fieldUpdates", "updatedAt"}
@@ -282,38 +286,13 @@ def compile_complete(
 ) -> CompiledMutation:
     """Compile a backdate-capable completion for a task or project."""
 
-    candidate = (
-        operation.completedAt[:-1] + "+00:00"
-        if operation.completedAt.endswith("Z")
-        else operation.completedAt
-    )
-    completed = datetime.fromisoformat(candidate)
-    completed_ms = int(completed.timestamp() * 1_000)
-    completion_day = completion_local_date(operation.completedAt)
-    desired: dict[str, Any] = {
-        "done": True,
-        "doneAt": completed_ms,
-        "day": completion_day,
-    }
-    setters = [
-        {"key": "done", "val": True},
-        {"key": "fieldUpdates.done", "val": now_ms},
-        {"key": "doneAt", "val": completed_ms},
-        {"key": "fieldUpdates.doneAt", "val": now_ms},
-        {"key": "day", "val": completion_day},
-        {"key": "fieldUpdates.day", "val": now_ms},
-    ]
-    touched_fields = ["done", "doneAt", "day"]
-    if operation.target.type == "project":
-        done_date = completion_day
-        desired["doneDate"] = done_date
+    desired = completion_fields(operation.completedAt, project=operation.target.type == "project")
+    setters = []
+    for field, value in desired.items():
         setters.extend(
-            [
-                {"key": "doneDate", "val": done_date},
-                {"key": "fieldUpdates.doneDate", "val": now_ms},
-            ]
+            [{"key": field, "val": value}, {"key": f"fieldUpdates.{field}", "val": now_ms}]
         )
-        touched_fields.append("doneDate")
+    touched_fields = list(desired)
     setters.append({"key": "updatedAt", "val": now_ms})
     return CompiledMutation(
         operation_id=operation.operationId,

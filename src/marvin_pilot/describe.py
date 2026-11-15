@@ -143,6 +143,12 @@ def render_plan_description(plan: ChangePlanV1) -> str:
             for field, new_value in after.items():
                 lines.append(f"   {FIELD_LABELS[field]}: {format_plan_value(field, new_value)}")
             lines.extend(_accepted_source_loss_lines(after))
+            if operation.completedAt is not None:
+                lines.append(f"   created completed at: {operation.completedAt}")
+                lines.append(
+                    f"   completion history day: {completion_local_date(operation.completedAt)}"
+                    " (assigned)"
+                )
         elif isinstance(operation, CompleteOperation):
             lines.append(f"   completed at: {operation.completedAt}")
             if operation.repairHistory:
@@ -201,6 +207,13 @@ def plan_description_payload(plan: ChangePlanV1) -> dict[str, Any]:
                 )
         elif isinstance(operation, CreateOperation):
             value["after"] = operation.after.model_dump(exclude_unset=True, mode="json")
+            if operation.completedAt is not None:
+                value["completedAt"] = operation.completedAt
+                value["completionDay"] = {
+                    "before": None,
+                    "after": completion_local_date(operation.completedAt),
+                    "behavior": "assigned",
+                }
         elif isinstance(operation, CompleteOperation):
             value["completedAt"] = operation.completedAt
             value["repairHistory"] = operation.repairHistory

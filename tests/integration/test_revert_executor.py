@@ -4,6 +4,7 @@ import copy
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -19,7 +20,8 @@ from marvin_pilot.errors import (
 from marvin_pilot.examples import EXAMPLE_PLAN
 from marvin_pilot.executor import execute_apply
 from marvin_pilot.history import HistoryStore
-from marvin_pilot.plan_io import parse_plan_bytes
+from marvin_pilot.plan_io import canonical_plan_bytes, parse_plan_bytes
+from marvin_pilot.prepare import SnapshotReader, parse_draft_bytes, prepare_draft, rebase_plan_live
 from marvin_pilot.reverter import execute_revert, preflight_revert
 
 APPLY_MS = 1_786_233_600_123
@@ -38,6 +40,9 @@ class Clock:
 
 class InMemoryMarvin:
     api_base_host = "https://marvin.test"
+
+    def check_connection(self):
+        return SimpleNamespace(account_user_id="123456", account_email="pilot@example.com")
 
     def __init__(self, documents: dict[str, dict[str, Any]]) -> None:
         self.documents = copy.deepcopy(documents)
@@ -310,7 +315,10 @@ def test_project_completion_history_repair_stays_completed_and_reverts(tmp_path:
     assert client.documents[project_id]["doneDate"] == "2026-07-18"
 
 
-def test_ordered_same_document_chain_applies_and_reverts_as_one_plan(tmp_path: Path) -> None:
+@pytest.mark.parametrize("authoring_route", ["plan", "draft", "refreshed-draft"])
+def test_ordered_same_document_chain_applies_and_reverts_as_one_plan(
+    tmp_path: Path, authoring_route: str
+) -> None:
     task_id = "ordered-chain-task"
     original = {
         "_id": task_id,
@@ -365,8 +373,34 @@ def test_ordered_same_document_chain_applies_and_reverts_as_one_plan(tmp_path: P
             },
         ],
     }
-    raw = json.dumps(value).encode()
     client = InMemoryMarvin({task_id: original})
+    if authoring_route != "plan":
+        operations = copy.deepcopy(value["operations"])
+        for operation in operations:
+            operation.pop("before", None)
+            operation.pop("expectedUpdatedAt", None)
+        draft = parse_draft_bytes(
+            json.dumps(
+                {
+                    "draftVersion": 1,
+                    "expectedAccount": {"userId": "123456", "email": "pilot@example.com"},
+                    "summary": value["summary"],
+                    "operations": operations,
+                }
+            ).encode()
+        )
+        authoring_ms = int(datetime.fromisoformat(value["createdAt"]).timestamp() * 1000)
+        prepared = prepare_draft(draft, SnapshotReader([], live=client), now_ms=authoring_ms)
+        if authoring_route == "refreshed-draft":
+            prepared = rebase_plan_live(
+                prepared,
+                SnapshotReader([], live=client),
+                account_reader=client,
+                now_ms=authoring_ms + 1000,
+            )
+        raw = canonical_plan_bytes(prepared)
+    else:
+        raw = json.dumps(value).encode()
     clock = Clock()
 
     source = execute_apply(
@@ -1035,3 +1069,144 @@ def test_success_without_state_change_is_recorded_unknown(tmp_path: Path, docume
         )
     receipt = HistoryStore(tmp_path).load(next(tmp_path.glob("partial-revert-*.json")))
     assert receipt.operations[0].status == "unknown"
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+def test_completed_create_receipt_history_and_exact_revert(tmp_path: Path, timeout: bool) -> None:
+    from marvin_pilot.history_status import audit_receipt_live
+
+    value = copy.deepcopy(EXAMPLE_PLAN)
+    value["operations"] = [value["operations"][2]]
+    operation = value["operations"][0]
+    operation["after"].pop("scheduledDate", None)
+    operation["completedAt"] = "2026-08-07T23:30:00-07:00"
+    raw = json.dumps(value).encode()
+    plan = parse_plan_bytes(raw)
+    client = InMemoryMarvin({})
+    if timeout:
+        client.timeout_modes[operation["target"]["id"]] = "apply-then-timeout"
+    clock = Clock()
+    result = execute_apply(
+        plan,
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _: True,
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+    entry = result.receipt.operations[0]
+    assert entry.completionHistory.documentDayVerified is True
+    assert entry.completionHistory.expectedDay == "2026-08-07"
+    assert entry.afterDocument["done"] is True
+    assert len(client.mutations) == 1
+    audit = audit_receipt_live(result.receipt, client)
+    assert audit[0]["completionHistory"]["expectedDay"] == "2026-08-07"
+    client.timeout_modes.clear()
+    revert_fixture(tmp_path, client, result, clock)
+    assert client.documents == {}
+
+
+def test_completed_create_revert_refuses_later_edit(tmp_path: Path) -> None:
+    value = copy.deepcopy(EXAMPLE_PLAN)
+    value["operations"] = [value["operations"][2]]
+    operation = value["operations"][0]
+    operation["after"].pop("scheduledDate", None)
+    operation["completedAt"] = "2026-08-07T23:30:00-07:00"
+    raw = json.dumps(value).encode()
+    client = InMemoryMarvin({})
+    clock = Clock()
+    result = execute_apply(
+        parse_plan_bytes(raw),
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _: True,
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+    client.documents[operation["target"]["id"]]["title"] = "Later human edit"
+    client.mutations.clear()
+    with pytest.raises(LivePreconditionError):
+        revert_fixture(tmp_path, client, result, clock)
+    assert client.mutations == []
+
+
+def test_revised_completed_create_applies_and_reverts_with_original_unchanged(
+    tmp_path: Path,
+) -> None:
+    from marvin_pilot.plan_revision import revise_plan
+
+    value = copy.deepcopy(EXAMPLE_PLAN)
+    value["operations"] = [value["operations"][2]]
+    operation = value["operations"][0]
+    operation["after"].pop("scheduledDate", None)
+    operation["completedAt"] = "2026-08-07T23:30:00-07:00"
+    source = parse_plan_bytes(json.dumps(value).encode())
+    original = canonical_plan_bytes(source)
+    revised = revise_plan(
+        source,
+        [
+            {
+                "operationId": operation["operationId"],
+                "title": "Reviewed finished work",
+                "completedAt": "2026-08-06T18:00:00-07:00",
+            }
+        ],
+    )
+    client = InMemoryMarvin({})
+    clock = Clock()
+    result = execute_apply(
+        revised,
+        canonical_plan_bytes(revised),
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _: True,
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+    assert result.receipt.planId == revised.planId
+    assert result.receipt.sourcePlan["planId"] == revised.planId
+    assert client.documents[operation["target"]["id"]]["title"] == "Reviewed finished work"
+    assert client.documents[operation["target"]["id"]]["day"] == "2026-08-06"
+    revert_fixture(tmp_path, client, result, clock)
+    assert client.documents == {}
+    assert canonical_plan_bytes(source) == original
+
+
+@pytest.mark.parametrize(
+    "change", ["initial-revision", "later-revision", "title", "metadata", "known-revision"]
+)
+def test_create_revert_allows_only_late_initial_revision(tmp_path: Path, change: str) -> None:
+    client = InMemoryMarvin({})
+    clock = Clock()
+    value = copy.deepcopy(EXAMPLE_PLAN)
+    value["operations"] = [value["operations"][2]]
+    raw = json.dumps(value).encode()
+    result = execute_apply(
+        parse_plan_bytes(raw),
+        raw,
+        client=client,
+        history=HistoryStore(tmp_path, now=clock),
+        approve=lambda _: True,
+        now_ms=lambda: APPLY_MS,
+        wall_clock=clock,
+    )
+    entry = result.receipt.operations[0]
+    client.documents[entry.targetId]["_rev"] = "1-" + "a" * 32
+    if change != "known-revision":
+        entry.afterDocument.pop("_rev")
+    if change == "later-revision":
+        client.documents[entry.targetId]["_rev"] = "2-" + "a" * 32
+    elif change == "title":
+        client.documents[entry.targetId]["title"] = "A human changed this"
+    elif change == "metadata":
+        client.documents[entry.targetId]["updatedAt"] += 1
+    client.mutations.clear()
+    if change == "initial-revision":
+        revert_fixture(tmp_path, client, result, clock)
+        assert client.documents == {}
+    else:
+        with pytest.raises(LivePreconditionError, match="changed after apply"):
+            revert_fixture(tmp_path, client, result, clock)
+        assert client.mutations == []

@@ -284,7 +284,7 @@ marvin-pilot apply plans/first-plan.json
 Marvin Pilot shows a compact preflight progress bar with the current operation ID, then presents a
 color-enhanced terminal review. Every operation has a textual `CREATE`, `UPDATE`, `COMPLETE`, or
 `TRASH` label; a distinct task, project, recurring-series, or occurrence marker; target and
-operation IDs; Marvin hierarchy; and an exact Now/After field table. Marvin emoji and `#RRGGBB`
+operation IDs; Marvin hierarchy; and an exact current/after field table. Marvin emoji and `#RRGGBB`
 metadata are used when supplied by the plan or live document. Color chips automatically choose
 black or white text for WCAG contrast, and textual labels plus encoding-safe fallbacks keep all
 meaning available in monochrome, redirected, and legacy Windows terminals.
@@ -565,9 +565,13 @@ Explicit `display.beforePath`/`display.afterPath` values—including an explicit
 over backup inference. Use a current backup: an item absent from the snapshot remains visibly
 unresolved rather than being guessed.
 
-The default **Preview** renders Marvin-like **Now** and **After (preview)** hierarchies. With a
+The default **Preview** renders Marvin-like **Current state** and **After applying** hierarchies. Proposed
+badges name actions: **Create**, **Rename**, **Move**, **Reschedule**, **Edit**, **Mark done**,
+and **Delete**. They do not imply a later scheduled action. Delete is the display name for the
+existing receipt-backed `trash` operation, not a move into Marvin's native Trash. With a
 verified `--receipt`, those labels become **Before** and **Applied result**, and the status badge
-identifies the receipt-backed view. Inbox, categories, projects, tasks, recurrence definitions,
+identifies the receipt-backed view; item badges describe past changes, such as **Completed**
+and **Deleted**. Inbox, categories, projects, tasks, recurrence definitions,
 occurrences, and subtasks have distinct Marvin-like visual treatment; projects visibly support
 create, rename, move, schedule, complete, and Trash transitions. A generated occurrence keeps its
 task circle and shows a compact recurrence-loop icon on the right, while a recurrence definition
@@ -584,7 +588,7 @@ within each pane, and single-state views provide the full content width.
 
 Use **Day sections: Show/Hide** to layer explicit Today-list groupings over the hierarchy. Day
 sections such as Waiting or Main are visually distinct from categories and projects. Switch to
-**Changes** for an aligned operation diff grouped by typed After location, Now location, plan order,
+**Changes** for an aligned operation diff grouped by typed After location, current location, plan order,
 or supplied Today section. Uneven before/after cards keep their natural heights, so a short loose
 task is not stretched to match a long checklist. Consolidated subtasks use a compact **From source
 task** chip; its tooltip retains the full source title and ID without squeezing the subtask title.
@@ -650,6 +654,23 @@ An update can express stable relative ordering with `siblingOrder: {"beforeId":"
 compatible sibling on the task's final scheduled day or under its final parent, then writes Marvin's
 native rank. Revert restores the original rank. Raw rank edits and `siblingOrder` cannot be mixed.
 
+Place `siblingOrder` on the operation, outside `after`. An order-only **draft** can omit `after`:
+
+```json
+{
+  "operationId": "order-project",
+  "action": "update",
+  "target": {"type": "project", "id": "project-a-id"},
+  "reason": "Put Project A after Project B.",
+  "siblingOrder": {"afterId": "project-b-id"}
+}
+```
+
+The same clause works for tasks (for example `{"position":"first"}`). `prepare` emits explicit
+`before: {}` and `after: {}` in the full plan. Full plans still require those objects. Do not send
+native `rank` or put `siblingOrder` inside `after`; existing supported raw task `dayRank` and
+`masterRank` edits remain available when relative ordering is not used.
+
 Reminder records are separate coupled server state. Pilot does not currently mutate or promise to
 preserve them, so live preflight blocks affected documents with an explicit instruction to remove
 and recreate the reminder in Marvin or make that change by hand. Calendar synchronization,
@@ -663,6 +684,66 @@ Trash is terminal. Live validation projects each successful intermediate state, 
 hierarchy checks see the planned rename/move rather than stale live state. Apply and reverse-order
 revert replace projected revisions with the actual revision read after every write, retaining
 strict concurrency protection throughout the chain.
+### Revising a proposal in the visualizer
+
+Run `marvin-pilot visualize PLAN.json --edit` for an unapplied, file-backed single plan.
+The default visualizer remains read-only. Editing does not load credentials, refresh locks,
+or write Marvin data. `--allow-apply` is a separate opt-in and can be combined with `--edit`.
+
+1. Click a task/project title or subtask directly in **After**, then edit its text.
+   The **Current state** side, action badges, completion states and date/parent controls are read-only.
+   There are no add/delete-subtask or exclude-operation controls. Enter finishes the field;
+   Escape restores that field's original text. Pasted content is plain text.
+   Edited titles tint the full task/project card; edited subtasks tint only their own row.
+   Edits save automatically after a short typing pause or when you leave the field. A compact
+   status shows **Saving edits…**, **Saved for AI**, or a save error. No Save button is needed.
+2. You may type Marvin syntax, for example `Write the launch-page copy +4d due Nov 30`.
+   The browser does not parse, execute or silently put these tokens into an executable plan.
+3. Pilot autosaves `PLAN.text-review-DIGEST.json` beside the source, shared by every tab and
+   local visualizer process viewing that exact source plan. Only the title or subtask you
+   changed is patched: editing task A in one tab and task B in another retains both edits.
+   The last save to the same field wins, including a deliberate edit from an older tab.
+   Open tabs pick up saved changes automatically, without replacing the field you are typing
+   in. A new tab or restarted visualizer loads the saved edits. Escape restores only that
+   field's original text; it never discards another field's edits. Uncertain network responses
+   are retried idempotently, so an old retry cannot undo a newer tab's save. Closing with
+   unsaved text prompts you; wait for **Saved for AI** before leaving. Errors are visible and
+   unsaved text is retained in the tab, not silently dropped or stored in browser storage.
+   This is a text-feedback document, **not a plan**. It retains source plan ID/digest,
+   operation ID, target ID/type/action, optional subtask ID, original/new text, server timestamp
+   and per-field browser-reported local date/time zone. The source plan, locks and checklist states stay
+   unchanged. Treat the feedback file as private task data.
+4. The AI reads the feedback and exact source plan, reconciles wording and supported syntax,
+   and generates a separately validated plan for a **second visualize/review round**. Resolve
+   relative dates against the recorded context, checking year/time zone and asking if genuinely
+   ambiguous. For a November 11, 2026 reference, `+4d due Nov 30` becomes scheduled November 15
+   and due November 30, 2026; the next preview shows the structured date fields without tokens
+   left in the title. Use exact IDs, not fuzzy title matching. Preserve action types, task/subtask
+   membership and completion states unless Raj separately authorizes a structural/state change.
+
+Apply approval is invalidated when text editing begins. Pending text feedback keeps browser Apply
+disabled across tabs and local servers; autosaving or reloading is not applying or AI approval.
+Saved feedback remains on disk for the AI. Restoring every edited field to its source text removes
+the pending feedback, but requires a fresh browser preflight before any apply. A fresh
+reconciled plan still needs normal offline/live validation and explicit authorized apply.
+Undoing an already-applied plan still uses its recovery receipt and `revert`.
+
+If a watched source/context file changes during editing, saving is blocked. Copy any unsaved
+text before reloading and reviewing the latest file. Edits are pinned to the exact source digest;
+a revised plan does not inherit another plan's feedback. Editing is unavailable for uploads, stdin, plan sets, or receipt-backed
+applied views. Stable target IDs, account pins, original before-values, and concurrency locks are
+retained. The AI must update dependent title references/hierarchy in its reconciled plan; the
+feedback UI deliberately does not project structural interpretations while you type.
+
+For finished-work capture, an ordinary task `create` supports an optional operation-level
+`completedAt` timestamp (RFC 3339 with an explicit offset, no later than `createdAt`). It writes
+`done`, historical `doneAt`, and the local completion-history day in one create request. Omit
+`scheduledDate` or set it to that same day; a conflicting day or explicit null is rejected.
+Checked subtasks use the parent's historical timestamp; unchecked subtasks remain unchecked.
+This is not supported for projects, categories, recurrence definitions, or `sourceTask`
+consolidation. Review, receipt audit, and conflict-aware revert cover the completed create just
+like any other create; a create plus its subtasks still counts toward the normal impact limit.
+
 Changes to a newly created item must stay coalesced in its single `create` operation; an immediate
 create-then-complete/Trash sequence is rejected as an avoidable or contradictory lifecycle.
 

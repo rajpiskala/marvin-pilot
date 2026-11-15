@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
 
 from marvin_pilot.errors import LivePreconditionError, PlanSemanticError, PlanSyntaxError
+from marvin_pilot.plan_io import canonical_plan_bytes, parse_plan_bytes
 from marvin_pilot.prepare import SnapshotReader, parse_draft_bytes, prepare_draft, rebase_plan_live
 
 NOW_MS = 1_788_550_400_000
@@ -88,10 +90,121 @@ def test_prepare_fills_identity_before_lock_uuid_and_paths() -> None:
     assert [node.title for node in create.display.afterPath] == ["Work", "New project"]
 
 
+@pytest.mark.parametrize("target_type", ["task", "project"])
+@pytest.mark.parametrize("live", [False, True])
+def test_prepare_and_refresh_chain_lock_only_initial_state(target_type: str, live: bool) -> None:
+    source = documents()
+    identifier = "task-1" if target_type == "task" else "project-1"
+    original = next(item for item in source if item["_id"] == identifier)
+    original.update(updatedAt=42, done=False, day="2026-09-01")
+
+    class Reader(AccountReader):
+        def get_doc(self, item_id):
+            return deepcopy(next((item for item in source if item["_id"] == item_id), None))
+
+    def snapshot():
+        return SnapshotReader(source, live=Reader() if live else None)
+
+    value = draft_value()
+    value["operations"] = [
+        {
+            "operationId": "rename-item",
+            "action": "update",
+            "target": {"type": target_type, "id": identifier},
+            "after": {"title": "Final outcome"},
+            "reason": "Use the final title.",
+        },
+        {
+            "operationId": "complete-item",
+            "action": "complete",
+            "target": {"type": target_type, "id": identifier, "title": "Final outcome"},
+            "dependsOnOperations": ["rename-item"],
+            "completedAt": "2026-09-04T10:55:00-07:00",
+            "reason": "Record completion.",
+        },
+    ]
+    prepared = prepare_draft(
+        parse_draft_bytes(json.dumps(value).encode()), snapshot(), now_ms=NOW_MS
+    )
+    assert prepared.operations[0].expectedUpdatedAt == 42
+    assert "expectedUpdatedAt" not in prepared.operations[1].model_fields_set
+    original["updatedAt"] = 99
+    refreshed = rebase_plan_live(
+        prepared, snapshot(), account_reader=Reader(), now_ms=NOW_MS + 1000
+    )
+    assert refreshed.operations[0].expectedUpdatedAt == 99
+    assert "expectedUpdatedAt" not in refreshed.operations[1].model_fields_set
+    assert refreshed.operations[1].target.title == "Final outcome"
+    assert refreshed.operations[1].completionDay.before == "2026-09-01"
+    assert parse_plan_bytes(canonical_plan_bytes(refreshed)) == refreshed
+    original["title"] = "External rename"
+    with pytest.raises(LivePreconditionError, match="semantic review"):
+        rebase_plan_live(prepared, snapshot(), account_reader=Reader(), now_ms=NOW_MS + 2000)
+
+
+def test_refresh_projects_created_parent_for_later_child_metadata() -> None:
+    value = draft_value()
+    parent_id = "11111111-1111-4111-8111-111111111111"
+    value["operations"] = [
+        {
+            "operationId": "create-parent",
+            "action": "create",
+            "target": {"type": "project", "id": parent_id},
+            "after": {"title": "Created parent", "parent": {"id": "work"}},
+            "reason": "Create the destination.",
+        },
+        {
+            "operationId": "move-child",
+            "action": "update",
+            "target": {"type": "task", "id": "task-1"},
+            "after": {"parent": {"id": parent_id}},
+            "dependsOnOperations": ["create-parent"],
+            "reason": "Move into the destination.",
+        },
+    ]
+    prepared = prepare_draft(
+        parse_draft_bytes(json.dumps(value).encode()), SnapshotReader(documents()), now_ms=NOW_MS
+    )
+    refreshed = rebase_plan_live(
+        prepared, SnapshotReader(documents()), account_reader=AccountReader(), now_ms=NOW_MS + 1000
+    )
+    assert refreshed.operations[1].display.afterPath[-1].title == "Created parent"
+
+
 def test_prepare_is_closed_and_never_infers_missing_desired_fields() -> None:
     value = draft_value()
     value["operations"][0]["maybeDate"] = "tomorrow"
     with pytest.raises(PlanSyntaxError, match="Extra inputs are not permitted"):
+        parse_draft_bytes(json.dumps(value).encode())
+
+
+def test_order_only_draft_expands_to_explicit_empty_before_and_after() -> None:
+    value = draft_value()
+    value["operations"] = [
+        {
+            "operationId": "order-project",
+            "action": "update",
+            "target": {"type": "project", "id": "project-1"},
+            "siblingOrder": {"position": "first"},
+            "reason": "Put this project first.",
+        }
+    ]
+    plan = prepare_draft(
+        parse_draft_bytes(json.dumps(value).encode()), SnapshotReader(documents()), now_ms=NOW_MS
+    )
+    operation = json.loads(canonical_plan_bytes(plan))["operations"][0]
+    assert operation["before"] == operation["after"] == {}
+    assert operation["siblingOrder"] == {"position": "first"}
+    value["operations"][0].pop("siblingOrder")
+    with pytest.raises(PlanSyntaxError, match="requires after fields"):
+        parse_draft_bytes(json.dumps(value).encode())
+
+
+@pytest.mark.parametrize("field", ["rank", "siblingOrder"])
+def test_misplaced_draft_ordering_points_to_operation_clause(field: str) -> None:
+    value = draft_value()
+    value["operations"][0]["after"] = {field: 3 if field == "rank" else {"position": "first"}}
+    with pytest.raises(PlanSyntaxError, match="operation-level siblingOrder"):
         parse_draft_bytes(json.dumps(value).encode())
 
 
@@ -110,6 +223,47 @@ def test_rebase_refreshes_only_lock_metadata_when_before_still_matches() -> None
     assert rebased.operations[0].expectedUpdatedAt == 99
     assert rebased.operations[0].before == plan.operations[0].before
     assert rebased.operations[0].after == plan.operations[0].after
+
+
+@pytest.mark.parametrize(
+    ("field", "native", "value"),
+    [
+        ("dueDate", "dueDate", "2026-09-04"),
+        ("scheduledDate", "day", "2026-09-04"),
+        ("note", "note", "A reviewed note"),
+    ],
+)
+@pytest.mark.parametrize("clear", [False, True])
+def test_rebase_preserves_explicit_null_before_and_after_values(
+    field: str, native: str, value: str, clear: bool
+) -> None:
+    source = documents()
+    source[-1][native] = value if clear else None
+    intent = draft_value()
+    intent["operations"] = [
+        {
+            "operationId": "change-field",
+            "action": "update",
+            "target": {"type": "task", "id": "task-1"},
+            "after": {field: None if clear else value},
+            "reason": "Retain an explicit clear.",
+        }
+    ]
+    original = prepare_draft(
+        parse_draft_bytes(json.dumps(intent).encode()), SnapshotReader(source), now_ms=NOW_MS
+    )
+    original_bytes = canonical_plan_bytes(original)
+    refreshed = rebase_plan_live(
+        original, SnapshotReader(source), account_reader=AccountReader(), now_ms=NOW_MS + 1000
+    )
+    assert canonical_plan_bytes(original) == original_bytes
+    assert refreshed.operations[0].before.model_dump(exclude_unset=True) == {
+        field: value if clear else None
+    }
+    assert refreshed.operations[0].after.model_dump(exclude_unset=True) == {
+        field: None if clear else value
+    }
+    assert refreshed.planId != original.planId
 
 
 def test_rebase_stops_when_reviewed_before_state_drifted() -> None:

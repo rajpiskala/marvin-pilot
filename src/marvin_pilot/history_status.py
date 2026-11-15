@@ -168,8 +168,14 @@ def audit_receipt_live(receipt: ReceiptV1, reader: Any) -> list[dict[str, Any]]:
             "detail": detail,
         }
         source_operation = source_operations.get(operation.operationId, {})
+        planned_completed_at = source_operation.get("completedAt")
+        if not isinstance(planned_completed_at, str):
+            planned_completed_at = (operation.plannedAfter or {}).get("completedAt")
         if (
-            operation.action == "complete"
+            (
+                operation.action == "complete"
+                or (operation.action == "create" and isinstance(planned_completed_at, str))
+            )
             and operation.targetType in {"task", "project"}
             and document is not None
         ):
@@ -179,9 +185,6 @@ def audit_receipt_live(receipt: ReceiptV1, reader: Any) -> list[dict[str, Any]]:
                 if isinstance(target, dict) and isinstance(target.get("recurrence"), dict)
                 else None
             )
-            planned_completed_at = source_operation.get("completedAt")
-            if not isinstance(planned_completed_at, str):
-                planned_completed_at = (operation.plannedAfter or {}).get("completedAt")
             expected_day = (
                 completion_local_date(planned_completed_at)
                 if isinstance(planned_completed_at, str)

@@ -8,6 +8,14 @@ const THEMES = ["light", "dusk", "night"];
 const VIEWS = ["split", "before", "after"];
 const MODES = ["preview", "changes"];
 const ACTIONS = ["create", "update", "complete", "trash"];
+const PREVIEW_CHANGE_LABELS = {
+  created: "Create",
+  renamed: "Rename",
+  moved: "Move",
+  rescheduled: "Reschedule",
+  edited: "Edit",
+  updated: "Update",
+};
 const CHANGE_GROUPINGS = ["after", "before", "plan", "day"];
 const SELECTION_MODES = ["titles", "full"];
 const TITLE_DENSITIES = ["compact", "full"];
@@ -51,6 +59,21 @@ let currentPlan = null;
 let currentRevision = -1;
 let csrfToken = null;
 let canApplyReviewed = false;
+let canEditProposal = false;
+let textSaveBusy = false;
+let textVersion = -1;
+let textGeneration = 0;
+let textSequence = 0;
+let textSaveTimer = null;
+let textRequest = null;
+let textSaveError = "";
+let textReviewPath = null;
+let pollingCurrent = false;
+const textClientId = crypto.randomUUID();
+const pendingTextEdits = new Map();
+const savedTextEdits = new Map();
+let manualOperations = new Set();
+const proposalEdits = new Map();
 const visibleActions = new Set(ACTIONS);
 const collapsedHierarchyKeys = new Set();
 const expandedTitleKeys = new Set();
@@ -78,6 +101,9 @@ const elements = {
   accountRow: document.querySelector("#plan-account-row"),
   account: document.querySelector("#plan-account"),
   applyReviewed: document.querySelector("#apply-reviewed"),
+  editProposal: document.querySelector("#edit-proposal"),
+  editor: document.querySelector("#proposal-editor"),
+  editFeedback: document.querySelector("#edit-feedback"),
   applyFeedback: document.querySelector("#apply-feedback"),
   localGuarantee: document.querySelector("#local-guarantee"),
   footerReviewMode: document.querySelector("#footer-review-mode"),
@@ -105,7 +131,7 @@ function sideLabel(sideName) {
   if (currentPlan?.review_state === "applied") {
     return sideName === "before" ? "Before" : "Applied result";
   }
-  return sideName === "before" ? "Now" : "After (preview)";
+  return sideName === "before" ? "Current state" : "After applying";
 }
 
 function setTheme(theme, persist = true) {
@@ -384,6 +410,25 @@ function paletteClass(value) {
   return `palette-${hash % 6}`;
 }
 
+function actionBadgeText(action, changeKinds, sideName) {
+  const applied = currentPlan?.review_state === "applied";
+  if (action === "create" && changeKinds.includes("completed")) {
+    return applied ? "Created completed task" : "Create completed task";
+  }
+  if (action === "complete") {
+    const repair = changeKinds.includes("history repaired");
+    if (selectedMode !== "changes" && sideName === "before") return null;
+    if (applied) return repair ? "History repaired" : "Completed";
+    return repair ? "Repair history" : "Mark done";
+  }
+  if (action === "trash") {
+    return applied ? "Deleted" : "Delete";
+  }
+  return (changeKinds.length > 0 ? changeKinds : [action])
+    .map((kind) => applied ? kind : PREVIEW_CHANGE_LABELS[kind] || kind)
+    .join(" + ");
+}
+
 function renderCard(
   card,
   sideName,
@@ -397,6 +442,7 @@ function renderCard(
     recurrenceScheduledDate = null,
     completedAt = null,
     completionDay = null,
+    completionDayBefore = null,
     completionDayBehavior = null,
     targetChainPosition = 1,
     targetChainLength = 1,
@@ -430,12 +476,12 @@ function renderCard(
     taskLine.append(chain);
   }
   if (action) {
-    const badgeText = (changeKinds.length > 0 ? changeKinds : [action]).join(" + ");
-    const badge = node("span", `action-badge ${action}`, badgeText);
-    if (badgeTitle) {
-      badge.title = badgeTitle;
+    const badgeText = actionBadgeText(action, changeKinds, sideName);
+    if (badgeText) {
+      const badge = node("span", `action-badge ${action}`, badgeText);
+      if (badgeTitle) badge.title = badgeTitle;
+      taskLine.append(badge);
     }
-    taskLine.append(badge);
   }
   if (recurrenceScope) {
     taskLine.append(recurrenceMarker(recurrenceScope, recurrenceScheduledDate));
@@ -505,7 +551,10 @@ function renderCard(
       const historyDay = node(
         "time",
         "task-item completion-day",
-        `History ${completionDay}`,
+        completionDayBefore && completionDayBehavior === "replaced"
+          ? `History ${completionDayBefore} → ${completionDay}`
+          : completionDayBehavior === "assigned"
+            ? `History assigned ${completionDay}` : `History ${completionDay}`,
       );
       historyDay.dateTime = completionDay;
       historyDay.title = (
@@ -569,7 +618,7 @@ function completionTimestamp(operation, sideName) {
   if (operation.existing_completed_at) {
     return operation.existing_completed_at;
   }
-  return operation.action === "complete" && sideName === "after"
+  return sideName === "after"
     ? operation.completed_at
     : null;
 }
@@ -743,7 +792,7 @@ function renderOperationDetails(operation) {
   const locations = node("dl", "location-details");
   [
     [
-      "Now location",
+      "Current location",
       operation.before
         ? describePath(operation.before_path, operation.before_path_state)
         : "No before state",
@@ -755,7 +804,7 @@ function renderOperationDetails(operation) {
         : "No active after state",
     ],
     [
-      "Now day section",
+      "Current day section",
       operation.before ? describeDaySection(operation.before_day_section) : "No before state",
     ],
     [
@@ -829,6 +878,7 @@ function renderStateOperation(operation, sideName) {
       recurrenceScheduledDate: operation.recurrence_scheduled_date,
       completedAt: completionTimestamp(operation, sideName),
       completionDay: operation.completion_day_after,
+      completionDayBefore: operation.completion_day_before,
       completionDayBehavior: operation.completion_day_behavior,
       targetChainPosition: operation.target_chain_position,
       targetChainLength: operation.target_chain_length,
@@ -850,6 +900,7 @@ function renderDiffCell(operation, sideName) {
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt: completionTimestamp(operation, sideName),
         completionDay: operation.completion_day_after,
+        completionDayBefore: operation.completion_day_before,
         completionDayBehavior: operation.completion_day_behavior,
         targetChainPosition: operation.target_chain_position,
         targetChainLength: operation.target_chain_length,
@@ -993,7 +1044,7 @@ function renderChangeGroupHeader(group) {
   const label = selectedChangeGrouping === "day"
     ? "Today section"
     : selectedChangeGrouping === "before"
-      ? "Now location"
+      ? "Current location"
       : selectedChangeGrouping === "after"
         ? "After location"
         : "Review sequence";
@@ -1175,13 +1226,14 @@ function renderHierarchyNode(item, sideName, operations, depth = 0) {
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt,
         completionDay: operation.completion_day_after,
+        completionDayBefore: operation.completion_day_before,
         completionDayBehavior: operation.completion_day_behavior,
         targetChainPosition: operation.target_chain_position,
         targetChainLength: operation.target_chain_length,
       }),
       renderOperationDetails(operation),
     );
-    if (operation.action === "complete" && sideName === "after") {
+    if (completedAt && sideName === "after") {
       content.classList.add("terminal-complete");
     }
     row.append(content);
@@ -1334,6 +1386,7 @@ function renderComparisonSide(operation, sideName) {
         recurrenceScheduledDate: operation.recurrence_scheduled_date,
         completedAt: completionTimestamp(operation, sideName),
         completionDay: operation.completion_day_after,
+        completionDayBefore: operation.completion_day_before,
         completionDayBehavior: operation.completion_day_behavior,
         targetChainPosition: operation.target_chain_position,
         targetChainLength: operation.target_chain_length,
@@ -1367,7 +1420,10 @@ function updateJumpDirections() {
     );
     if (!operation?.[sideName]) {
       button.disabled = true;
-      button.textContent = `No ${sideLabel(sideName)} state`;
+      const state = sideName === "before"
+        ? currentPlan?.review_state === "applied" ? "before" : "current"
+        : "after";
+      button.textContent = `No ${state} state`;
       return;
     }
     button.disabled = false;
@@ -1524,7 +1580,7 @@ function selectedTitleText(selection) {
         return false;
       }
     }))
-    .map((title) => title.dataset.copyTitle)
+    .map((title) => title.dataset.textEditKey ? title.textContent : title.dataset.copyTitle)
     .filter(Boolean)
     .join("\n");
 }
@@ -1618,6 +1674,8 @@ function renderSections({ mode = selectedMode, preserveView = true } = {}) {
     );
   });
   renderComparisonTray();
+  markManualEdits();
+  wireAfterTextEditors();
   if (state) restoreSectionState(state);
 }
 
@@ -1636,6 +1694,8 @@ function renderPlan(plan, { preserveState = false } = {}) {
   syncDaySectionToggle();
   elements.summary.textContent = plan.summary;
   const applied = plan.review_state === "applied";
+  document.querySelector('[data-view-choice="before"]').textContent = applied
+    ? "Before only" : "Current state only";
   elements.sections.dataset.reviewState = applied ? "applied" : "preview";
   elements.reviewStatus.className = `status-badge ${applied ? "applied" : "preview"}`;
   elements.reviewStatus.textContent = applied
@@ -1681,6 +1741,14 @@ function syncReviewMetadata(result) {
   currentRevision = result.revision;
   csrfToken = result.csrf;
   canApplyReviewed = Boolean(result.can_apply);
+  canEditProposal = Boolean(result.can_edit) && !result.editing;
+  if (Array.isArray(result.text_edits)) acceptTextState({
+    version: result.text_version, edits: result.text_edits, path: result.text_review_path,
+  });
+  elements.editProposal.hidden = true; // Click After text; no separate operation picker.
+  elements.openAnother.disabled = Boolean(result.editing);
+  manualOperations = new Set(result.edited_operations || []);
+  markManualEdits();
   elements.applyReviewed.hidden = !canApplyReviewed;
   elements.sourceRow.hidden = !result.source_path;
   elements.sourcePath.textContent = result.source_path || "";
@@ -1694,11 +1762,19 @@ function syncReviewMetadata(result) {
     ? "Local review with opt-in apply" : "Read-only local review";
   elements.footerCredentialState.textContent = canApplyReviewed
     ? "Credential loads only for preflight/apply" : "No credential loaded";
+  if (result.editing) {
+    elements.reviewStatus.textContent = "Legacy edit session active — finish it before editing here";
+    elements.footerReviewMode.textContent = "Text-only proposal feedback";
+  } else if (result.can_edit && !canApplyReviewed) {
+    elements.footerReviewMode.textContent = "Local review with opt-in proposal editing";
+  }
   if (result.error) {
     showError(`Watched input could not reload: ${result.error}. The last good view remains visible.`);
   } else {
     clearError();
   }
+  updateTextEditSummary();
+  wireAfterTextEditors();
 }
 
 async function responseJson(response) {
@@ -1712,6 +1788,10 @@ async function responseJson(response) {
 async function loadFile(file) {
   clearError();
   if (!file) {
+    return;
+  }
+  if (pendingTextEdits.size || textRequest) {
+    showError("Wait for text edits to finish saving before opening another plan.");
     return;
   }
   if (file.size > MAX_PLAN_BYTES) {
@@ -1735,6 +1815,7 @@ async function loadFile(file) {
     if (!response.ok) {
       throw new Error(result.error?.message || `Plan validation failed (${response.status}).`);
     }
+    resetTextState();
     renderPlan(result.plan);
     syncReviewMetadata(result);
   } catch (error) {
@@ -1763,16 +1844,32 @@ async function loadCurrentPlan({ preserveState = false } = {}) {
 }
 
 async function pollCurrentPlan() {
+  if (pollingCurrent) return;
+  pollingCurrent = true;
   try {
     const response = await fetch("api/status", { headers: { Accept: "application/json" } });
     const status = await responseJson(response);
     if (!response.ok) return;
     if (status.revision !== currentRevision) {
+      if (pendingTextEdits.size || textRequest || document.activeElement?.isContentEditable) {
+        elements.errorPanel.hidden = false;
+        elements.errorMessage.textContent = "The source preview changed. Your text is kept here; copy any unsaved text before reloading.";
+        return;
+      }
+      resetTextState();
       await loadCurrentPlan({ preserveState: Boolean(currentPlan) });
+    } else {
+      canApplyReviewed = Boolean(status.can_apply);
+      if (status.text_version > textVersion) {
+        const saved = await fetch("api/text-state", { headers: { Accept: "application/json" } });
+        const result = await responseJson(saved);
+        if (!saved.ok) throw new Error(result.error?.message || "Could not read saved edits.");
+        if (result.source_digest === currentPlan?.digest) acceptTextState(result);
+      }
+      updateTextEditSummary();
     }
-  } catch (_error) {
-    // A foreground reload/apply reports actionable errors; background polling is quiet.
-  }
+  } catch (_error) { /* Autosave reports connection failures beside the edit status. */ }
+  finally { pollingCurrent = false; }
 }
 
 async function postReviewedAction(route, payload) {
@@ -1785,9 +1882,190 @@ async function postReviewedAction(route, payload) {
     body: JSON.stringify(payload),
   });
   const result = await responseJson(response);
-  if (!response.ok) throw new Error(result.error?.message || `${route} failed (${response.status}).`);
+  if (!response.ok) {
+    const error = new Error(result.error?.message || `${route} failed (${response.status}).`);
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }
+
+function planIdentity() {
+  return { revision: currentRevision, plan_id: currentPlan.plan_id, digest: currentPlan.digest };
+}
+
+function markManualEdits() {
+  elements.sections.querySelectorAll(".manual-edit-badge").forEach((badge) => badge.remove());
+  elements.sections.querySelectorAll(".hierarchy-pane-after .task-card, .diff-cell-after .task-card, .operation-row[data-side='after'] .task-card").forEach((card) => {
+    const id = card.closest("[data-operation-id]")?.dataset.operationId;
+    if (manualOperations.has(id)) {
+      card.append(node("span", "manual-edit-badge", "Proposal edited"));
+    }
+  });
+}
+
+function textEditKey(edit) {
+  return JSON.stringify([edit.operationId, edit.field, edit.subtaskId || null]);
+}
+
+function updateTextEditSummary() {
+  const unsaved = pendingTextEdits.size > 0 || Boolean(textRequest);
+  elements.editor.hidden = !unsaved && !proposalEdits.size && !textSaveError;
+  elements.editor.dataset.saveState = textSaveError ? "error" : unsaved ? "saving" : "saved";
+  elements.editFeedback.textContent = textSaveError
+    ? `Not saved: ${textSaveError}` : unsaved ? "Saving edits…" : "Saved for AI · Nothing applied";
+  elements.editFeedback.title = textReviewPath
+    ? `Feedback: ${textReviewPath}. The AI must reconcile these edits into a second preview.` : "";
+  elements.applyReviewed.hidden = !canApplyReviewed || unsaved || proposalEdits.size > 0;
+}
+
+function resetTextState() {
+  savedTextEdits.clear(); proposalEdits.clear();
+  textVersion = -1; textReviewPath = null; textSaveError = "";
+}
+
+function mergeTextEdits() {
+  proposalEdits.clear();
+  savedTextEdits.forEach((edit, key) => proposalEdits.set(key, edit));
+  pendingTextEdits.forEach(({ edit, original }, key) => {
+    if (edit.text === original) proposalEdits.delete(key);
+    else proposalEdits.set(key, edit);
+  });
+}
+
+function acceptTextState(state) {
+  if (state.version < textVersion) return;
+  textVersion = state.version;
+  textReviewPath = state.path;
+  savedTextEdits.clear();
+  (state.edits || []).forEach((edit) => savedTextEdits.set(textEditKey(edit), edit));
+  mergeTextEdits();
+  wireAfterTextEditors();
+  updateTextEditSummary();
+}
+
+function scheduleTextSave(delay = 300) {
+  window.clearTimeout(textSaveTimer);
+  textSaveTimer = window.setTimeout(flushTextEdits, delay);
+}
+
+async function flushTextEdits() {
+  if (textSaveBusy || !currentPlan) return;
+  if (!textRequest) {
+    const fields = [...pendingTextEdits.entries()].filter(([, value]) =>
+      value.edit.text.trim() && value.edit.text.length <= 4000);
+    if (!fields.length) { updateTextEditSummary(); return; }
+    const now = new Date();
+    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    textRequest = {
+      fields,
+      payload: {
+        identity: planIdentity(), clientId: textClientId, sequence: ++textSequence,
+        edits: fields.map(([, value]) => value.edit),
+        context: { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, localDate },
+      },
+    };
+  }
+  textSaveBusy = true;
+  updateTextEditSummary();
+  try {
+    const request = textRequest;
+    const result = await postReviewedAction("text-review-patch", request.payload);
+    request.fields.forEach(([key, value]) => {
+      if (pendingTextEdits.get(key)?.generation === value.generation) pendingTextEdits.delete(key);
+    });
+    textRequest = null;
+    textSaveError = "";
+    syncReviewMetadata(result);
+  } catch (error) {
+    textSaveError = error.message;
+    // An uncertain network response retries the identical request/sequence. Never replay
+    // an old edit as a new write over a newer tab's edit.
+    if (!error.status || error.status >= 500 || /busy/.test(error.message)) scheduleTextSave(1500);
+    else textRequest = null; // Invalid/stale requests need a correction, not an endless retry.
+  } finally {
+    textSaveBusy = false;
+    if (!textSaveError && pendingTextEdits.size) {
+      const invalid = [...pendingTextEdits.values()].some(({ edit }) => !edit.text.trim() || edit.text.length > 4000);
+      if (invalid) textSaveError = "Titles must contain 1–4000 characters. Your other edits are saved.";
+      else scheduleTextSave();
+    }
+    updateTextEditSummary();
+  }
+}
+
+function wireAfterTextEditors() {
+  const afterCards = elements.sections.querySelectorAll(
+    ".hierarchy-pane-after .task-card, .diff-cell-after .task-card, .operation-row[data-side='after'] .task-card",
+  );
+  afterCards.forEach((card) => {
+    const operationId = card.closest("[data-operation-id]")?.dataset.operationId;
+    const operation = currentPlan?.operations.find((op) => op.operation_id === operationId);
+    if (!operation || operation.action === "trash") return;
+    card.querySelectorAll(".task-title, .subtask-title").forEach((field) => {
+      const edit = { operationId, field: field.classList.contains("subtask-title") ? "subtaskTitle" : "title" };
+      if (edit.field === "subtaskTitle") edit.subtaskId = field.closest("[data-subtask-id]").dataset.subtaskId;
+      const key = textEditKey(edit);
+      if (!field.dataset.originalText) field.dataset.originalText = field.dataset.copyTitle || field.textContent;
+      const pending = proposalEdits.get(key);
+      const text = pending?.text ?? field.dataset.originalText;
+      if (field !== document.activeElement && field.textContent !== text) {
+        field.textContent = text;
+      }
+      field.classList.toggle("text-edited", field.textContent !== field.dataset.originalText);
+      field.contentEditable = String(canEditProposal);
+      field.dataset.textEditKey = key;
+      if (!canEditProposal || field.dataset.textEditBound) return;
+      field.dataset.textEditBound = "true";
+      field.setAttribute("role", "textbox");
+      field.setAttribute("aria-label", `Edit After ${edit.field === "title" ? "title" : "subtask"}: ${field.dataset.originalText}`);
+      field.setAttribute("aria-multiline", "false");
+      field.title = "Edits save automatically for AI reconciliation. Escape restores this field's original text. Nothing is applied here.";
+      field.addEventListener("click", (event) => event.stopPropagation());
+      const capture = () => {
+        const value = { ...edit, text: field.textContent };
+        pendingTextEdits.set(key, { edit: value, original: field.dataset.originalText, generation: ++textGeneration });
+        textSaveError = value.text.trim() && value.text.length <= 4000
+          ? "" : "Titles must contain 1–4000 characters. This field has not been saved.";
+        mergeTextEdits();
+        field.classList.toggle("text-edited", value.text !== field.dataset.originalText);
+        // Synchronize duplicate After renderings without replacing the focused field.
+        afterCards.forEach((other) => other.querySelectorAll("[data-text-edit-key]").forEach((node) => {
+          if (node !== field && node.dataset.textEditKey === key) node.textContent = value.text;
+        }));
+        updateTextEditSummary();
+        scheduleTextSave();
+      };
+      field.addEventListener("input", capture);
+      field.addEventListener("blur", () => { wireAfterTextEditors(); flushTextEdits(); });
+      field.addEventListener("keydown", (event) => {
+        event.stopPropagation();
+        if (event.isComposing) return;
+        if (event.key === "Enter") { event.preventDefault(); field.blur(); }
+        if (event.key === "Escape") {
+          event.preventDefault(); field.textContent = field.dataset.originalText; capture(); field.blur();
+        }
+      });
+      field.addEventListener("drop", (event) => event.preventDefault());
+      field.addEventListener("paste", (event) => {
+        event.preventDefault();
+        const selection = window.getSelection();
+        if (!selection?.rangeCount || !field.contains(selection.anchorNode)) return;
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
+        const text = document.createTextNode(event.clipboardData.getData("text/plain").replace(/[\r\n]+/g, " "));
+        range.insertNode(text); range.setStartAfter(text); range.collapse(true);
+        selection.removeAllRanges(); selection.addRange(range); capture();
+      });
+    });
+  });
+}
+
+window.addEventListener("beforeunload", (event) => {
+  if (pendingTextEdits.size || textRequest) {
+    event.preventDefault(); event.returnValue = "";
+  }
+});
 
 async function applyReviewedPlan() {
   if (!canApplyReviewed || !currentPlan || !csrfToken) return;
@@ -1873,6 +2151,7 @@ elements.titleDensity.addEventListener("change", () => {
   setTitleDensity(elements.titleDensity.value);
 });
 elements.sections.addEventListener("copy", (event) => {
+  if (document.activeElement?.isContentEditable) return; // Native selection within an editor.
   if (selectedSelectionMode !== "titles") {
     return;
   }
@@ -2030,4 +2309,4 @@ window.addEventListener("scroll", updateJumpDirections, { passive: true });
 elements.sections.addEventListener("scroll", updateJumpDirections, { passive: true, capture: true });
 
 loadCurrentPlan();
-window.setInterval(pollCurrentPlan, 1500);
+window.setInterval(pollCurrentPlan, 750);

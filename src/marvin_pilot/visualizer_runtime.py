@@ -18,6 +18,7 @@ def session_key(
     context_plans: list[Path],
     receipt: Path | None,
     allow_apply: bool,
+    allow_edit: bool = False,
 ) -> str | None:
     """Return a path-only key; stdin and chooser sessions are not reusable."""
 
@@ -26,6 +27,8 @@ def session_key(
     paths = [str(Path(plan).resolve()), str(backup.resolve()) if backup else None]
     paths.extend(str(path.resolve()) for path in context_plans)
     paths.extend((str(receipt.resolve()) if receipt else None, allow_apply))
+    if allow_edit:
+        paths.append("editable")
     return hashlib.sha256(json.dumps(paths, separators=(",", ":")).encode()).hexdigest()
 
 

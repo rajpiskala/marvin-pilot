@@ -37,6 +37,35 @@
   --chip-background: #f0f3f9;
 }
 
+/* Only title/subtask text in the proposed After view can be edited. */
+.task-title[contenteditable="true"],
+.subtask-title[contenteditable="true"] {
+  cursor: text;
+  border-radius: 4px;
+  border-bottom: 1px dashed var(--line-strong);
+  min-width: 2ch;
+}
+.task-title[contenteditable="true"]:hover,
+.subtask-title[contenteditable="true"]:hover { background: var(--accent-soft); }
+.task-title[contenteditable="true"]:focus,
+.subtask-title[contenteditable="true"]:focus {
+  display: block;
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  max-height: none;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+  white-space: pre-wrap;
+}
+.task-card:has(> .task-line > .task-title.text-edited),
+.subtask-row:has(> .subtask-title.text-edited) {
+  background: var(--accent-soft);
+}
+.task-title.text-edited[contenteditable],
+.subtask-title.text-edited[contenteditable] {
+  background: transparent;
+}
+
 :root[data-theme="dusk"] {
   color-scheme: dark;
   --page-background: #252a48;
@@ -1603,7 +1632,9 @@ footer {
 
 .plan-actions {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 8px;
 }
@@ -2365,7 +2396,7 @@ footer {
   }
 
   .diff-cell-before::before {
-    content: "Now";
+    content: "Current state";
   }
 
   .diff-cell-before {
@@ -2378,7 +2409,7 @@ footer {
   }
 
   .diff-cell-after::before {
-    content: "After (preview)";
+    content: "After applying";
   }
 
   .sections[data-review-state="applied"] .diff-cell-before::before {
@@ -2486,6 +2517,14 @@ footer {
   justify-content: flex-end;
 }
 
+.plan-actions .secondary-button {
+  min-height: 32px;
+  padding: 5px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 #apply-reviewed {
   white-space: nowrap;
 }
@@ -2534,6 +2573,8 @@ footer {
 }
 
 .task-circle.completed {
+  display: grid;
+  place-items: center;
   border-color: var(--complete);
   background: var(--complete);
   box-shadow: inset 0 0 0 2px var(--card-background);
@@ -2545,7 +2586,7 @@ footer {
   height: 3px;
   border-left: 1.5px solid var(--card-background);
   border-bottom: 1.5px solid var(--card-background);
-  transform: translate(3px, 3px) rotate(-45deg);
+  transform: translateY(-0.5px) rotate(-45deg);
   display: block;
 }
 
@@ -3339,3 +3380,8 @@ footer {
     display: block !important;
   }
 }
+
+.text-edit-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
+.text-edit-feedback { color: var(--muted-ink); font-size: 12px; }
+.text-edit-controls[data-save-state="error"] .text-edit-feedback { color: var(--danger-ink, #c33349); }
+.manual-edit-badge { font-size: .75rem; padding: .2rem .4rem; border: 1px dashed currentColor; }

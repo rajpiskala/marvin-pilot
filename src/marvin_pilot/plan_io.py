@@ -31,6 +31,26 @@ PLAN_MODELS = {1: ChangePlanV1}
 SUPPORTED_SCHEMA_VERSIONS = tuple(PLAN_MODELS)
 
 
+def ordering_authoring_hints(value: Any) -> tuple[str, ...]:
+    """Explain common misplaced ordering fields without rewriting author intent."""
+
+    if not isinstance(value, dict) or not isinstance(value.get("operations"), list):
+        return ()
+    hints = []
+    for index, operation in enumerate(value["operations"]):
+        if not isinstance(operation, dict):
+            continue
+        for side in ("before", "after"):
+            fields = operation.get(side)
+            if isinstance(fields, dict) and {"rank", "siblingOrder"} & fields.keys():
+                hints.append(
+                    f"operations.{index}.{side}: set order with operation-level siblingOrder "
+                    "(beforeId / afterId / position), outside before/after; "
+                    "see 'marvin-pilot help authoring'"
+                )
+    return tuple(hints)
+
+
 def _object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -83,6 +103,7 @@ def parse_plan_bytes(raw: bytes) -> ChangePlanV1:
         for error in exc.errors(include_url=False):
             location = ".".join(str(part) for part in error["loc"])
             messages.append(f"{location}: {error['msg']}")
+        messages.extend(ordering_authoring_hints(value))
         raise PlanSyntaxError("plan schema validation failed:\n- " + "\n- ".join(messages)) from exc
     validate_plan_semantics(plan)
     return plan
@@ -513,6 +534,12 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                 raise PlanSemanticError(
                     f"operation {operation.operationId!r} uses task-only project field(s): "
                     + ", ".join(unsupported)
+                    + (
+                        "; set project order with operation-level siblingOrder "
+                        "(beforeId / afterId / position)"
+                        if "masterRank" in unsupported
+                        else ""
+                    )
                 )
 
         if operation.target.type == "category" and isinstance(
@@ -565,14 +592,18 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                     f"{parent_create.operationId!r}; add it to dependsOnOperations"
                 )
 
-        if isinstance(operation, CompleteOperation):
+        if (
+            isinstance(operation, (CompleteOperation, CreateOperation))
+            and operation.completedAt is not None
+        ):
             completed_at = datetime.fromisoformat(operation.completedAt.replace("Z", "+00:00"))
             if completed_at > plan_created_at:
                 raise PlanSemanticError(
-                    f"complete operation {operation.operationId!r} completedAt is later than "
+                    f"{operation.action} operation {operation.operationId!r} "
+                    "completedAt is later than "
                     "the plan's createdAt"
                 )
-            if operation.target.type == "project":
+            if isinstance(operation, CompleteOperation) and operation.target.type == "project":
                 required = prior_container_mutations.get(operation.target.id, set())
                 missing = sorted(required - set(operation.dependsOnOperations))
                 if missing:
