@@ -297,6 +297,11 @@ class ProjectedReader:
     def check_connection(self) -> Any:
         return self.reader.check_connection()
 
+    def prefetch_operations(self, operations) -> None:
+        prefetch = getattr(self.reader, "prefetch_operations", None)
+        if callable(prefetch):
+            prefetch(operations)
+
     @property
     def api_base_host(self) -> str:
         return self.reader.api_base_host

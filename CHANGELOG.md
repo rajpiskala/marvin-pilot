@@ -4,6 +4,11 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
+- Add an opt-in `--experimental-use-db` engine with account-bound OS-keyring credentials,
+  batched authoritative reads, per-document CAS bulk writes and receipt-backed recovery.
+  Default API behavior and approval/impact limits remain unchanged. Recurrence writes
+  retain API compatibility; recovery writes remain sequential.
+
 - Add read-only `context search --live` for current categories/projects, with account
   verification, ranked candidates, hierarchy warnings, and no cache (#23).
 

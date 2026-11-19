@@ -111,6 +111,9 @@ def audit_receipt_live(receipt: ReceiptV1, reader: Any) -> list[dict[str, Any]]:
                 f"({account.account_user_id})"
             )
     applied_at = _timestamp_ms(receipt.endedAt)
+    prefetch = getattr(reader, "prefetch_revert_operations", None)
+    if callable(prefetch):
+        prefetch([op for op in receipt.operations if op.status == "applied"])
     source_operations = {
         operation.get("operationId"): operation
         for operation in receipt.sourcePlan.get("operations", [])

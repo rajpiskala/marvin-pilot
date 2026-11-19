@@ -154,6 +154,11 @@ class SnapshotReader:
         self.live = live
         self._live_cache: dict[str, dict[str, Any] | None] = {}
 
+    def prefetch_operations(self, operations) -> None:
+        prefetch = getattr(self.live, "prefetch_operations", None)
+        if callable(prefetch):
+            prefetch(operations)
+
     def get_doc(self, item_id: str) -> dict[str, Any] | None:
         if item_id in self._live_cache:
             return deepcopy(self._live_cache[item_id])
@@ -514,6 +519,7 @@ def prepare_draft(
 
     operations: list[Operation] = []
     processed_targets: set[str] = set()
+    reader.prefetch_operations(draft.operations)
     for draft_operation in draft.operations:
         target_id = draft_operation.target.id
         resolved_by_title = False
@@ -657,6 +663,7 @@ def rebase_plan_live(
     """Refresh locks and generated display metadata only when reviewed semantics did not drift."""
 
     verify_expected_account(plan, account_reader)
+    reader.prefetch_operations(plan.operations)
     value = json.loads(canonical_plan_bytes(plan))
     processed_targets: set[str] = set()
     for index, operation in enumerate(plan.operations):

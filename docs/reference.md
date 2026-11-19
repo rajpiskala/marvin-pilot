@@ -2,6 +2,10 @@
 
 This is the comprehensive user and behavior reference. For the project overview and a short first-run workflow, start with the [README](../README.md).
 
+The opt-in [experimental database engine](experimental-database.md) adds bulk live reads
+and independent writes behind the global `--experimental-use-db` flag. API mode remains
+the default; credentials, compatibility paths and recovery limits are documented separately.
+
 **Jump to:** [Setup](#quick-start) · [First plan](#your-first-plan) · [Commands](#core-commands) · [Visual review](#visual-review) · [Plans and recovery](#plans-and-recovery) · [Safety](#safety-model) · [Development](#development)
 
 Marvin Pilot is a local approval CLI for [Amazing Marvin](https://amazingmarvin.com/) that lets an AI reorganize your tasks and projects **without giving it your full-access API token**.

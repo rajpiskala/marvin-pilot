@@ -12,6 +12,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     StrictBool,
     StrictFloat,
     StrictInt,
@@ -33,6 +34,7 @@ class AppConfig(BaseModel):
     """Non-secret settings. The full-access token must never be stored here."""
 
     model_config = ConfigDict(extra="forbid")
+    _experimental_use_db: bool = PrivateAttr(default=False)
 
     api_base_url: StrictStr = DEFAULT_API_BASE_URL
     credential_mode: Literal["keyring", "prompt", "file"] = "keyring"
