@@ -189,6 +189,8 @@ def execute_apply(
     """Preflight, approve, journal, apply, verify, and finalize one complete plan."""
 
     history.ensure_writable()
+    if getattr(client, "experimental_database", False) and plan.expectedAccount is None:
+        raise PlanSemanticError("experimental database apply requires expectedAccount")
     digest = plan_digest(plan)
     duplicate = history.find_duplicate(plan_id=plan.planId, digest=digest)
     if duplicate is not None:
@@ -220,6 +222,17 @@ def execute_apply(
     )
     handle.receipt.status = "applying"
     history.persist(handle)
+    if getattr(client, "experimental_database", False):
+        from marvin_pilot.database_executor import execute_database_apply
+
+        return execute_database_apply(
+            checked_plan,
+            handle,
+            client=client,
+            history=history,
+            wall_clock=wall_clock,
+            progress=progress,
+        )
     completed_count = 0
     total = len(checked_plan.operations)
     runtime_revisions: dict[str, dict[str, Any]] = {}

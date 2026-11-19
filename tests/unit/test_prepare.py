@@ -13,6 +13,28 @@ from marvin_pilot.prepare import SnapshotReader, parse_draft_bytes, prepare_draf
 NOW_MS = 1_788_550_400_000
 
 
+@pytest.mark.parametrize("sentinel", ["root", "unassigned"])
+def test_prepare_root_sentinel_matches_an_empty_display_path(sentinel):
+    value = {
+        "draftVersion": 1,
+        "expectedAccount": {"userId": "123456", "email": "pilot@example.com"},
+        "summary": "Create a root category.",
+        "operations": [
+            {
+                "operationId": "create-root-category",
+                "action": "create",
+                "target": {"type": "category", "id": "1ac13fba-592e-40c7-9d78-d7188b907aaf"},
+                "after": {"title": "Synthetic root", "parent": {"id": sentinel}},
+                "reason": "Root containers have no ancestor path.",
+            }
+        ],
+    }
+    plan = prepare_draft(
+        parse_draft_bytes(json.dumps(value).encode()), SnapshotReader([]), now_ms=NOW_MS
+    )
+    assert plan.operations[0].display.afterPath == []
+
+
 class AccountReader:
     def check_connection(self):
         return SimpleNamespace(account_user_id="123456", account_email="pilot@example.com")

@@ -19,6 +19,7 @@ def session_key(
     receipt: Path | None,
     allow_apply: bool,
     allow_edit: bool = False,
+    experimental_database: bool = False,
 ) -> str | None:
     """Return a path-only key; stdin and chooser sessions are not reusable."""
 
@@ -29,6 +30,8 @@ def session_key(
     paths.extend((str(receipt.resolve()) if receipt else None, allow_apply))
     if allow_edit:
         paths.append("editable")
+    if experimental_database:
+        paths.append("experimental-database")
     return hashlib.sha256(json.dumps(paths, separators=(",", ":")).encode()).hexdigest()
 
 
