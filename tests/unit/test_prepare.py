@@ -40,6 +40,112 @@ class AccountReader:
         return SimpleNamespace(account_user_id="123456", account_email="pilot@example.com")
 
 
+def occurrence_draft_and_documents():
+    value = {
+        "draftVersion": 1,
+        "summary": "Complete one generated occurrence.",
+        "expectedAccount": {"userId": "123456", "email": "pilot@example.com"},
+        "operations": [
+            {
+                "operationId": "complete-one",
+                "action": "complete",
+                "target": {"type": "task", "id": "2026-08-01_series"},
+                "completedAt": "2026-09-04T12:00:00-07:00",
+                "reason": "Backfill this exact selected instance.",
+            }
+        ],
+    }
+    docs = [
+        {
+            "_id": "2026-08-01_series",
+            "db": "Tasks",
+            "title": "Synthetic occurrence",
+            "recurring": True,
+            "recurringTaskId": "series",
+            "day": "2026-09-04",
+            "updatedAt": 42,
+        },
+        {
+            "_id": "series",
+            "db": "RecurringTasks",
+            "recurringType": "task",
+            "title": "Synthetic series",
+            "type": "daily",
+        },
+    ]
+    return value, docs
+
+
+def test_prepare_occurrence_uses_live_day_not_id_prefix():
+    from marvin_pilot.preflight import preflight_plan
+
+    value, docs = occurrence_draft_and_documents()
+    reader = SnapshotReader(docs)
+    plan = prepare_draft(parse_draft_bytes(json.dumps(value).encode()), reader, now_ms=NOW_MS)
+    recurrence = plan.operations[0].target.recurrence
+    assert recurrence.seriesId == "series" and recurrence.seriesTitle == "Synthetic series"
+    assert recurrence.scheduledDate == "2026-09-04"
+    assert (
+        json.loads(canonical_plan_bytes(plan))["operations"][0]["target"]["recurrence"]["scope"]
+        == "occurrence"
+    )
+
+    class VerifiedReader(AccountReader):
+        def get_doc(self, identifier):
+            return next((deepcopy(d) for d in docs if d["_id"] == identifier), None)
+
+    assert len(preflight_plan(plan, VerifiedReader(), now_ms=NOW_MS).operations) == 1
+
+
+@pytest.mark.parametrize("missing", ["day", "series", "recurring", "series-title"])
+def test_prepare_never_invents_incomplete_occurrence_identity(missing):
+    value, docs = occurrence_draft_and_documents()
+    if missing == "day":
+        docs[0]["day"] = "unassigned"
+    elif missing == "recurring":
+        docs[0]["recurring"] = False
+    elif missing == "series-title":
+        docs[1]["title"] = ""
+    else:
+        docs = docs[:1]
+    with pytest.raises(LivePreconditionError, match="cannot prepare recurring occurrence"):
+        prepare_draft(
+            parse_draft_bytes(json.dumps(value).encode()), SnapshotReader(docs), now_ms=NOW_MS
+        )
+
+
+def test_prepare_preserves_explicit_identity_so_stale_values_are_not_silently_repaired():
+    value, docs = occurrence_draft_and_documents()
+    value["operations"][0]["target"]["recurrence"] = {
+        "seriesId": "series",
+        "seriesTitle": "Old series title",
+        "scheduledDate": "2026-08-01",
+    }
+    plan = prepare_draft(
+        parse_draft_bytes(json.dumps(value).encode()), SnapshotReader(docs), now_ms=NOW_MS
+    )
+    assert plan.operations[0].target.recurrence.seriesTitle == "Old series title"
+    assert plan.operations[0].target.recurrence.scheduledDate == "2026-08-01"
+
+
+def test_auto_identity_does_not_bypass_echo_guard():
+    from marvin_pilot.preflight import preflight_plan
+
+    value, docs = occurrence_draft_and_documents()
+    docs[0]["echo"] = True
+    docs[1]["type"] = "echo"
+    plan = prepare_draft(
+        parse_draft_bytes(json.dumps(value).encode()), SnapshotReader(docs), now_ms=NOW_MS
+    )
+
+    class VerifiedReader(AccountReader):
+        def get_doc(self, identifier):
+            return next((deepcopy(d) for d in docs if d["_id"] == identifier), None)
+
+    with pytest.raises(LivePreconditionError, match="recurrence/echo"):
+        preflight_plan(plan, VerifiedReader(), now_ms=NOW_MS)
+
+
 def draft_value() -> dict:
     return {
         "draftVersion": 1,

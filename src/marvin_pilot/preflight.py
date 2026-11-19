@@ -361,7 +361,8 @@ def _verify_recurrence_identity(
     if is_recurring and recurrence is None:
         raise LivePreconditionError(
             f"operation {operation.operationId!r} targets a generated recurring occurrence; "
-            "add target.recurrence with the exact series and scheduled date"
+            "add target.recurrence with the exact series and scheduled date, or use "
+            "prepare --live on a compact draft to fill that identity"
         )
     if not is_recurring and recurrence is not None:
         raise LivePreconditionError(

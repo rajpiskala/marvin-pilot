@@ -6,6 +6,12 @@ The opt-in [experimental database engine](experimental-database.md) adds bulk li
 and independent writes behind the global `--experimental-use-db` flag. API mode remains
 the default; credentials, compatibility paths and recovery limits are documented separately.
 
+For an existing generated recurring task, a compact draft can name the exact task ID
+without repeating `target.recurrence`: `prepare --live` resolves its current series/title
+and live scheduled day. Full plans still require explicit identity. Supplied identity is
+never silently repaired; missing/malformed series or dates are errors. This does not
+enable echo completion or other coupled side effects implicitly.
+
 **Jump to:** [Setup](#quick-start) · [First plan](#your-first-plan) · [Commands](#core-commands) · [Visual review](#visual-review) · [Plans and recovery](#plans-and-recovery) · [Safety](#safety-model) · [Development](#development)
 
 Marvin Pilot is a local approval CLI for [Amazing Marvin](https://amazingmarvin.com/) that lets an AI reorganize your tasks and projects **without giving it your full-access API token**.

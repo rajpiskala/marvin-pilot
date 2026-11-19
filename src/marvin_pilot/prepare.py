@@ -284,6 +284,39 @@ def _document_type(document: dict[str, Any]) -> str | None:
     return None
 
 
+def _occurrence_reference(document, explicit, reader: SnapshotReader):
+    """Fill exact identity only; never infer the scheduled day from an occurrence ID."""
+    if explicit is not None:
+        return explicit
+    series_id = document.get("recurringTaskId")
+    if document.get("recurring") is not True and not series_id:
+        return None
+    day = usable_marvin_day(document.get("day"))
+    if (
+        document.get("recurring") is not True
+        or not isinstance(series_id, str)
+        or not series_id
+        or day is None
+    ):
+        raise LivePreconditionError(
+            "cannot prepare recurring occurrence: "
+            "live series identity or scheduled day is incomplete"
+        )
+    series = reader.get_doc(series_id)
+    if (
+        series is None
+        or _document_type(series) != "recurringTask"
+        or not isinstance(series.get("title"), str)
+        or not series["title"].strip()
+    ):
+        raise LivePreconditionError(
+            "cannot prepare recurring occurrence: its live task series is missing or malformed"
+        )
+    return RecurringOccurrenceRef(
+        scope="occurrence", seriesId=series_id, seriesTitle=series["title"], scheduledDate=day
+    )
+
+
 def _path_for_parent(parent_id: str | None, reader: SnapshotReader) -> list[HierarchyPathNode]:
     if parent_id in {None, "", "unassigned", "root"}:
         return []
@@ -543,7 +576,11 @@ def prepare_draft(
                 type=draft_operation.target.type,
                 id=target_id,
                 title=title,
-                recurrence=draft_operation.target.recurrence,
+                recurrence=(
+                    _occurrence_reference(document, draft_operation.target.recurrence, reader)
+                    if draft_operation.target.type == "task"
+                    else draft_operation.target.recurrence
+                ),
             )
             expected_updated_at = document.get("updatedAt")
             if isinstance(expected_updated_at, bool) or not isinstance(expected_updated_at, int):

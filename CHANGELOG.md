@@ -4,6 +4,10 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
+- Fill exact generated-occurrence series/date identity during compact draft preparation,
+  using the selected document's live scheduled day rather than its ID prefix. Explicit
+  identity is never silently corrected, and echo/coupled-feature guards remain active.
+
 - Add an opt-in `--experimental-use-db` engine with account-bound OS-keyring credentials,
   batched authoritative reads, per-document CAS bulk writes and receipt-backed recovery.
   Default API behavior and approval/impact limits remain unchanged. Recurrence writes

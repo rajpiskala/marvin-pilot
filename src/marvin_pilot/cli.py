@@ -483,7 +483,12 @@ def prepare_command(
         ),
     ] = None,
 ) -> None:
-    """Compile a strict compact draft, or safely rebase locks in a reviewed full plan."""
+    """Compile a compact draft, including exact live occurrence identity; or rebase plan locks.
+
+    With --live, task IDs resolve their current series and scheduled day, even after
+    rollover. No date is guessed from an ID. Explicit recurrence metadata stays exact
+    and is still checked. Echo completion remains guarded because it affects the next task.
+    """
 
     if rebase_live and not live:
         _fail(PlanSyntaxError("--rebase-live requires --live"))
