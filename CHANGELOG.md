@@ -4,6 +4,9 @@ All notable changes to Marvin Pilot are documented here.
 
 ## Unreleased
 
+- Add read-only `context search --live` for current categories/projects, with account
+  verification, ranked candidates, hierarchy warnings, and no cache (#23).
+
 - Label the unmodified preview Current state, including single-state and mobile views.
 
 - Use action-first preview badges (Mark done, Delete, Rename, Move, Create, Edit) and an

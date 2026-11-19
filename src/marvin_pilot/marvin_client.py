@@ -348,6 +348,22 @@ class MarvinClient:
             raise RemoteError("Amazing Marvin returned malformed label metadata")
         return value
 
+    def get_categories(self) -> list[dict[str, Any]]:
+        """Read all categories/projects in one request, without a task inventory."""
+
+        response = self._request("GET", "categories")
+        value = self._json_value(response, required_object=False)
+        if not isinstance(value, list) or not all(
+            isinstance(item, dict)
+            and isinstance(item.get("_id"), str)
+            and bool(item["_id"])
+            and isinstance(item.get("title"), str)
+            and item.get("type") in ("category", "project")
+            for item in value
+        ):
+            raise RemoteError("Amazing Marvin returned malformed category/project metadata")
+        return value
+
     def get_children(self, parent_id: str) -> list[dict[str, Any]]:
         """Fetch direct open children of one category/project."""
 
