@@ -6,7 +6,75 @@ from copy import deepcopy
 from datetime import date
 from typing import Any
 
-from marvin_pilot.errors import RemoteError
+from marvin_pilot.backup_context import normalized_title, search_backup_context
+from marvin_pilot.errors import PlanSyntaxError, RemoteError
+
+
+def build_live_search_context(reader: Any, query: str) -> dict[str, Any]:
+    """Search a verified live container collection without per-ancestor requests."""
+
+    if not normalized_title(query):
+        raise PlanSyntaxError("live search requires non-empty title text")
+    account = reader.check_connection()
+    documents = []
+    by_id: dict[str, dict[str, Any]] = {}
+    for source in reader.get_categories():
+        document = deepcopy(source)
+        document["db"] = "Categories"
+        identifier = document["_id"]
+        if identifier in by_id:
+            raise RemoteError("Amazing Marvin returned duplicate category/project IDs")
+        by_id[identifier] = document
+        documents.append(document)
+    result = search_backup_context(documents, query)
+    result["kind"] = "search-live"
+    result["collectionCount"] = len(documents)
+    result["collectionMayBeTruncated"] = len(documents) >= 200
+    result["warnings"] = (
+        [
+            {
+                "code": "POSSIBLY_TRUNCATED_COLLECTION",
+                "message": (
+                    "Marvin returned at least 200 containers. Its endpoint may cap the collection; "
+                    "a missing match does not prove absence. "
+                    "Use backup context for a complete inventory."
+                ),
+            }
+        ]
+        if len(documents) >= 200
+        else []
+    )
+    result["account"] = {"userId": account.account_user_id, "email": account.account_email}
+    result["truncated"] = result["count"] > len(result["candidates"])
+    for candidate in result["candidates"]:
+        document = by_id[candidate["id"]]
+        candidate["done"] = document.get("done") is True
+        candidate["updatedAt"] = document.get("updatedAt")
+        seen: set[str] = set()
+        cursor = document
+        warnings = []
+        while cursor is not None:
+            identifier = cursor["_id"]
+            if identifier in seen:
+                warnings.append({"kind": "cycle", "id": identifier})
+                break
+            seen.add(identifier)
+            parent_id = cursor.get("parentId")
+            if parent_id in (None, "", "root", "unassigned"):
+                break
+            if not isinstance(parent_id, str) or parent_id not in by_id:
+                warnings.append({"kind": "missing-parent", "id": str(parent_id)})
+                break
+            cursor = by_id[parent_id]
+        candidate["hierarchyComplete"] = not warnings
+        candidate["hierarchyWarnings"] = warnings
+    result["accuracyNote"] = (
+        "Live categories/projects only, from one documented categories request after account "
+        "verification. Paths use that collection, not cached backups or individual lookups. "
+        "No task search, writes, or persistent cache. Multiple matches are not auto-selected. "
+        "Collection completeness depends on the server; no match is not proof of absence."
+    )
+    return result
 
 
 def _type(document: dict[str, Any]) -> str:

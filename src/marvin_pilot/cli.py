@@ -91,7 +91,7 @@ from marvin_pilot.history_status import (
     build_completion_day_repair_plan,
     plan_history_status,
 )
-from marvin_pilot.live_context import build_live_today_context
+from marvin_pilot.live_context import build_live_search_context, build_live_today_context
 from marvin_pilot.marvin_client import MarvinClient
 from marvin_pilot.models.plan_v1 import ChangePlanV1
 from marvin_pilot.models.receipt_v1 import ReceiptV1
@@ -569,15 +569,38 @@ def context_project_command(
 @context_app.command("search")
 def context_search_command(
     query: Annotated[str, typer.Argument(help="Title text to rank across tasks and containers.")],
-    backup: Annotated[Path, typer.Option("--backup", help="Local Marvin backup.")],
+    backup: Annotated[
+        Path | None, typer.Option("--backup", help="Local backup task/container search.")
+    ] = None,
+    live: Annotated[
+        bool, typer.Option("--live", help="Read current categories/projects, not tasks; no cache.")
+    ] = False,
     output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+    full_access_key_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--full-access-key-file", help="Read the secret from this file, not an argument."
+        ),
+    ] = None,
 ) -> None:
-    """Rank exact/normalized title candidates with IDs and hierarchy paths."""
+    """Search --backup tasks/containers OR --live categories/projects with exact IDs and paths."""
 
+    if live == (backup is not None):
+        _fail(PlanSyntaxError("context search requires exactly one of --backup or --live"))
+    if not live and full_access_key_file is not None:
+        _fail(PlanSyntaxError("--full-access-key-file requires --live"))
     try:
-        documents, _format, _size, digest, cache_hit = load_cached_backup_documents(backup)
-        value = search_backup_context(documents, query)
-        value["source"] = {"sha256": digest, "cacheHit": cache_hit}
+        if live:
+            client = _client_from_config(_load_config_or_fail(), full_access_key_file)
+            try:
+                value = build_live_search_context(client, query)
+            finally:
+                client.close()
+        else:
+            assert backup is not None
+            documents, _format, _size, digest, cache_hit = load_cached_backup_documents(backup)
+            value = search_backup_context(documents, query)
+            value["source"] = {"sha256": digest, "cacheHit": cache_hit}
     except MarvinPilotError as exc:
         _fail(exc)
     _write_or_print(json.dumps(value, ensure_ascii=False, indent=2) + "\n", output)

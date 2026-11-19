@@ -456,10 +456,28 @@ marvin-pilot context project PROJECT_ID --backup MarvinBackup.json.lzma --max-de
 marvin-pilot context project PROJECT_ID --backup MarvinBackup.json.lzma --state completed --since 2026-06-01
 ```
 
-Amazing Marvin's `/categories` endpoint returns category documents, not the complete project tree.
-Pilot builds the full category/project hierarchy from one backup instead of probing projects one at
-a time. `context project` includes open and completed descendants, which supports historical
-reclustering of hundreds of completed tasks.
+For current category/project identities without a backup:
+
+```console
+marvin-pilot context search "Project Atlas" --live
+```
+
+Live search verifies the account, then reads `/categories` once. That endpoint includes projects
+and nested categories, not just root-level folders. Pilot ranks title matches and reconstructs
+paths from the collection without individual ancestor requests. Each result includes its ID,
+type, done state and hierarchy warnings. Multiple candidates are explicitly ambiguous; Pilot does
+not choose one. Results are capped at 100 with a total count and `truncated` indicator. This mode
+does not search tasks, write anything or persist a cache. Choose exactly one of `--live` and
+`--backup`; `--full-access-key-file` can select credentials for live reads without passing the
+secret as an argument.
+
+The server may cap `/categories` at 200 records (observed in live testing). Responses expose
+`collectionCount`, `collectionMayBeTruncated` and a warning at that size. Missing ancestors remain
+explicit warnings, and zero matches must not be taken as proof that a container does not exist.
+Use a current backup for a complete inventory when the live collection is incomplete.
+
+The container collection does not include task history. `context project --backup` includes open
+and completed descendants, supporting historical reclustering of hundreds of completed tasks.
 
 A backup cannot reproduce Marvin's Today view: Today also includes rollover and strategy/automatic
 scheduling. Use the authoritative read-only endpoint instead:
