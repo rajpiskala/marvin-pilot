@@ -29,3 +29,9 @@ powerful sync credentials. API mode stays the default. Never put sync credential
 plans, receipts, command arguments, environment variables or issue reports. Database
 access does not provide Marvin's device-local Trash; retain private recovery receipts.
 See [the experimental engine's limits](docs/experimental-database.md).
+
+The experimental native mode uses a separate random pairing code saved in the OS
+keyring and Tampermonkey. Treat it like a credential. The CLI listens only on
+loopback while a command runs; a plan is bound to one matching Marvin account and
+tab. Do not expose the listener or paste the pairing code into Marvin task data.
+The companion does not download or execute code from the listener.

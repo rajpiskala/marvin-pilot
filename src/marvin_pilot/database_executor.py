@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 
+from marvin_pilot.compiler import project_compiled_mutation
+from marvin_pilot.database import MAX_DATABASE_WRITE_BYTES
 from marvin_pilot.errors import AmbiguousMutationError, LivePreconditionError, PartialMutationError
 from marvin_pilot.field_registry import field_snapshot
 from marvin_pilot.history import rfc3339_utc
@@ -19,30 +22,54 @@ def database_eligible(checked):
     )
 
 
-def independent_batches(operations, *, maximum=100):
+def _estimated_write_bytes(checked):
+    current = checked.live_document
+    if checked.compiled.endpoint == "doc/delete":
+        image = {
+            "_id": checked.operation.target.id,
+            "_rev": (current or {}).get("_rev", ""),
+            "_deleted": True,
+            "db": (current or {}).get("db", "Tasks"),
+            "D": 1,
+        }
+    else:
+        image = project_compiled_mutation(current, checked.compiled)
+    # Include the delimiter and reserve space for a runtime revision.
+    return len(json.dumps(image, ensure_ascii=False).encode("utf-8")) + 64
+
+
+def independent_batches(
+    operations, *, maximum=200, maximum_bytes=MAX_DATABASE_WRITE_BYTES, bulk_creates=False
+):
     batch = []
     targets = set()
     operation_ids = set()
     creates = 0
+    size = 16
     for checked in operations:
         op = checked.operation
         isolated = op.target.type in {"category", "project"} or not database_eligible(checked)
+        added_bytes = 0 if isolated else _estimated_write_bytes(checked)
         if batch and (
             isolated
             or len(batch) >= maximum
+            or size + added_bytes > maximum_bytes
             or op.target.id in targets
             or operation_ids.intersection(op.dependsOnOperations)
-            or (isinstance(op, CreateOperation) and creates)
+            or (not bulk_creates and isinstance(op, CreateOperation) and creates)
         ):
             yield batch
             batch, targets, operation_ids, creates = [], set(), set(), 0
+            size = 16
         batch.append(checked)
         targets.add(op.target.id)
         operation_ids.add(op.operationId)
         creates += isinstance(op, CreateOperation)
+        size += added_bytes
         if isolated:
             yield batch
             batch, targets, operation_ids, creates = [], set(), set(), 0
+            size = 16
     if batch:
         yield batch
 
@@ -72,7 +99,8 @@ def execute_database_apply(checked_plan, handle, *, client, history, wall_clock,
     total = len(checked_plan.operations)
     receipts = {r.operationId: r for r in handle.receipt.operations}
     runtime_revisions = {}
-    for batch in independent_batches(checked_plan.operations):
+    native = getattr(client, "experimental_native", False)
+    for batch in independent_batches(checked_plan.operations, bulk_creates=native):
         sending = False
         current_receipt = receipts[batch[0].operation.operationId]
         try:
@@ -159,7 +187,11 @@ def execute_database_apply(checked_plan, handle, *, client, history, wall_clock,
                 receipt.applyIndex = completed + 1
                 receipt.endedAt = rfc3339_utc(wall_clock())
                 receipt.outcome = (
-                    "applied-database-reconciled"
+                    "applied-native-local-reconciled"
+                    if native and ambiguous
+                    else "applied-native-local"
+                    if native
+                    else "applied-database-reconciled"
                     if ambiguous
                     else "applied-database-batch"
                     if database_eligible(checked)

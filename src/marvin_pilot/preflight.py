@@ -42,13 +42,18 @@ class DocumentReader(Protocol):
     def get_children(self, parent_id: str) -> list[dict[str, Any]]: ...
 
 
-def verify_expected_account(plan: ChangePlanV1, reader: DocumentReader) -> Any | None:
+def verify_expected_account(
+    plan: ChangePlanV1, reader: DocumentReader, *, initial_preflight: bool = False
+) -> Any | None:
     """Verify the plan's stable account binding before any document reads."""
 
     expected = plan.expectedAccount
     if expected is None:
         return None
-    account = reader.check_connection()
+    preverified = getattr(reader, "check_preflight_account", None)
+    account = (
+        preverified() if initial_preflight and callable(preverified) else reader.check_connection()
+    )
     if account.account_user_id != expected.userId:
         raise LivePreconditionError(
             "plan account mismatch: expected Marvin user ID "
@@ -881,7 +886,7 @@ def validate_plan_live(
     """Collect live diagnostics for selected 1-based plan entries without mutating Marvin."""
 
     started = time.perf_counter()
-    verify_expected_account(plan, reader)
+    verify_expected_account(plan, reader, initial_preflight=True)
     cache: dict[str, dict[str, Any] | None] = {}
     metadata_cache: dict[str, Any] = {}
     planned_creates = {

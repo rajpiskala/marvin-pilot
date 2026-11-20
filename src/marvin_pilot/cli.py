@@ -104,6 +104,7 @@ from marvin_pilot.live_context import build_live_search_context, build_live_toda
 from marvin_pilot.marvin_client import MarvinClient, RequestPacer
 from marvin_pilot.models.plan_v1 import ChangePlanV1
 from marvin_pilot.models.receipt_v1 import ReceiptV1
+from marvin_pilot.native import check_native_plan, connect_native, pair_native
 from marvin_pilot.plan_io import (
     MAX_PLAN_BYTES,
     canonical_plan_bytes,
@@ -190,6 +191,43 @@ config_app.add_typer(unattended_config_app, name="unattended")
 app.add_typer(history_app, name="history")
 app.add_typer(contract_tests_app, name="contract-tests")
 app.add_typer(context_app, name="context")
+native_app = typer.Typer(help="Pair the experimental native Marvin companion.")
+app.add_typer(native_app, name="native")
+
+
+@native_app.command("pair")
+def native_pair_command() -> None:
+    """Generate a new code; paste it once in the userscript's pairing menu."""
+
+    try:
+        require_controlling_terminal()
+        code = pair_native()
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo("Paste this private code into Tampermonkey → Pair with Marvin Pilot:")
+    typer.echo(code)
+
+
+@native_app.command("probe")
+def native_probe_command(
+    plan_path: Annotated[str, typer.Argument(help="Account-pinned plan JSON path.")],
+) -> None:
+    """Check the paired tab and its local database without changing any tasks."""
+
+    plan = _read_plan_argument(plan_path)
+    if plan.expectedAccount is None:
+        _fail(PlanSemanticError("native probe requires expectedAccount in the plan"))
+    try:
+        client = connect_native(plan.expectedAccount.userId, plan.expectedAccount.email)
+        try:
+            account = client.check_connection()
+        finally:
+            client.close()
+    except MarvinPilotError as exc:
+        _fail(exc)
+    typer.echo(f"Paired Marvin tab and local database ready for account {account.account_user_id}.")
+
+
 console = Console(stderr=False)
 error_console = Console(stderr=True)
 
@@ -795,7 +833,7 @@ def _build_client(config: AppConfig, key_file: Path | None) -> MarvinClient | Da
         database = CouchDatabase(
             credentials, pacer=pacer, timeout=float(config.request_timeout_seconds)
         )
-        return DatabaseMarvinClient(client, database)
+        return DatabaseMarvinClient(client, database, verified_account=account)
     except BaseException:
         client.close()
         raise
@@ -2088,6 +2126,10 @@ def apply_command(
             ),
         ),
     ] = False,
+    native: Annotated[
+        bool,
+        typer.Option("--native", help="EXPERIMENTAL: apply in one paired, open Marvin tab."),
+    ] = False,
 ) -> None:
     """Preflight, apply, verify, and durably journal a complete plan."""
 
@@ -2100,6 +2142,8 @@ def apply_command(
             _fail(exc)
     input_kind, change_input, raw = _read_change_input(plan_path)
     if input_kind == "plan-set":
+        if native:
+            _fail(PlanSemanticError("native apply supports one plan, not a plan set"))
         _apply_loaded_plan_set(
             change_input,
             full_access_key_file=full_access_key_file,
@@ -2109,6 +2153,8 @@ def apply_command(
         return
     plan = change_input
     config = _load_config_or_fail()
+    if native and (config._experimental_use_db or full_access_key_file is not None):
+        _fail(PlanSemanticError("choose native apply or cloud credentials, not both"))
     if unattended and not config.unattended_enabled:
         _fail(
             PlanSemanticError(
@@ -2149,7 +2195,14 @@ def apply_command(
                     "policy"
                 )
             )
-    client = _client_from_config(config, full_access_key_file)
+    if native:
+        try:
+            check_native_plan(plan)
+            client = connect_native(plan.expectedAccount.userId, plan.expectedAccount.email)
+        except MarvinPilotError as exc:
+            _fail(exc)
+    else:
+        client = _client_from_config(config, full_access_key_file)
     unattended_account_email: str | None = None
     if unattended:
         try:
@@ -2190,21 +2243,38 @@ def apply_command(
                 f"(impact {assessment.impact}/{config.unattended_max_impact})\n"
             )
         execution_notes.append("Network path  ", style="bold bright_cyan")
-        execution_notes.append(
-            "live recheck -> mutation/response verification "
-            f"(minimum {config.minimum_request_interval_ms} ms between requests)"
+        database_mode = getattr(client, "experimental_database", False)
+        minimum_interval = (
+            max(3000, config.minimum_request_interval_ms)
+            if database_mode
+            else config.minimum_request_interval_ms
         )
+        if native:
+            execution_notes.append("Paired Marvin tab: local recheck, batch write and readback.")
+        else:
+            execution_notes.append(
+                (
+                    "CouchDB batched recheck, write and readback"
+                    if database_mode
+                    else "live recheck -> mutation/response verification"
+                )
+                + f" (minimum {minimum_interval} ms between requests)"
+            )
         has_trash = any(operation.operation.action == "trash" for operation in result.operations)
         if has_trash:
             execution_notes.append("\nTRASH safety  ", style="bold bright_red")
             execution_notes.append(
-                "Trash recovery: Pilot will delete each document through Marvin's API after "
+                "Trash recovery: Pilot will delete the reviewed documents after "
                 "durably storing its full recovery snapshot. It will not appear in Marvin's "
                 "native Trash; keep the receipt to revert it."
             )
         if len(result.operations) >= config.large_plan_warning_operations:
             execution_notes.append("\nLarge plan  ", style="bold bright_yellow")
-            execution_notes.append(f"{len(result.operations)} operations will run sequentially.")
+            execution_notes.append(
+                f"{len(result.operations)} operations will run in bounded batches."
+                if database_mode
+                else f"{len(result.operations)} operations will run sequentially."
+            )
         if (
             not unattended
             and not config.unattended_enabled
@@ -2271,7 +2341,10 @@ def apply_command(
             apply_display.stop()
         client.close()
     applied_text = Text()
-    applied_text.append("Applied:", style="bold bright_green")
+    applied_text.append(
+        "Saved locally (cloud sync not checked):" if native else "Applied:",
+        style="bold bright_green",
+    )
     applied_text.append(f" {len(result.receipt.operations)} operation(s)")
     console.print(applied_text)
     receipt_text = Text()
@@ -2300,10 +2373,16 @@ def revert_command(
             help="Read the secret from this file; the token itself is never a CLI argument.",
         ),
     ] = None,
+    native: Annotated[
+        bool,
+        typer.Option("--native", help="EXPERIMENTAL: undo a native receipt in the paired tab."),
+    ] = False,
 ) -> None:
     """Human-review and revert a plan/plan-set receipt in reverse dependency order."""
 
     config = _load_config_or_fail()
+    if native and (config._experimental_use_db or full_access_key_file is not None):
+        _fail(PlanSemanticError("choose native revert or cloud credentials, not both"))
     history = _history_store(config)
     try:
         raw = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -2317,6 +2396,8 @@ def revert_command(
     except MarvinPilotError as exc:
         _fail(exc)
     if plan_set_source is not None:
+        if native:
+            _fail(PlanSemanticError("native revert supports one receipt, not a plan set"))
         resolved_path, source_set = plan_set_source
         _revert_plan_set(
             resolved_path,
@@ -2341,7 +2422,22 @@ def revert_command(
                 f"{config.max_operations}"
             )
         )
-    client = _client_from_config(config, full_access_key_file)
+    if native:
+        try:
+            selected = [
+                op
+                for op in source.operations
+                if op.status == "applied" and (not only or op.operationId in only)
+            ]
+            if not selected or any(
+                not (op.outcome or "").startswith("applied-native-local") for op in selected
+            ):
+                raise PlanSemanticError("native revert requires operations from a native receipt")
+            client = connect_native(source.accountUserId, source.accountEmail)
+        except MarvinPilotError as exc:
+            _fail(exc)
+    else:
+        client = _client_from_config(config, full_access_key_file)
     preflight_display = _OperationProgress("Revert preflight", selected_count)
     revert_display: _OperationProgress | None = None
     preflight_display.start()
@@ -2350,10 +2446,13 @@ def revert_command(
         nonlocal revert_display
         preflight_display.stop()
         typer.echo(render_revert_preflight(result), nl=False)
-        typer.echo(
-            "Revert network path: live recheck → mutation/response verification "
-            f"(minimum {config.minimum_request_interval_ms} ms between requests)."
-        )
+        if native:
+            typer.echo("Revert path: paired Marvin tab, verified locally only.")
+        else:
+            typer.echo(
+                "Revert network path: live recheck → mutation/response verification "
+                f"(minimum {config.minimum_request_interval_ms} ms between requests)."
+            )
         if len(result.operations) >= config.large_plan_warning_operations:
             typer.echo(f"Large revert: {len(result.operations)} operations will run sequentially.")
         approved = confirm_revert(len(result.operations))

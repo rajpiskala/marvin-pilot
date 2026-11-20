@@ -140,6 +140,10 @@ reads and independent task writes. It requires separately stored, powerful datab
 credentials and the global `--experimental-use-db` flag. Normal API mode stays the default;
 the same approval, impact limits, validation, and recovery receipts still apply.
 
+An [experimental native bridge](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/experimental-native.md) can apply plain task
+plans locally in one paired Marvin tab. It verifies local persistence and records
+Pilot undo receipts without waiting for cloud sync.
+
 ## 🛡️ Safety at a glance
 
 - Normal CLI apply and every revert require an interactive terminal and explicit approval. `apply --yes` skips only the final prompt after review; it does not skip validation or verification. Optional visualizer apply also requires an explicit browser confirmation and a pinned account.

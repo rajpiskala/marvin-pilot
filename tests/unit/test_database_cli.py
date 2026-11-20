@@ -21,6 +21,8 @@ def test_client_factory_only_loads_database_credentials_when_explicitly_enabled(
     )
     loaded = []
     databases = []
+    account_checks = []
+    api.check_connection = lambda: account_checks.append(account) or account
     monkeypatch.setattr(cli, "load_full_access_token", lambda *a, **k: "synthetic-api-token")
     monkeypatch.setattr(cli, "MarvinClient", lambda *a, **k: api)
     credentials = DatabaseCredentials(
@@ -45,6 +47,10 @@ def test_client_factory_only_loads_database_credentials_when_explicitly_enabled(
         if experimental:
             assert api._pacer is databases[0]["pacer"]
             assert api._pacer.minimum_interval_seconds == 3
+            assert client.check_preflight_account() == account
+            assert account_checks == [account]
+            assert client.check_connection() == account
+            assert account_checks == [account, account]
     finally:
         client.close()
 

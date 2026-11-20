@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from marvin_pilot.database import CouchDatabase, DatabaseCredentials, DatabaseMarvinClient
+from marvin_pilot.database_executor import independent_batches
 from marvin_pilot.errors import LivePreconditionError, PartialMutationError, PlanSemanticError
 from marvin_pilot.executor import execute_apply
 from marvin_pilot.history import HistoryStore
@@ -177,6 +178,64 @@ def test_one_hundred_updates_use_four_database_requests_and_keep_unknown_fields(
     assert all(
         r.beforeDocument is not None and r.status == "applied" for r in result.receipt.operations
     )
+
+
+def test_one_hundred_forty_mixed_mutations_share_one_write_after_fresh_hierarchy(engine, tmp_path):
+    server, client = engine
+    server.documents = CouchServer(140).documents
+    for document in server.documents.values():
+        document["parentId"] = "project"
+    server.documents["project"] = {
+        "_id": "project",
+        "_rev": "1-a",
+        "db": "Categories",
+        "type": "project",
+        "title": "Synthetic project",
+        "parentId": "unassigned",
+    }
+    operations = [
+        {
+            "operationId": f"{'edit' if i < 40 else 'trash'}-{i}",
+            "action": "update" if i < 40 else "trash",
+            "target": {"type": "task", "id": f"task-{i}"},
+            **({"after": {"title": f"Updated task {i}"}} if i < 40 else {}),
+            "reason": "Exercise one mixed batch.",
+        }
+        for i in range(140)
+    ]
+    result = apply(make_plan(server, operations), client, HistoryStore(tmp_path))
+    assert server.calls == ["_all_docs", "_all_docs", "_all_docs", "_bulk_docs", "_all_docs"]
+    assert [len(batch) for batch in server.batches] == [140]
+    assert len(server.deleted) == 100
+    assert all(operation.beforeDocument for operation in result.receipt.operations)
+
+
+def test_known_hierarchy_keys_are_hints_not_stale_documents(engine):
+    server, client = engine
+    plan = make_plan(server)
+    client.prefetch_operations(plan.operations)
+    server.documents["task-0"]["parentId"] = "moved"
+    server.documents["moved"] = {
+        "_id": "moved",
+        "_rev": "1-z",
+        "db": "Categories",
+        "title": "Fresh parent",
+    }
+    server.calls.clear()
+    client.prefetch_operations(plan.operations)
+    assert server.calls == ["_all_docs", "_all_docs"]
+    assert client.get_doc("task-0")["parentId"] == "moved"
+    assert client.get_doc("moved")["title"] == "Fresh parent"
+
+
+def test_projected_body_limit_splits_independent_batches(engine):
+    server, client = engine
+    result = validate_plan_live(make_plan(server), client, now_ms=NOW)
+    assert result.valid
+    assert [len(batch) for batch in independent_batches(result.operations, maximum_bytes=400)] == [
+        1,
+        1,
+    ]
 
 
 def test_bulk_preflight_returns_every_target_error_without_writes(engine):

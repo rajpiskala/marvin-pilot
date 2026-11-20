@@ -259,14 +259,18 @@ class DatabaseMarvinClient:
     categories_complete = True
     experimental_database = True
 
-    def __init__(self, api: MarvinClient, database: CouchDatabase):
+    def __init__(self, api: MarvinClient, database: CouchDatabase, *, verified_account=None):
         self.api = api
         self.database = database
         self.api_base_host = api.api_base_host
         self.api_base_url = api.api_base_url
-        self._bound = False
+        if verified_account is not None:
+            verify_database_account(database.credentials, verified_account)
+        self._bound = verified_account is not None
+        self._preflight_account = verified_account
         self._read_cache: dict[str, dict | None] = {}
         self._last_reads: dict[str, dict | None] = {}
+        self._known_references: dict[str, tuple[str, ...]] = {}
 
     def close(self):
         self.database.close()
@@ -277,6 +281,11 @@ class DatabaseMarvinClient:
         verify_database_account(self.database.credentials, account)
         self._bound = True
         return account
+
+    def check_preflight_account(self):
+        """Consume the account check already made while selecting this credential profile."""
+        account, self._preflight_account = self._preflight_account, None
+        return account if account is not None else self.check_connection()
 
     def _require_account(self):
         if not self._bound:
@@ -316,7 +325,20 @@ class DatabaseMarvinClient:
             order = getattr(operation, "siblingOrder", None)
             if order is not None:
                 identifiers.update((order.beforeId, order.afterId))
-        self._prefetch_hierarchy(identifiers)
+        # Use previous reads only to predict keys, never as write authority. A
+        # renamed/reparented document can introduce more keys during the fresh
+        # walk, and is checked again by the ordinary live preconditions.
+        self._prefetch_hierarchy(self._expand_known_references(identifiers))
+
+    def _expand_known_references(self, identifiers):
+        reachable = set(identifiers)
+        pending = list(identifiers)
+        while pending:
+            for reference in self._known_references.get(pending.pop(), ()):
+                if reference not in reachable:
+                    reachable.add(reference)
+                    pending.append(reference)
+        return reachable
 
     def _prefetch_hierarchy(self, identifiers):
         for _ in range(100):
@@ -328,8 +350,18 @@ class DatabaseMarvinClient:
             identifiers = set()
             for identifier in missing:
                 document = self._read_cache[identifier]
-                if document is not None:
-                    identifiers.update((document.get("parentId"), document.get("recurringTaskId")))
+                references = (
+                    tuple(
+                        document[field]
+                        for field in ("parentId", "recurringTaskId")
+                        if isinstance(document.get(field), str)
+                        and document[field] not in {"", "root", "unassigned"}
+                    )
+                    if document is not None
+                    else ()
+                )
+                self._known_references[identifier] = references
+                identifiers.update(references)
         raise RemoteError("database hierarchy exceeds the bounded ancestor depth")
 
     def prefetch_revert_operations(self, operations):

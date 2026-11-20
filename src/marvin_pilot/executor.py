@@ -189,6 +189,10 @@ def execute_apply(
     """Preflight, approve, journal, apply, verify, and finalize one complete plan."""
 
     history.ensure_writable()
+    if getattr(client, "experimental_native", False):
+        from marvin_pilot.native import check_native_plan
+
+        check_native_plan(plan)
     if getattr(client, "experimental_database", False) and plan.expectedAccount is None:
         raise PlanSemanticError("experimental database apply requires expectedAccount")
     digest = plan_digest(plan)
