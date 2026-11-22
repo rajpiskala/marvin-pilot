@@ -49,6 +49,7 @@ let selectedTheme = readPreference(THEME_KEY, THEMES, "light");
 let selectedView = readPreference(VIEW_KEY, VIEWS, "split");
 let selectedSelectionMode = readPreference(SELECTION_KEY, SELECTION_MODES, "titles");
 let selectedTitleDensity = readPreference(TITLE_DENSITY_KEY, TITLE_DENSITIES, "compact");
+let existingSubtasksMode = "expanded";
 let selectedMode = "preview";
 let showDaySections = false;
 let selectedChangeGrouping = "after";
@@ -120,6 +121,8 @@ const elements = {
   changesSearch: document.querySelector("#changes-search"),
   selectionMode: document.querySelector("#selection-mode"),
   titleDensity: document.querySelector("#title-density"),
+  existingSubtasksControl: document.querySelector("#existing-subtasks-control"),
+  existingSubtasksMode: document.querySelector("#existing-subtasks-mode"),
   movedFilter: document.querySelector("#moved-filter"),
   movedCount: document.querySelector("#moved-count"),
   comparisonTray: document.querySelector("#comparison-tray"),
@@ -198,6 +201,16 @@ function setTitleDensity(density, persist = true) {
   }
   if (currentPlan) {
     renderSections();
+  }
+}
+
+function setExistingSubtasksMode(mode, updateVisible = false) {
+  existingSubtasksMode = mode === "collapsed" ? "collapsed" : "expanded";
+  elements.existingSubtasksMode.value = existingSubtasksMode;
+  if (updateVisible) {
+    document.querySelectorAll('details.task-subtasks[data-read-only="true"]').forEach((details) => {
+      details.open = existingSubtasksMode === "expanded";
+    });
   }
 }
 
@@ -575,7 +588,7 @@ function renderCard(
   if (card.subtasks.length > 0) {
     const subtaskDetails = node("details", "task-subtasks");
     const readOnly = card.subtasks_read_only === true;
-    subtaskDetails.open = !readOnly;
+    subtaskDetails.open = !readOnly || existingSubtasksMode === "expanded";
     const count = card.subtasks.length;
     const noun = count === 1 ? "subtask" : "subtasks";
     const summary = readOnly
@@ -1728,6 +1741,9 @@ function renderPlan(plan, { preserveState = false } = {}) {
   const hasDaySections = plan.operations.some(
     (operation) => operation.before_day_section.state === "value" || operation.after_day_section.state === "value",
   );
+  elements.existingSubtasksControl.hidden = !plan.operations.some(
+    (operation) => operation.before?.subtasks_read_only || operation.after?.subtasks_read_only,
+  );
   const dayOption = elements.changesGrouping.querySelector('option[value="day"]');
   dayOption.disabled = !hasDaySections;
   dayOption.textContent = hasDaySections ? "Day section" : "Day section (not supplied)";
@@ -1821,6 +1837,7 @@ async function loadFile(file) {
       throw new Error(result.error?.message || `Plan validation failed (${response.status}).`);
     }
     resetTextState();
+    setExistingSubtasksMode(result.existing_subtasks);
     renderPlan(result.plan);
     syncReviewMetadata(result);
   } catch (error) {
@@ -1839,6 +1856,7 @@ async function loadCurrentPlan({ preserveState = false } = {}) {
     if (!response.ok) {
       throw new Error(result.error?.message || "Could not load the preselected plan.");
     }
+    setExistingSubtasksMode(result.existing_subtasks);
     if (result.plan) {
       renderPlan(result.plan, { preserveState });
     }
@@ -2154,6 +2172,18 @@ elements.selectionMode.addEventListener("change", () => {
 });
 elements.titleDensity.addEventListener("change", () => {
   setTitleDensity(elements.titleDensity.value);
+});
+elements.existingSubtasksMode.addEventListener("change", async () => {
+  const control = elements.existingSubtasksMode;
+  setExistingSubtasksMode(control.value, true);
+  control.disabled = true;
+  try {
+    await postReviewedAction("display-preferences", { existing_subtasks: existingSubtasksMode });
+  } catch (_error) {
+    showError("Checklist display changed for this view, but Pilot couldn't save the preference.");
+  } finally {
+    control.disabled = false;
+  }
 });
 elements.sections.addEventListener("copy", (event) => {
   if (document.activeElement?.isContentEditable) return; // Native selection within an editor.

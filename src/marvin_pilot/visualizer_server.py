@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import unquote
 
-from marvin_pilot.atomic import exclusive_write_bytes
+from marvin_pilot.atomic import atomic_write_bytes, exclusive_write_bytes
 from marvin_pilot.errors import MarvinPilotError, PlanSemanticError
 from marvin_pilot.models.plan_v1 import ChangePlanV1
 from marvin_pilot.plan_io import MAX_PLAN_BYTES, canonical_plan_bytes, parse_plan_bytes, plan_digest
@@ -30,6 +30,7 @@ from marvin_pilot.visualizer_hierarchy import HierarchyContext
 LOOPBACK_HOST = "127.0.0.1"
 MAX_FILENAME_LENGTH = 255
 ASSET_PACKAGE = "marvin_pilot.visualizer_assets"
+EXISTING_SUBTASK_MODES = ("expanded", "collapsed")
 SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     "Content-Security-Policy": (
@@ -108,11 +109,14 @@ class VisualizerServer:
         session_key: str | None = None,
         allow_edit: bool = False,
         reload_plan: Callable[[Path], LoadedVisualization] | None = None,
+        preferences_path: Path | None = None,
     ) -> None:
         self.session_token = session_token or secrets.token_urlsafe(32)
         self.session_key = session_key
         self.csrf_token = secrets.token_urlsafe(32)
         self._lock = threading.RLock()
+        self._preferences_path = preferences_path
+        self._existing_subtasks = "expanded"
         self._stop_watch = threading.Event()
         self._watch_thread: threading.Thread | None = None
         self._watch_paths = watch_paths
@@ -180,6 +184,36 @@ class VisualizerServer:
             "path": str(store.path) if store is not None and saved["version"] else None,
             "source_digest": self._current["digest"] if self._current else None,
         }
+
+    def _existing_subtasks_mode(self) -> str:
+        if self._preferences_path is None:
+            return self._existing_subtasks
+        try:
+            with self._preferences_path.open("rb") as stream:
+                preferences = json.loads(stream.read(4096))
+        except (OSError, ValueError, RecursionError):
+            return "expanded"
+        if (
+            isinstance(preferences, dict)
+            and preferences.get("existing_subtasks") in EXISTING_SUBTASK_MODES
+        ):
+            return preferences["existing_subtasks"]
+        return "expanded"
+
+    def _save_existing_subtasks_mode(self, mode: str) -> None:
+        with self._lock:
+            if self._preferences_path is not None:
+                payload = json.dumps({"existing_subtasks": mode}) + "\n"
+                atomic_write_bytes(self._preferences_path, payload.encode("utf-8"))
+            self._existing_subtasks = mode
+
+    def _current_response(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "plan": self._edit_view or self._current,
+                "existing_subtasks": self._existing_subtasks_mode(),
+                **self._status(),
+            }
 
     def _can_apply(self) -> bool:
         return (
@@ -647,11 +681,7 @@ class VisualizerServer:
                     )
                 elif route == "api/current":
                     try:
-                        with owner._lock:
-                            self._send_json(
-                                HTTPStatus.OK,
-                                {"plan": owner._edit_view or owner._current, **owner._status()},
-                            )
+                        self._send_json(HTTPStatus.OK, owner._current_response())
                     except MarvinPilotError as exc:
                         self._send_json(HTTPStatus.CONFLICT, {"error": {"message": str(exc)}})
                 elif route in ("api/status", "api/text-state"):
@@ -683,8 +713,9 @@ class VisualizerServer:
                     "api/revision-save",
                     "api/text-review-save",
                     "api/text-review-patch",
+                    "api/display-preferences",
                 ):
-                    self._review_action(route)
+                    self._protected_action(route)
                     return
                 if route != "api/plan":
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": {"message": "not found"}})
@@ -750,9 +781,9 @@ class VisualizerServer:
                         {"error": {"code": exc.exit_code, "message": str(exc)}},
                     )
                     return
-                self._send_json(HTTPStatus.OK, {"plan": owner._current, **owner._status()})
+                self._send_json(HTTPStatus.OK, owner._current_response())
 
-            def _review_action(self, route: str) -> None:
+            def _protected_action(self, route: str) -> None:
                 if (
                     self.headers.get("Origin") != owner.origin
                     or self.headers.get("X-Marvin-Pilot-CSRF") != owner.csrf_token
@@ -776,7 +807,8 @@ class VisualizerServer:
                     length = int(self.headers.get("Content-Length", ""))
                 except ValueError:
                     length = -1
-                if not 0 < length <= MAX_PLAN_BYTES:
+                max_bytes = 4096 if route == "api/display-preferences" else MAX_PLAN_BYTES
+                if not 0 < length <= max_bytes:
                     self._send_json(
                         HTTPStatus.BAD_REQUEST,
                         {"error": {"message": "invalid review request size"}},
@@ -784,8 +816,11 @@ class VisualizerServer:
                     return
                 try:
                     request = json.loads(self.rfile.read(length))
-                except (ValueError, UnicodeDecodeError):
+                except (ValueError, UnicodeDecodeError, RecursionError):
                     request = None
+                if route == "api/display-preferences":
+                    self._display_preferences(request)
+                    return
                 if not isinstance(request, dict) or not isinstance(request.get("identity"), dict):
                     self._send_json(
                         HTTPStatus.BAD_REQUEST, {"error": {"message": "invalid review identity"}}
@@ -873,6 +908,28 @@ class VisualizerServer:
                             }
                         },
                     )
+
+            def _display_preferences(self, request: Any) -> None:
+                if (
+                    not isinstance(request, dict)
+                    or set(request) != {"existing_subtasks"}
+                    or request["existing_subtasks"] not in EXISTING_SUBTASK_MODES
+                ):
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {"error": {"message": "invalid existing-subtasks display preference"}},
+                    )
+                    return
+                mode = request["existing_subtasks"]
+                try:
+                    owner._save_existing_subtasks_mode(mode)
+                except MarvinPilotError:
+                    self._send_json(
+                        HTTPStatus.INTERNAL_SERVER_ERROR,
+                        {"error": {"message": "could not save local viewer preferences"}},
+                    )
+                    return
+                self._send_json(HTTPStatus.OK, {"existing_subtasks": mode})
 
             def _method_not_allowed(self) -> None:
                 if not self._headers_allowed():

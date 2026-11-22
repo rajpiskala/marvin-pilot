@@ -98,6 +98,47 @@ def test_empty_server_reports_no_current_plan() -> None:
     assert response.json()["can_apply"] is False
 
 
+def test_viewer_preference_is_protected_and_persisted_without_editing_plan(tmp_path: Path) -> None:
+    path = tmp_path / "viewer-preferences.json"
+    options = {"preferences_path": path}
+    with running_server(server_kwargs=options) as (server, client):
+        current = client.get(server.url + "api/current").json()
+        endpoint = server.url + "api/display-preferences"
+        payload = {"existing_subtasks": "collapsed"}
+        assert current["existing_subtasks"] == "expanded"
+        assert not path.exists()
+        assert client.post(endpoint, json=payload).status_code == 403
+        headers = {"Origin": server.origin, "X-Marvin-Pilot-CSRF": server.csrf_token}
+        assert (
+            client.post(
+                endpoint, json={"existing_subtasks": "x" * 4096}, headers=headers
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(endpoint, json={"existing_subtasks": "hidden"}, headers=headers).status_code
+            == 400
+        )
+        assert (
+            client.post(
+                endpoint, json={**payload, "plan": "not accepted"}, headers=headers
+            ).status_code
+            == 400
+        )
+        assert not path.exists()
+        saved = client.post(endpoint, json=payload, headers=headers)
+        assert saved.status_code == 200
+        assert saved.json() == payload
+        updated = client.get(server.url + "api/current").json()
+        assert updated == {**current, **payload}
+        assert json.loads(path.read_text(encoding="utf-8")) == payload
+
+    with running_server(preload=False, server_kwargs=options) as (server, client):
+        reopened = client.get(server.url + "api/current").json()
+        assert reopened["existing_subtasks"] == "collapsed"
+        assert reopened["plan"] is None
+
+
 def test_backup_hierarchy_is_reused_for_browser_uploaded_plans() -> None:
     upload_plan = json.loads(json.dumps(EXAMPLE_PLAN))
     upload_plan["operations"][0].pop("display")

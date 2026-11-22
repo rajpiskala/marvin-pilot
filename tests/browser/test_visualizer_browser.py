@@ -1440,16 +1440,26 @@ def test_held_out_plans_obey_general_hierarchy_invariants(page, number: str) -> 
         assert page.locator(".hierarchy-group-header").count() > 0
 
 
-def test_existing_checklists_are_collapsed_and_read_only_on_both_sides(page) -> None:
+def test_existing_checklists_expand_by_default_and_stay_read_only_in_edit_mode(
+    page, tmp_path: Path
+) -> None:
     demo = Path(__file__).resolve().parents[1] / "fixtures" / "existing-subtasks-preview.json"
-    with running_visualizer(plan_dict=json.loads(demo.read_text(encoding="utf-8"))) as server:
+    raw = demo.read_bytes()
+    path = tmp_path / "fictional-preview.json"
+    path.write_bytes(raw)
+    with running_visualizer(
+        plan_dict=json.loads(raw),
+        server_kwargs={"preloaded_raw": raw, "plan_path": path, "allow_edit": True},
+    ) as server:
         page.goto(server.url)
         all_existing = page.locator('details.task-subtasks[data-read-only="true"]')
         all_existing.first.wait_for()
+        page.locator('.hierarchy-pane-after .task-title[contenteditable="true"]').first.wait_for()
         assert all_existing.count() == 4
         assert all_existing.locator("[contenteditable]").count() == 0
         assert all_existing.locator(".subtask-title").count() == 0
-        assert page.locator("details.task-subtasks[open]").count() == 0
+        assert page.get_by_label("Existing subtasks").input_value() == "expanded"
+        assert page.locator("details.task-subtasks[open]").count() == 4
         for summary, rows in (
             (
                 "2 existing subtasks · 2 done",
@@ -1467,7 +1477,6 @@ def test_existing_checklists_are_collapsed_and_read_only_on_both_sides(page) -> 
             panels = all_existing.filter(has_text=summary)
             assert panels.count() == 2
             for panel in panels.all():
-                panel.locator("summary").click()
                 assert panel.locator("li").first.is_visible()
                 assert (
                     panel.locator("li").evaluate_all(
@@ -1475,6 +1484,56 @@ def test_existing_checklists_are_collapsed_and_read_only_on_both_sides(page) -> 
                     )
                     == rows
                 )
+
+
+def test_existing_checklist_preference_is_kept_across_ports(page, tmp_path: Path) -> None:
+    demo = Path(__file__).resolve().parents[1] / "fixtures" / "existing-subtasks-preview.json"
+    plan = json.loads(demo.read_text(encoding="utf-8"))
+    plan["operations"].append(
+        {
+            "operationId": "update-a-different-checklist",
+            "action": "update",
+            "target": {"type": "task", "id": "actual-edit", "title": "Actual checklist edit"},
+            "reason": "Prove the viewer preference only touches existing checklist context.",
+            "before": {"subtasks": [{"id": "check", "title": "Confirm baseline", "done": False}]},
+            "after": {"subtasks": [{"id": "check", "title": "Confirm baseline", "done": True}]},
+        }
+    )
+    options = {"preferences_path": tmp_path / "viewer-preferences.json"}
+    mode = page.get_by_label("Existing subtasks")
+    readonly = page.locator('details.task-subtasks[data-read-only="true"]')
+    readonly_open = page.locator('details.task-subtasks[data-read-only="true"][open]')
+    edit_open = page.locator("details.task-subtasks:not([data-read-only])[open]")
+    with (
+        running_visualizer(plan_dict=plan, server_kwargs=options) as first,
+        running_visualizer(plan_dict=plan, server_kwargs=options) as second,
+    ):
+        assert first.port != second.port
+        page.goto(first.url)
+        mode.wait_for()
+        assert mode.input_value() == "expanded"
+        assert readonly.count() == 4
+        assert edit_open.count() == 2
+        with page.expect_response(lambda r: r.url.endswith("/api/display-preferences")) as saved:
+            mode.select_option("collapsed")
+        assert saved.value.ok
+        assert readonly_open.count() == 0
+        assert edit_open.count() == 2
+        readonly.first.locator("summary").click()
+        assert readonly.first.locator("li").first.is_visible()
+        assert mode.input_value() == "collapsed"
+        page.reload()
+        mode.wait_for()
+        assert mode.input_value() == "collapsed"
+
+        page.goto(second.url)
+        mode.wait_for()
+        assert mode.input_value() == "collapsed"
+        assert readonly_open.count() == 0
+        with page.expect_response(lambda r: r.url.endswith("/api/display-preferences")) as saved:
+            mode.select_option("expanded")
+        assert saved.value.ok
+        assert readonly_open.count() == 4
 
 
 def test_ordered_subtasks_and_loose_task_conversion_are_visually_traceable(page) -> None:
