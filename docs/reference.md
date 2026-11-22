@@ -565,6 +565,11 @@ Explicit `display.beforePath`/`display.afterPath` values—including an explicit
 over backup inference. Use a current backup: an item absent from the snapshot remains visibly
 unresolved rather than being guessed.
 
+For prepared task completions and updates that do not edit subtasks, **Existing subtasks** can
+be expanded on either side to review the source checklist in order, including what is still
+open. This snapshot lives in `display.existingSubtasks`; it never changes the task or becomes
+part of a checklist diff. Older plans without this snapshot still open normally.
+
 The default **Preview** renders Marvin-like **Current state** and **After applying** hierarchies. Proposed
 badges name actions: **Create**, **Rename**, **Move**, **Reschedule**, **Edit**, **Mark done**,
 and **Delete**. They do not imply a later scheduled action. Delete is the display name for the

@@ -1440,6 +1440,43 @@ def test_held_out_plans_obey_general_hierarchy_invariants(page, number: str) -> 
         assert page.locator(".hierarchy-group-header").count() > 0
 
 
+def test_existing_checklists_are_collapsed_and_read_only_on_both_sides(page) -> None:
+    demo = Path(__file__).resolve().parents[1] / "fixtures" / "existing-subtasks-preview.json"
+    with running_visualizer(plan_dict=json.loads(demo.read_text(encoding="utf-8"))) as server:
+        page.goto(server.url)
+        all_existing = page.locator('details.task-subtasks[data-read-only="true"]')
+        all_existing.first.wait_for()
+        assert all_existing.count() == 4
+        assert all_existing.locator("[contenteditable]").count() == 0
+        assert all_existing.locator(".subtask-title").count() == 0
+        assert page.locator("details.task-subtasks[open]").count() == 0
+        for summary, rows in (
+            (
+                "2 existing subtasks · 2 done",
+                ["Done: Test the powered USB hub", "Done: Test the compact USB hub"],
+            ),
+            (
+                "3 existing subtasks · 2 done",
+                [
+                    "Done: Back up the old workspace",
+                    "Done: Restore projects and settings",
+                    "Open: Verify the first local build",
+                ],
+            ),
+        ):
+            panels = all_existing.filter(has_text=summary)
+            assert panels.count() == 2
+            for panel in panels.all():
+                panel.locator("summary").click()
+                assert panel.locator("li").first.is_visible()
+                assert (
+                    panel.locator("li").evaluate_all(
+                        "rows => rows.map(row => row.getAttribute('aria-label'))"
+                    )
+                    == rows
+                )
+
+
 def test_ordered_subtasks_and_loose_task_conversion_are_visually_traceable(page) -> None:
     plan = subtask_conversion_plan()
     long_source_title = (

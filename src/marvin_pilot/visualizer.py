@@ -69,6 +69,7 @@ class TaskCardView:
     note: str | None
     subtasks: tuple[SubtaskItemView, ...]
     fields_shown: int
+    subtasks_read_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,6 +328,30 @@ def _target_only_card(title: str) -> TaskCardView:
         note=None,
         subtasks=(),
         fields_shown=0,
+    )
+
+
+def _with_existing_checklist(
+    card: TaskCardView, operation: UpdateOperation | CompleteOperation
+) -> TaskCardView:
+    if operation.target.type != "task" or operation.display is None:
+        return card
+    if isinstance(operation, UpdateOperation) and (
+        "subtasks" in operation.before.model_fields_set
+        or "subtasks" in operation.after.model_fields_set
+    ):
+        return card
+    existing = operation.display.existingSubtasks
+    if not existing:
+        return card
+    return replace(
+        card,
+        subtasks=tuple(
+            SubtaskItemView(item.id, item.title, item.done, index, None, None, (), ())
+            for index, item in enumerate(existing, start=1)
+        ),
+        subtasks_read_only=True,
+        sparse_label="Existing checklist shown for review.",
     )
 
 
@@ -926,8 +951,8 @@ def _operation_view(
         )
         return OperationView(
             **common,
-            before=before_card,
-            after=after_card,
+            before=_with_existing_checklist(before_card, operation),
+            after=_with_existing_checklist(after_card, operation),
             before_empty_label=None,
             after_empty_label=None,
             diffs=_field_diffs(
@@ -1024,8 +1049,8 @@ def _operation_view(
             )
         return OperationView(
             **common,
-            before=_target_only_card(operation.target.title),
-            after=_target_only_card(operation.target.title),
+            before=_with_existing_checklist(_target_only_card(operation.target.title), operation),
+            after=_with_existing_checklist(_target_only_card(operation.target.title), operation),
             before_empty_label=None,
             after_empty_label=None,
             diffs=tuple(diffs),

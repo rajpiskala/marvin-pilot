@@ -6,9 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from marvin_pilot.compiler import compile_operation
 from marvin_pilot.errors import LivePreconditionError, PlanSemanticError, PlanSyntaxError
 from marvin_pilot.plan_io import canonical_plan_bytes, parse_plan_bytes
 from marvin_pilot.prepare import SnapshotReader, parse_draft_bytes, prepare_draft, rebase_plan_live
+from marvin_pilot.visualizer import build_plan_view
 
 NOW_MS = 1_788_550_400_000
 
@@ -73,6 +75,74 @@ def documents() -> list[dict]:
             "updatedAt": 42,
         },
     ]
+
+
+@pytest.mark.parametrize("action", ["complete", "update"])
+def test_existing_checklist_is_ordered_preview_context_and_not_a_write(action: str) -> None:
+    source = documents()
+    task = source[-1]
+    task["subtasks"] = {
+        "check": {"_id": "check", "title": "Verify the change", "rank": 20, "done": False},
+        "save": {"_id": "save", "title": "Save the baseline", "rank": 10, "done": True},
+    }
+    draft = draft_value()
+    edited = draft["operations"][0]
+    draft["operations"] = [edited]
+    edited["action"] = action
+    if action == "complete":
+        del edited["after"]
+        edited["completedAt"] = "2026-09-03T09:00:00-07:00"
+    else:
+        edited["after"] = {"title": "Verify the deployment"}
+    plan = prepare_draft(
+        parse_draft_bytes(json.dumps(draft).encode()), SnapshotReader(source), now_ms=NOW_MS
+    )
+    operation = plan.operations[0]
+    assert [(item.id, item.done) for item in operation.display.existingSubtasks] == [
+        ("save", True),
+        ("check", False),
+    ]
+    rendered = build_plan_view(plan).operations[0]
+    for card in (rendered.before, rendered.after):
+        assert card.subtasks_read_only
+        assert [(row.title, row.done) for row in card.subtasks] == [
+            ("Save the baseline", True),
+            ("Verify the change", False),
+        ]
+    assert "subtasks" not in {entry.field for entry in rendered.diffs}
+    compiled = compile_operation(operation, task, NOW_MS)
+    assert "subtasks" not in compiled.desired_fields
+    assert compiled == compile_operation(
+        operation.model_copy(update={"display": None}), task, NOW_MS
+    )
+
+    task["subtasks"]["check"]["done"] = True
+    rebased = rebase_plan_live(
+        plan, SnapshotReader(source), account_reader=AccountReader(), now_ms=NOW_MS + 1
+    )
+    assert all(item.done for item in rebased.operations[0].display.existingSubtasks)
+
+
+def test_subtask_edit_keeps_real_diff_instead_of_read_only_checklist() -> None:
+    source = documents()
+    source[-1]["subtasks"] = {
+        "save": {"_id": "save", "title": "Save the baseline", "rank": 10, "done": False},
+    }
+    draft = draft_value()
+    draft["operations"] = [draft["operations"][0]]
+    draft["operations"][0]["after"] = {
+        "subtasks": [{"id": "save", "title": "Save the baseline", "done": True}],
+    }
+    plan = prepare_draft(
+        parse_draft_bytes(json.dumps(draft).encode()), SnapshotReader(source), now_ms=NOW_MS
+    )
+    operation = plan.operations[0]
+    assert operation.display.existingSubtasks is None
+    rendered = build_plan_view(plan).operations[0]
+    assert not rendered.after.subtasks_read_only
+    assert rendered.after.subtasks[0].done
+    assert "subtasks" in {entry.field for entry in rendered.diffs}
+    assert "subtasks" in compile_operation(operation, source[-1], NOW_MS).desired_fields
 
 
 def test_prepare_fills_identity_before_lock_uuid_and_paths() -> None:

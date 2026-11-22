@@ -574,23 +574,28 @@ function renderCard(
   }
   if (card.subtasks.length > 0) {
     const subtaskDetails = node("details", "task-subtasks");
-    subtaskDetails.open = true;
-    subtaskDetails.append(
-      node(
-        "summary",
-        "subtask-summary",
-        `${card.subtasks.length} subtask${card.subtasks.length === 1 ? "" : "s"}`,
-      ),
-    );
+    const readOnly = card.subtasks_read_only === true;
+    subtaskDetails.open = !readOnly;
+    const count = card.subtasks.length;
+    const noun = count === 1 ? "subtask" : "subtasks";
+    const summary = readOnly
+      ? `${count} existing ${noun} · ${card.subtasks.filter((item) => item.done).length} done`
+      : `${count} ${noun}`;
+    if (readOnly) {
+      subtaskDetails.dataset.readOnly = "true";
+      subtaskDetails.title = "Existing checklist. This plan does not change these subtasks.";
+    }
+    subtaskDetails.append(node("summary", "subtask-summary", summary));
     const list = node("ol", "subtask-list");
     card.subtasks.forEach((subtask) => {
       const item = node("li", `subtask-row${subtask.done ? " done" : ""}`);
       item.dataset.subtaskId = subtask.id;
+      if (readOnly) item.setAttribute("aria-label", `${subtask.done ? "Done" : "Open"}: ${subtask.title}`);
       if (subtask.source_task_id) {
         item.dataset.sourceTaskId = subtask.source_task_id;
       }
       item.append(objectIcon("subtask"));
-      const title = node("span", "subtask-title", subtask.title);
+      const title = node("span", readOnly ? "existing-subtask-title" : "subtask-title", subtask.title);
       title.dataset.copyTitle = subtask.title;
       item.append(title);
       if (subtask.source_task_title) {

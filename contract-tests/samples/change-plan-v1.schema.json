@@ -887,6 +887,31 @@
       "title": "ExistingItemTarget",
       "type": "object"
     },
+    "ExistingSubtask": {
+      "additionalProperties": false,
+      "description": "Read-only snapshot of a native checklist row, never an edit.",
+      "properties": {
+        "done": {
+          "title": "Done",
+          "type": "boolean"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "done"
+      ],
+      "title": "ExistingSubtask",
+      "type": "object"
+    },
     "ExpectedAccount": {
       "additionalProperties": false,
       "description": "Stable account identity that every live command must verify first.",
@@ -1279,6 +1304,22 @@
           ],
           "default": null,
           "title": "Existingcompletedat"
+        },
+        "existingSubtasks": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ExistingSubtask"
+              },
+              "maxItems": 500,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Existingsubtasks"
         }
       },
       "title": "OperationDisplay",

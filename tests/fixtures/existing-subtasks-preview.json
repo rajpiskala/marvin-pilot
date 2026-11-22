@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "planId": "1eedc92f-4b2d-4e05-a765-e7b280661443",
+  "createdAt": "2026-11-21T16:30:00-08:00",
+  "summary": "Preview existing checklists without changing them",
+  "operations": [
+    {
+      "operationId": "close-usb-benchmark",
+      "action": "complete",
+      "target": {"type": "task", "id": "usb-benchmark", "title": "Close out the USB hub benchmark"},
+      "completedAt": "2026-11-21T16:15:00-08:00",
+      "reason": "Both test passes are finished; the checklist stays as it is.",
+      "display": {
+        "beforePath": [{"id": "equipment-lab", "type": "project", "title": "Equipment Lab"}],
+        "afterPath": [{"id": "equipment-lab", "type": "project", "title": "Equipment Lab"}],
+        "existingSubtasks": [
+          {"id": "test-powered", "title": "Test the powered USB hub", "done": true},
+          {"id": "test-compact", "title": "Test the compact USB hub", "done": true}
+        ]
+      }
+    },
+    {
+      "operationId": "clarify-migration-title",
+      "action": "update",
+      "target": {"type": "task", "id": "migration", "title": "Set up the new laptop"},
+      "reason": "Give the task a more specific title without editing its checklist.",
+      "before": {"title": "Set up the new laptop"},
+      "after": {"title": "Migrate the workspace to the new laptop"},
+      "display": {
+        "beforePath": [{"id": "equipment-lab", "type": "project", "title": "Equipment Lab"}],
+        "afterPath": [{"id": "equipment-lab", "type": "project", "title": "Equipment Lab"}],
+        "existingSubtasks": [
+          {"id": "backup", "title": "Back up the old workspace", "done": true},
+          {"id": "restore", "title": "Restore projects and settings", "done": true},
+          {"id": "verify", "title": "Verify the first local build", "done": false}
+        ]
+      }
+    }
+  ]
+}
