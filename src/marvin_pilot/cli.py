@@ -1584,6 +1584,7 @@ def visualize_command(
         review_preflight=browser_preflight if allow_apply else None,
         review_apply=browser_apply if allow_apply else None,
         session_key=key,
+        preferences_path=default_config_path().with_name("visualizer-preferences.json"),
     )
     projection_ms = getattr(server, "projection_ms", 0.0)
     bind_ms = getattr(server, "bind_ms", 0.0)

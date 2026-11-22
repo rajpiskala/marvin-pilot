@@ -32,6 +32,7 @@ from marvin_pilot.models.plan_v1 import (
     CreateItemFields,
     CreateOperation,
     ExistingItemTarget,
+    ExistingSubtask,
     ExpectedAccount,
     HierarchyPathNode,
     ItemFields,
@@ -314,6 +315,31 @@ def _path_for_parent(parent_id: str | None, reader: SnapshotReader) -> list[Hier
     return list(reversed(reverse))
 
 
+def _existing_checklist(document: dict[str, Any]) -> list[ExistingSubtask] | None:
+    native = document.get("subtasks")
+    if not isinstance(native, (dict, list)) or not 1 <= len(native) <= 500:
+        return None
+    rows = native.items() if isinstance(native, dict) else ((None, row) for row in native)
+    ranked: list[tuple[float, ExistingSubtask]] = []
+    seen: set[str] = set()
+    for key, row in rows:
+        if not isinstance(row, dict):
+            return None
+        try:
+            item = ExistingSubtask(
+                id=row.get("_id") or key, title=row.get("title"), done=row.get("done") is True
+            )
+        except ValidationError:
+            return None
+        if item.id in seen:
+            return None
+        seen.add(item.id)
+        rank = row.get("rank")
+        order = rank if type(rank) is int or (type(rank) is float and math.isfinite(rank)) else 0
+        ranked.append((order, item))
+    return [item for _, item in sorted(ranked, key=lambda pair: pair[0])]
+
+
 def _display_for(
     document: dict[str, Any] | None,
     after: ItemFields | None,
@@ -373,6 +399,15 @@ def _display_for(
                 display["afterOrder"] = after_order
     if existing_completed_at is not None:
         display["existingCompletedAt"] = existing_completed_at
+    if (
+        document is not None
+        and document.get("db") == "Tasks"
+        and action in {"update", "complete"}
+        and (after is None or "subtasks" not in after.model_fields_set)
+    ):
+        checklist = _existing_checklist(document)
+        if checklist:
+            display["existingSubtasks"] = checklist
     return OperationDisplay.model_validate(display)
 
 

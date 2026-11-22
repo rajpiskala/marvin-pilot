@@ -565,6 +565,14 @@ Explicit `display.beforePath`/`display.afterPath` values—including an explicit
 over backup inference. Use a current backup: an item absent from the snapshot remains visibly
 unresolved rather than being guessed.
 
+For prepared task completions and updates that do not edit subtasks, the source checklist
+starts expanded on both sides. Checked and open subtasks stay in their original order.
+Use the **Existing subtasks** menu to set **Expanded** or **Collapsed** for future visualizer
+sessions, or click a single checklist's summary to toggle just that checklist. Pilot remembers
+the display preference locally in `visualizer-preferences.json`, alongside `config.toml`; it
+never saves plan data there. The checklist snapshot lives in `display.existingSubtasks` and
+never becomes part of a mutation or checklist diff. Older plans without it still open normally.
+
 The default **Preview** renders Marvin-like **Current state** and **After applying** hierarchies. Proposed
 badges name actions: **Create**, **Rename**, **Move**, **Reschedule**, **Edit**, **Mark done**,
 and **Delete**. They do not imply a later scheduled action. Delete is the display name for the

@@ -201,6 +201,12 @@ class RecurringSubtaskFields(ClosedModel):
         return _non_empty(value, "subtasks[].title", maximum=1_000)
 
 
+class ExistingSubtask(RecurringSubtaskFields):
+    """Read-only snapshot of a native checklist row, never an edit."""
+
+    done: StrictBool
+
+
 class RecurrenceCadenceBase(ClosedModel):
     """Shared, explicit anchor and optional end date for a recurrence series."""
 
@@ -663,6 +669,14 @@ class OperationDisplay(ClosedModel):
     beforeDaySection: DaySectionRef | None = None
     afterDaySection: DaySectionRef | None = None
     existingCompletedAt: StrictStr | None = None
+    existingSubtasks: Annotated[list[ExistingSubtask], Field(max_length=500)] | None = None
+
+    @field_validator("existingSubtasks")
+    @classmethod
+    def validate_existing_subtasks(cls, value: list[ExistingSubtask] | None):
+        if value and len({item.id for item in value}) != len(value):
+            raise ValueError("existingSubtasks must contain unique IDs")
+        return value
 
     @field_validator("beforeSection", "afterSection")
     @classmethod
