@@ -22,6 +22,7 @@ from marvin_pilot.history import receipt_file_bytes
 from marvin_pilot.marvin_client import ConnectionCheck
 from marvin_pilot.models.receipt_v1 import ReceiptOperationV1, ReceiptV1
 from marvin_pilot.plan_io import parse_plan_bytes, plan_digest
+from marvin_pilot.plan_set import load_plan_set_receipt
 
 runner = CliRunner()
 
@@ -108,8 +109,11 @@ class MultiCliMarvinClient:
         self.documents = copy.deepcopy(documents)
         self.revision = 1
         self.closed = False
+        self.connection_checks = 0
+        self.prefetched = []
 
     def check_connection(self) -> ConnectionCheck:
+        self.connection_checks += 1
         return ConnectionCheck(
             account_email="pilot@example.com",
             account_user_id="123456",
@@ -118,6 +122,9 @@ class MultiCliMarvinClient:
             status_code=200,
             reason_phrase="OK",
         )
+
+    def prefetch_operations(self, operations) -> None:
+        self.prefetched.append([item.operationId for item in operations])
 
     def get_doc(self, item_id: str):
         document = self.documents.get(item_id)
@@ -266,6 +273,91 @@ def test_validate_semantic_failure_uses_exit_code_3(tmp_path: Path) -> None:
     assert "does not change any values" in result.stderr
 
 
+def test_stage_draft_is_read_only_and_returns_the_exact_apply_digest(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = CliMarvinClient(
+        {"_id": "test-staged", "db": "Tasks", "title": "Before", "updatedAt": 42}
+    )
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    draft = {
+        "draftVersion": 1,
+        "summary": "Stage one update.",
+        "expectedAccount": {"userId": "123456", "email": "pilot@example.com"},
+        "operations": [
+            {
+                "operationId": "edit",
+                "action": "update",
+                "target": {"type": "task", "id": "test-staged", "title": "Before"},
+                "after": {"title": "After"},
+                "reason": "Synthetic staged review.",
+            }
+        ],
+    }
+    path = isolated_app_dirs / "stage.plan.json"
+    result = runner.invoke(app, ["stage", "-", "-o", str(path)], input=json.dumps(draft))
+    assert result.exit_code == 0, result.output
+    value = json.loads(result.stdout)
+    plan = parse_plan_bytes(path.read_bytes())
+    assert value["ready"] and value["digest"] == plan_digest(plan)
+    assert value["artifact"] == str(path.resolve())
+    assert value["unattended"]["impact"] == 1
+    assert value["phases"][0]["live"]["errors"] == 0
+    assert client.connection_checks == 1 and client.mutations == 0
+
+    tampered = runner.invoke(app, ["apply", str(path), "--require-digest", "sha256:bad"])
+    assert tampered.exit_code == 3
+    assert "differs from the staged digest" in tampered.stderr
+    assert client.connection_checks == 1 and client.mutations == 0
+    monkeypatch.setattr(cli_module, "confirm_apply", lambda _count: True)
+    applied = runner.invoke(app, ["apply", str(path), "--require-digest", value["digest"]])
+    assert applied.exit_code == 0, applied.output
+    assert client.document["title"] == "After" and client.mutations == 1
+
+
+def test_stage_reports_all_live_failures_for_a_locked_plan(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = copy.deepcopy(EXAMPLE_PLAN)
+    data["expectedAccount"] = {"userId": "123456", "email": "pilot@example.com"}
+    client = MultiCliMarvinClient({})
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    path = isolated_app_dirs / "stale.plan.json"
+    write_plan(path, data)
+    result = runner.invoke(app, ["stage", str(path)])
+    assert result.exit_code == 5, result.output
+    value = json.loads(result.stdout)
+    assert not value["ready"] and value["artifact"] is None
+    assert value["phases"][0]["live"]["errors"] >= 2
+    assert client.documents == {} and client.closed
+
+
+def test_stage_draft_refuses_wrong_pinned_account_without_artifact(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = MultiCliMarvinClient({})
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    draft = {
+        "draftVersion": 1,
+        "summary": "Wrong dev account.",
+        "expectedAccount": {"userId": "123457", "email": "someone@example.com"},
+        "operations": [
+            {
+                "operationId": "create",
+                "action": "create",
+                "target": {"type": "task"},
+                "after": {"title": "Never write this"},
+                "reason": "Synthetic wrong-account test.",
+            }
+        ],
+    }
+    path = isolated_app_dirs / "wrong.plan.json"
+    result = runner.invoke(app, ["stage", "-", "-o", str(path)], input=json.dumps(draft))
+    assert result.exit_code == 5, result.output
+    assert "account does not match" in json.loads(result.stdout)["error"]
+    assert not path.exists()
+
+
 def test_validate_live_collects_all_errors_as_json(
     isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -378,8 +470,9 @@ def test_describe_supports_markdown_json_and_create_only_output(tmp_path: Path) 
     assert "refusing to overwrite" in refused.stderr
 
 
+@pytest.mark.parametrize("mode", ["interactive", "unattended", "over-limit"])
 def test_plan_set_applies_reports_status_and_reverts_in_reverse_order(
-    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
     account = {"userId": "123456", "email": "pilot@example.com"}
     for index, task_id in enumerate(("task-one", "task-two"), start=1):
@@ -431,9 +524,31 @@ def test_plan_set_applies_reports_status_and_reverts_in_reverse_order(
     monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
     monkeypatch.setattr(cli_module, "confirm_apply", lambda _count: True)
     monkeypatch.setattr(cli_module, "confirm_revert", lambda _count: True)
+    if mode != "interactive":
+        config = config_module.AppConfig(
+            unattended_enabled=True,
+            unattended_account_user_id="123456",
+            unattended_max_impact=1 if mode == "over-limit" else 2,
+        )
+        monkeypatch.setattr(cli_module, "load_config", lambda: config)
 
-    applied = runner.invoke(app, ["apply", str(manifest)])
+    staged = runner.invoke(app, ["stage", str(manifest)])
+    assert staged.exit_code == 0, staged.output
+    review = json.loads(staged.stdout)
+    assert review["unattended"]["eligible"] == (mode == "unattended")
+    assert review["unattended"]["impact"] == 2
+    assert client.connection_checks == 1
+    assert client.prefetched == [["rename-task-one", "rename-task-two"]]
+
+    args = ["apply", str(manifest), "--require-digest", review["digest"]]
+    if mode != "interactive":
+        args += ["--unattended"]
+    applied = runner.invoke(app, args)
     applied_titles = [client.documents[item]["title"] for item in ("task-one", "task-two")]
+    if mode == "over-limit":
+        assert applied.exit_code == 3, applied.output
+        assert applied_titles == ["Old 1", "Old 2"]
+        return
     status = runner.invoke(app, ["history", "status", str(manifest), "--json"])
     reverted = runner.invoke(app, ["revert", str(manifest)])
     reverted_status = runner.invoke(app, ["history", "status", str(manifest), "--json"])
@@ -447,6 +562,74 @@ def test_plan_set_applies_reports_status_and_reverts_in_reverse_order(
     assert json.loads(status.stdout)["results"][0]["status"] == "applied"
     assert reverted.exit_code == 0, reverted.output
     assert json.loads(reverted_status.stdout)["results"][0]["status"] == "reverted"
+
+
+def test_partial_child_receipt_is_recoverable_from_the_parent(
+    isolated_app_dirs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    account = {"userId": "123456", "email": "pilot@example.com"}
+    source = isolated_app_dirs / "phase.json"
+    write_plan(
+        source,
+        {
+            "schemaVersion": 1,
+            "planId": "33333333-1111-4111-8111-111111111111",
+            "createdAt": "2026-09-04T12:00:00-07:00",
+            "summary": "Rename two fixtures.",
+            "expectedAccount": account,
+            "operations": [
+                {
+                    "operationId": f"rename-{i}",
+                    "action": "update",
+                    "target": {"type": "task", "id": f"task-{i}", "title": f"Old {i}"},
+                    "before": {"title": f"Old {i}"},
+                    "after": {"title": f"New {i}"},
+                    "reason": "Exercise partially successful plan-set recovery.",
+                }
+                for i in range(1, 3)
+            ],
+        },
+    )
+    manifest = isolated_app_dirs / "cleanup.plan-set.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "planSetVersion": 1,
+                "planSetId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "summary": "Test partial child receipt linking.",
+                "expectedAccount": account,
+                "plans": [{"path": source.name}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = MultiCliMarvinClient(
+        {f"task-{i}": {"_id": f"task-{i}", "db": "Tasks", "title": f"Old {i}"} for i in range(1, 3)}
+    )
+    old_update = client.update_doc
+
+    def fail_second(id_, setters):
+        if id_ == "task-2":
+            raise RemoteError("synthetic request failure")
+        return old_update(id_, setters)
+
+    monkeypatch.setattr(client, "update_doc", fail_second)
+    monkeypatch.setattr(cli_module, "_client_from_config", lambda *_args: client)
+    monkeypatch.setattr(cli_module, "confirm_apply", lambda _count: True)
+    monkeypatch.setattr(cli_module, "confirm_revert", lambda _count: True)
+    applied = runner.invoke(app, ["apply", str(manifest)])
+    assert applied.exit_code == 7, applied.output
+    assert client.documents["task-1"]["title"] == "New 1"
+    assert client.documents["task-2"]["title"] == "Old 2"
+    scope = cli_module._history_store(cli_module.load_config()).root
+    (parent_file,) = (scope / "plan-sets").glob("*.json")
+    parent = load_plan_set_receipt(parent_file)
+    assert parent.status == "partial"
+    assert [child.status for child in parent.children] == ["partial"]
+    assert Path(parent.children[0].receiptPath).is_file()
+    reverted = runner.invoke(app, ["revert", str(manifest)])
+    assert reverted.exit_code == 0, reverted.output
+    assert client.documents["task-1"]["title"] == "Old 1"
 
 
 def test_visualize_preloads_without_credentials_and_opens_browser(

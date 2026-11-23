@@ -124,19 +124,20 @@ The full guide covers [compact draft preparation](https://github.com/rajpiskala/
 | `marvin-pilot context …` | Read bounded live or backup-powered Marvin context |
 | `marvin-pilot context search "Project title" --live` | Find current categories/projects and their paths without a backup |
 | `marvin-pilot prepare INPUT …` | Compile a compact draft or safely refresh plan locks |
+| `marvin-pilot stage INPUT …` | Prepare a review artifact and report its digest, live checks, and unattended impact |
 | `marvin-pilot visualize PLAN --edit` | Edit After text; autosave and sync exact-ID feedback across tabs for AI reconciliation |
 | `marvin-pilot validate PLAN [--live]` | Validate offline or collect read-only live diagnostics |
 | `marvin-pilot describe PLAN` | Render a text, Markdown, or JSON review |
 | `marvin-pilot visualize PLAN` | Open the local hierarchical before/after view |
 | `marvin-pilot visualize PLAN --allow-apply` | Opt in to exact-file, browser-confirmed apply after live preflight |
-| `marvin-pilot apply PLAN` | Preflight, approve, apply, verify, and write a receipt |
+| `marvin-pilot apply PLAN` | Preflight, approve, apply, verify, and write a receipt; use `--require-digest` to pin the staged artifact |
 | `marvin-pilot revert RECEIPT` | Revert all or selected operations safely |
 | `marvin-pilot history …` | Inspect, verify, and audit local receipts |
 
 Run `marvin-pilot --help`, `marvin-pilot COMMAND --help`, or read the [complete command reference](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/reference.md#core-commands).
 
 An opt-in [experimental database engine](https://github.com/rajpiskala/marvin-pilot/blob/main/docs/experimental-database.md) can batch live
-reads and independent task writes. It requires separately stored, powerful database
+reads and independent task and simple project edits. It requires separately stored, powerful database
 credentials and the global `--experimental-use-db` flag. Normal API mode stays the default;
 the same approval, impact limits, validation, and recovery receipts still apply.
 

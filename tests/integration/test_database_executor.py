@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from marvin_pilot.database import CouchDatabase, DatabaseCredentials, DatabaseMarvinClient
-from marvin_pilot.database_executor import independent_batches
+from marvin_pilot.database_executor import database_batch_schedule, independent_batches
 from marvin_pilot.errors import LivePreconditionError, PartialMutationError, PlanSemanticError
 from marvin_pilot.executor import execute_apply
 from marvin_pilot.history import HistoryStore
@@ -178,6 +178,101 @@ def test_one_hundred_updates_use_four_database_requests_and_keep_unknown_fields(
     assert all(
         r.beforeDocument is not None and r.status == "applied" for r in result.receipt.operations
     )
+
+
+def add_project(server, project_id, parent="root"):
+    server.documents[project_id] = {
+        "_id": project_id,
+        "_rev": "1-" + "a" * 32,
+        "db": "Categories",
+        "type": "project",
+        "title": "Before " + project_id,
+        "parentId": parent,
+        "updatedAt": 42,
+    }
+
+
+def edit(id_, *, kind="task", depends=(), suffix=""):
+    return {
+        "operationId": id_ + suffix,
+        "action": "update",
+        "target": {"type": kind, "id": id_},
+        "after": {"title": "Renamed " + id_ + suffix},
+        "dependsOnOperations": list(depends),
+        "reason": "Exercise batching with independent and ordered edits.",
+    }
+
+
+def test_plain_project_edit_bridges_task_batches_and_is_receipt_reversible(engine, tmp_path):
+    server, client = engine
+    add_project(server, "project-a")
+    originals = {key: doc["title"] for key, doc in server.documents.items()}
+    plan = make_plan(server, [edit("task-0"), edit("project-a", kind="project"), edit("task-1")])
+    validation = validate_plan_live(plan, client, now_ms=NOW)
+    assert validation.valid
+    assert [
+        len(b.operations) for b in database_batch_schedule(validation.operations, optimize=False)
+    ] == [1, 1, 1]
+    journal = HistoryStore(tmp_path)
+    applied = apply(plan, client, journal)
+    assert [len(b) for b in server.batches] == [3]
+    assert all(r.status == "applied" for r in applied.receipt.operations)
+    reverted = execute_revert(
+        applied.receipt,
+        Path(applied.receipt_path),
+        [],
+        client=client,
+        history=journal,
+        approve=lambda _: True,
+        now_ms=lambda: NOW,
+    )
+    assert reverted.receipt.status == "reverted"
+    assert {key: doc["title"] for key, doc in server.documents.items()} == originals
+
+
+def test_independent_edit_moves_up_but_parent_reference_stays_separate(engine, tmp_path):
+    server, client = engine
+    add_project(server, "project-a")
+    server.documents["task-0"]["parentId"] = "project-a"
+    project_edit = edit("project-a", kind="project") | {"after": {"scheduledDate": "2026-09-07"}}
+    plan = make_plan(server, [project_edit, edit("task-0"), edit("task-1")])
+    checked = validate_plan_live(plan, client, now_ms=NOW)
+    assert checked.valid
+    batches = list(database_batch_schedule(checked.operations))
+    assert [[item.operation.operationId for item in b.operations] for b in batches] == [
+        ["project-a", "task-1"],
+        ["task-0"],
+    ]
+    assert batches[1].boundary == "parent-reference"
+    result = apply(plan, client, HistoryStore(tmp_path))
+    assert [len(b) for b in server.batches] == [2, 1]
+    assert {item.operationId: item.applyIndex for item in result.receipt.operations} == {
+        "project-a": 1,
+        "task-0": 3,
+        "task-1": 2,
+    }
+
+
+def test_reordered_batch_conflict_stops_dependency_without_replaying_success(engine, tmp_path):
+    server, client = engine
+    add_project(server, "project-a")
+    plan = make_plan(
+        server,
+        [edit("project-a", kind="project"), edit("task-0", depends=["project-a"]), edit("task-1")],
+    )
+    server.conflict = "project-a"
+    journal = HistoryStore(tmp_path)
+    with pytest.raises(PartialMutationError):
+        apply(plan, client, journal)
+    assert [[d["_id"] for d in batch] for batch in server.batches] == [["project-a", "task-1"]]
+    path, receipt = journal.find_duplicate(plan_id=plan.planId, digest="not-used")
+    assert path.exists() and receipt.status == "partial"
+    assert {op.operationId: op.status for op in receipt.operations} == {
+        "project-a": "failed",
+        "task-0": "not-started",
+        "task-1": "applied",
+    }
+    assert server.documents["task-0"]["title"] == "Synthetic task 0"
 
 
 def test_one_hundred_forty_mixed_mutations_share_one_write_after_fresh_hierarchy(engine, tmp_path):

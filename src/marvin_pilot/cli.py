@@ -78,6 +78,7 @@ from marvin_pilot.database import (
     load_database_credentials,
     store_database_credentials,
 )
+from marvin_pilot.database_executor import database_batch_schedule
 from marvin_pilot.describe import (
     plan_description_payload,
     render_live_preflight,
@@ -88,6 +89,7 @@ from marvin_pilot.describe import (
 from marvin_pilot.errors import (
     LivePreconditionError,
     MarvinPilotError,
+    PartialMutationError,
     PlanSemanticError,
     PlanSyntaxError,
     UserDeclinedError,
@@ -403,8 +405,11 @@ def _validate_plan_set_live(
     *,
     strict_concurrency: bool,
 ) -> list[LiveValidationResult]:
-    verify_manifest_account(loaded, client)
-    reader = ProjectedReader(client)
+    account = verify_manifest_account(loaded, client, initial_preflight=True)
+    reader = ProjectedReader(client, verified_account=account)
+    reader.prefetch_operations(
+        [operation for item in loaded.plans for operation in item.plan.operations]
+    )
     results: list[LiveValidationResult] = []
     for item in loaded.plans:
         result = validate_plan_live(
@@ -525,6 +530,168 @@ def prepare_command(
         if client is not None:
             client.close()
     _write_or_print(content, output)
+
+
+@app.command("stage")
+def stage_command(
+    source_path: Annotated[
+        str,
+        typer.Argument(
+            help="Draft, locked plan, or plan-set path. Use - to read a draft from stdin."
+        ),
+    ],
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="New locked plan path (required for drafts)."),
+    ] = None,
+    backup: Annotated[
+        Path | None,
+        typer.Option("--backup", help="Optional local context for compiling a draft."),
+    ] = None,
+    full_access_key_file: Annotated[
+        Path | None,
+        typer.Option("--full-access-key-file", help="Read the secret from this file."),
+    ] = None,
+) -> None:
+    """Stage exact plan bytes and report the diff, live diagnostics, and apply eligibility."""
+    try:
+        raw = _read_limited_argument(source_path, label="stage input")
+        try:
+            envelope = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise PlanSyntaxError("stage input must be a JSON document") from exc
+        if not isinstance(envelope, dict):
+            raise PlanSyntaxError("stage input must be a JSON object")
+        draft = None
+        loaded = None
+        if "draftVersion" in envelope:
+            if output is None:
+                raise PlanSyntaxError(
+                    "staging a draft requires --output for the exact review artifact"
+                )
+            if output.exists():
+                raise PlanSyntaxError(f"refusing to overwrite existing file: {output}")
+            draft = parse_draft_bytes(raw)
+        elif source_path == "-" or output is not None or backup is not None:
+            raise PlanSyntaxError(
+                "a locked plan or set requires a path; --output and --backup are draft-only"
+            )
+        elif "planSetVersion" in envelope:
+            loaded = load_plan_set(Path(source_path))
+        else:
+            plan = parse_plan_bytes(raw)
+            if plan.expectedAccount is None:
+                raise PlanSemanticError("stage requires an account-pinned plan")
+
+        config = _load_config_or_fail()
+        client = _client_from_config(config, full_access_key_file)
+        try:
+            if loaded is not None:
+                results = _validate_plan_set_live(
+                    loaded, client, strict_concurrency=config.strict_concurrency
+                )
+                description = _plan_set_description_payload(loaded)
+                digest = plan_set_digest(loaded)
+                checked_plan = combined_preview_plan(loaded)
+            else:
+                reader = ProjectedReader(client)
+                if draft is not None:
+                    preverified = getattr(client, "check_preflight_account", None)
+                    account = preverified() if callable(preverified) else client.check_connection()
+                    if (
+                        account.account_user_id != draft.expectedAccount.userId
+                        or account.account_email.casefold()
+                        != draft.expectedAccount.email.casefold()
+                    ):
+                        raise LivePreconditionError(
+                            "stage draft account does not match live account"
+                        )
+                    reader = ProjectedReader(client, verified_account=account)
+                    snapshot = (
+                        backup_snapshot_reader(backup, live=reader)
+                        if backup is not None
+                        else SnapshotReader([], live=reader)
+                    )
+                    plan = prepare_draft(draft, snapshot, now_ms=unix_milliseconds())
+                results = [
+                    validate_plan_live(
+                        plan,
+                        reader,
+                        now_ms=unix_milliseconds(),
+                        strict_concurrency=config.strict_concurrency,
+                    )
+                ]
+                description = plan_description_payload(plan)
+                digest = plan_digest(plan)
+                checked_plan = plan
+
+            payload = _staged_review_payload(
+                plan=checked_plan,
+                results=results,
+                description=description,
+                digest=digest,
+                path=output or Path(source_path),
+                config=config,
+                database=bool(getattr(client, "experimental_database", False)),
+            )
+        finally:
+            client.close()
+        if draft is not None and payload["ready"]:
+            assert output is not None
+            try:
+                exclusive_write_bytes(output, canonical_plan_bytes(plan) + b"\n")
+            except OSError as exc:
+                raise PlanSyntaxError(f"could not write staged plan {output}: {exc}") from exc
+    except MarvinPilotError as exc:
+        typer.echo(json.dumps({"ready": False, "error": str(exc)}, ensure_ascii=False))
+        raise typer.Exit(exc.exit_code) from exc
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    if not payload["ready"]:
+        raise typer.Exit(LivePreconditionError.exit_code)
+
+
+def _staged_review_payload(
+    *, plan, results, description, digest, path, config, database
+) -> dict[str, object]:
+    complete = all(result.valid for result in results)
+    valid = complete and len(plan.operations) <= config.max_operations
+    blockers = list(unattended_plan_blockers(plan))
+    if not config.unattended_enabled:
+        blockers.append("unattended apply is disabled")
+    elif plan.expectedAccount.userId != config.unattended_account_user_id:
+        blockers.append("account does not match the unattended policy")
+    if not valid:
+        blockers.append("the plan is not ready")
+    impact = sum(assess_unattended(result).impact for result in results) if complete else None
+    if impact is not None and impact > config.unattended_max_impact:
+        blockers.append("impact exceeds the configured unattended limit")
+    phases = []
+    for path_index, result in enumerate(results, start=1):
+        phase: dict[str, object] = {"phase": path_index, "live": _live_validation_payload(result)}
+        if database and result.valid:
+            phase["databaseBatches"] = [
+                {
+                    "operationIds": [checked.operation.operationId for checked in batch.operations],
+                    "boundary": batch.boundary,
+                }
+                for batch in database_batch_schedule(result.operations)
+            ]
+        phases.append(phase)
+    return {
+        "schemaVersion": 1,
+        "ready": valid,
+        "artifact": str(path.resolve()) if valid else None,
+        "digest": digest if valid else None,
+        "review": description,
+        "phases": phases,
+        "limits": {"operations": len(plan.operations), "maxOperations": config.max_operations},
+        "unattended": {
+            "eligible": valid and not blockers,
+            "impact": impact,
+            "maxImpact": config.unattended_max_impact,
+            "blockers": blockers,
+        },
+    }
 
 
 @context_app.command("project")
@@ -1813,14 +1980,8 @@ def _apply_loaded_plan_set(
         blockers = unattended_plan_blockers(combined)
         if blockers:
             _fail(blocked_unattended_error(blockers))
-        assessment = assess_unattended(combined)
-        if assessment.impact > config.unattended_max_impact:
-            _fail(
-                PlanSemanticError(
-                    f"plan-set impact is {assessment.impact}; configured unattended maximum is "
-                    f"{config.unattended_max_impact}"
-                )
-            )
+        if total > config.unattended_max_impact:
+            _fail(PlanSemanticError("plan-set operation count exceeds the unattended impact limit"))
     history = _history_store(config)
     prior = find_latest_plan_set_receipt(history.root, loaded.manifest.planSetId)
     if prior is not None and prior[1].status in {"applying", "applied", "partial"}:
@@ -1838,6 +1999,13 @@ def _apply_loaded_plan_set(
             raise LivePreconditionError(
                 f"plan-set live preflight found {len(errors)} error(s):\n{details}"
             )
+        if unattended:
+            impact = sum(assess_unattended(result).impact for result in results)
+            if impact > config.unattended_max_impact:
+                raise PlanSemanticError(
+                    f"plan-set impact is {impact}; configured unattended maximum is "
+                    f"{config.unattended_max_impact}"
+                )
         console.print(_render_plan_set_description(loaded), markup=False)
         if unattended:
             approved = True
@@ -1853,26 +2021,52 @@ def _apply_loaded_plan_set(
         parent = new_plan_set_receipt(loaded)
         parent_path = persist_plan_set_receipt(history.root, parent)
         completed = 0
+        remaining_impact = config.unattended_max_impact
+
+        def approve_child(result) -> bool:
+            nonlocal remaining_impact
+            if unattended:
+                assessment = enforce_unattended(result, max_impact=remaining_impact)
+                remaining_impact -= assessment.impact
+            return True
+
         try:
             for phase_index, item in enumerate(loaded.plans, start=1):
                 console.print(
                     f"Applying phase {phase_index}/{len(loaded.plans)}: {item.entry.path}",
                     markup=False,
                 )
-                child_result = execute_apply(
-                    item.plan,
-                    item.raw,
-                    client=client,
-                    history=history,
-                    approve=lambda _result: True,
-                    strict_concurrency=config.strict_concurrency,
-                )
+                try:
+                    child_result = execute_apply(
+                        item.plan,
+                        item.raw,
+                        client=client,
+                        history=history,
+                        approve=approve_child,
+                        strict_concurrency=config.strict_concurrency,
+                    )
+                except PartialMutationError:
+                    matches = history.find_applied_plan(
+                        plan_id=item.plan.planId, digest=plan_digest(item.plan)
+                    )
+                    if len(matches) == 1:
+                        partial_path, partial_receipt = matches[0]
+                        parent.children.append(
+                            PlanSetChildReceipt(
+                                planPath=item.entry.path,
+                                planId=item.plan.planId,
+                                planDigest=partial_receipt.planDigest,
+                                receiptPath=str(partial_path.resolve()),
+                                status=partial_receipt.status,
+                            )
+                        )
+                    raise
                 parent.children.append(
                     PlanSetChildReceipt(
                         planPath=item.entry.path,
                         planId=item.plan.planId,
                         planDigest=plan_digest(item.plan),
-                        receiptPath=child_result.receipt_path,
+                        receiptPath=str(Path(child_result.receipt_path).resolve()),
                         status=child_result.receipt.status,
                     )
                 )
@@ -2089,6 +2283,10 @@ def apply_command(
             ),
         ),
     ] = False,
+    require_digest: Annotated[
+        str | None,
+        typer.Option("--require-digest", help="Require the exact digest returned by stage."),
+    ] = None,
 ) -> None:
     """Preflight, apply, verify, and durably journal a complete plan."""
 
@@ -2100,6 +2298,12 @@ def apply_command(
         except MarvinPilotError as exc:
             _fail(exc)
     input_kind, change_input, raw = _read_change_input(plan_path)
+    if require_digest is not None:
+        actual = (
+            plan_set_digest(change_input) if input_kind == "plan-set" else plan_digest(change_input)
+        )
+        if actual != require_digest:
+            _fail(PlanSemanticError("the plan differs from the staged digest; review it again"))
     if input_kind == "plan-set":
         _apply_loaded_plan_set(
             change_input,
