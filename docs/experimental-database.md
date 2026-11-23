@@ -44,7 +44,7 @@ your API token, remote data or local receipts. Revoke it in Marvin if the creden
 | Today selection | Normal API, then bulk authoritative document reads |
 | Live category/project search | Paginated DB query, including completed containers; no API 200-item cap |
 | Prepare, live validation, plan-set validation | Batched targets/references/ancestors, then existing local checks |
-| Independent ordinary task updates, completions, deletions | `_bulk_docs` with checked `_rev`, up to 100 targets per batch |
+| Independent ordinary task updates, completions, deletions | `_bulk_docs` with checked `_rev`, up to 200 targets per batch, size permitting |
 | Project/category changes | DB writes, isolated with existing hierarchy/empty-container guards |
 | Creates | DB writes, at most one create per request to respect new-item pacing |
 | Recurring occurrences and recurrence definitions | Existing API write path, explicitly journaled as compatibility operations |
@@ -58,6 +58,12 @@ mode. Batch reads remove the per-target network bottleneck; they do not promise 
 100-operation plan runs in seconds. Deep ancestors, dependencies, creates, container guards
 and recurrence compatibility add requests. The documented average daily cloud budget still
 applies; this engine is not permission to bypass it.
+
+When selecting a database profile, Pilot reuses the API identity check for initial
+preflight. It still re-verifies the account after approval. During recheck, it uses
+the previously observed ancestor IDs to fetch targets and ancestors together. The
+IDs are only read hints: all documents and revisions are fetched fresh, and newly
+discovered ancestors are read before proceeding.
 
 ## Bulk safety and recovery
 

@@ -795,7 +795,7 @@ def _build_client(config: AppConfig, key_file: Path | None) -> MarvinClient | Da
         database = CouchDatabase(
             credentials, pacer=pacer, timeout=float(config.request_timeout_seconds)
         )
-        return DatabaseMarvinClient(client, database)
+        return DatabaseMarvinClient(client, database, verified_account=account)
     except BaseException:
         client.close()
         raise
@@ -2191,21 +2191,35 @@ def apply_command(
                 f"(impact {assessment.impact}/{config.unattended_max_impact})\n"
             )
         execution_notes.append("Network path  ", style="bold bright_cyan")
+        database_mode = getattr(client, "experimental_database", False)
+        minimum_interval = (
+            max(3000, config.minimum_request_interval_ms)
+            if database_mode
+            else config.minimum_request_interval_ms
+        )
         execution_notes.append(
-            "live recheck -> mutation/response verification "
-            f"(minimum {config.minimum_request_interval_ms} ms between requests)"
+            (
+                "CouchDB batched recheck, write and readback"
+                if database_mode
+                else "live recheck -> mutation/response verification"
+            )
+            + f" (minimum {minimum_interval} ms between requests)"
         )
         has_trash = any(operation.operation.action == "trash" for operation in result.operations)
         if has_trash:
             execution_notes.append("\nTRASH safety  ", style="bold bright_red")
             execution_notes.append(
-                "Trash recovery: Pilot will delete each document through Marvin's API after "
+                "Trash recovery: Pilot will delete the reviewed documents after "
                 "durably storing its full recovery snapshot. It will not appear in Marvin's "
                 "native Trash; keep the receipt to revert it."
             )
         if len(result.operations) >= config.large_plan_warning_operations:
             execution_notes.append("\nLarge plan  ", style="bold bright_yellow")
-            execution_notes.append(f"{len(result.operations)} operations will run sequentially.")
+            execution_notes.append(
+                f"{len(result.operations)} operations will run in bounded batches."
+                if database_mode
+                else f"{len(result.operations)} operations will run sequentially."
+            )
         if (
             not unattended
             and not config.unattended_enabled
