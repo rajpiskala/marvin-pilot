@@ -14,11 +14,8 @@ Password from that same account's Settings → API database-access section**.
 marvin-pilot config set-database-access
 marvin-pilot --experimental-use-db doctor
 marvin-pilot --experimental-use-db context search "Example project" --live
-marvin-pilot --experimental-use-db prepare draft.json --live --output plan.json
-marvin-pilot validate plan.json
-marvin-pilot describe plan.json
-marvin-pilot --experimental-use-db validate plan.json --live --json
-marvin-pilot --experimental-use-db apply plan.json
+marvin-pilot --experimental-use-db stage draft.json --output plan.json
+marvin-pilot --experimental-use-db apply plan.json --require-digest <digest-from-stage>
 marvin-pilot --experimental-use-db revert path/to/receipt.json
 marvin-pilot config forget-database-access
 ```
@@ -43,9 +40,11 @@ your API token, remote data or local receipts. Revoke it in Marvin if the creden
 | Account verification, labels | Normal API |
 | Today selection | Normal API, then bulk authoritative document reads |
 | Live category/project search | Paginated DB query, including completed containers; no API 200-item cap |
-| Prepare, live validation, plan-set validation | Batched targets/references/ancestors, then existing local checks |
+| Stage, prepare, live validation | Batched targets/references/ancestors, then existing local checks |
+| Plan-set review | One account check and bulk prefetch across the projected set; actual child phases still preflight against live state |
 | Independent ordinary task updates, completions, deletions | `_bulk_docs` with checked `_rev`, up to 200 targets per batch, size permitting |
-| Project/category changes | DB writes, isolated with existing hierarchy/empty-container guards |
+| Open project title/schedule edits | Can share a batch with independent ordinary task edits and other independent simple project edits |
+| Other project/category changes | Isolated DB writes with existing hierarchy/empty-container guards |
 | Creates | DB writes, at most one create per request to respect new-item pacing |
 | Recurring occurrences and recurrence definitions | Existing API write path, explicitly journaled as compatibility operations |
 | Receipt audit and revert preflight | Batched DB reads |
@@ -70,7 +69,12 @@ discovered ancestors are read before proceeding.
 Bulk writes are **not atomic**. Every target is read together, checked against its reviewed
 fields and revisions, rechecked after approval, and sent with that exact revision. Unknown
 native fields are preserved. Conflicted revision leaves are refused, not deleted or merged.
-Dependencies and same-target operations create batch barriers. A parent is never deleted
+Dependencies, parent references between edited documents, and same-target operations
+create batch barriers. In a window of plain edits, Pilot can advance a later independent
+edit to an earlier batch. It does not reorder across creates, completes, deletes,
+moves of containers, and other edits outside the narrow field allowlist.
+`stage` reports the ordered operation IDs and boundary reason
+for each expected DB batch, without sending any writes. A parent is never deleted
 as an implicit cascade. Existing coupled-feature and unattended-impact guards remain active.
 Experimental writes require an account-pinned plan; revert requires a pinned receipt.
 

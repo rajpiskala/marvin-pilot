@@ -222,6 +222,29 @@ For new plans, include `expectedAccount: {"userId":"…","email":"…"}` from a 
 or `doctor` result. Live validation checks the account before reading target documents, and apply
 checks it again immediately before any write. Bounded unattended apply requires this binding.
 
+### Stage before approval
+
+```console
+marvin-pilot stage draft.json --output plan.json
+marvin-pilot visualize plan.json
+marvin-pilot apply plan.json --unattended --require-digest <digest-from-stage>
+```
+
+`stage` is read-only against Marvin. It compiles an account-pinned draft, runs live
+validation and writes a new locked plan only when the checks succeed. Its JSON output
+includes the review diff, diagnostics by phase, the digest, and an unattended impact
+assessment. Add `--backup` to use a backup for draft context. To inspect an already
+locked plan or plan set, run `stage PLAN` without `--output`; the original files are
+unchanged. Live diagnostics are collected after a draft can be compiled.
+
+Present the exact staged artifact for review. Run the apply example only after the
+user approves and when the local account-pinned unattended policy permits it. For
+interactive apply, omit `--unattended`. The digest prevents a change to the reviewed
+artifact from being silently applied; it does not grant permission or replace
+apply-time preflight, concurrency checks or readback. Staging never splits a plan
+to get around its impact limit. Use a dependency-ordered plan set when it can be
+reviewed as one artifact, and keep any phase that still needs live locks conditional.
+
 For small or repetitive changes, the AI can author a compact closed-schema draft and let Pilot
 fill titles, before-state, concurrency locks, create UUIDs, and hierarchy metadata:
 
@@ -504,6 +527,7 @@ it returns documents whose stored day equals DATE and explicitly does not claim 
 | `marvin-pilot context search …`       | Resolve normalized candidates and exact IDs |
 | `marvin-pilot context today --live`   | Get authoritative Today context and ancestry |
 | `marvin-pilot prepare INPUT …`        | Compile intent or safely rebase plan metadata |
+| `marvin-pilot stage INPUT …`          | Stage a locked artifact, live diagnostics, and a review diff |
 | `marvin-pilot validate PLAN`          | Strictly validate a plan offline           |
 | `marvin-pilot validate PLAN --live`   | Collect read-only live diagnostics         |
 | `marvin-pilot describe PLAN`          | Describe as text, Markdown, or JSON         |

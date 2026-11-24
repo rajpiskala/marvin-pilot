@@ -4,14 +4,27 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from dataclasses import dataclass
 
 from marvin_pilot.compiler import project_compiled_mutation
 from marvin_pilot.database import MAX_DATABASE_WRITE_BYTES
 from marvin_pilot.errors import AmbiguousMutationError, LivePreconditionError, PartialMutationError
 from marvin_pilot.field_registry import field_snapshot
 from marvin_pilot.history import rfc3339_utc
-from marvin_pilot.models.plan_v1 import CompleteOperation, CreateOperation
-from marvin_pilot.preflight import recheck_operation, revision_snapshot
+from marvin_pilot.models.plan_v1 import CompleteOperation, CreateOperation, UpdateOperation
+from marvin_pilot.preflight import PreflightOperation, recheck_operation, revision_snapshot
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseBatch:
+    operations: tuple[PreflightOperation, ...]
+    boundary: str
+
+
+_TASK_BATCH_EDIT_FIELDS = frozenset(
+    {"title", "scheduledDate", "dueDate", "startDate", "endDate", "estimatedTimeDuration", "parent"}
+)
+_PROJECT_BATCH_EDIT_FIELDS = frozenset({"title", "scheduledDate"})
 
 
 def database_eligible(checked):
@@ -20,6 +33,81 @@ def database_eligible(checked):
         checked.operation.target.type != "recurringTask"
         and getattr(checked.operation.target, "recurrence", None) is None
     )
+
+
+def _plain_update(checked: PreflightOperation) -> bool:
+    operation = checked.operation
+    live = checked.live_document or {}
+    if (
+        not isinstance(operation, UpdateOperation)
+        or operation.siblingOrder is not None
+        or not database_eligible(checked)
+        or live.get("recurringTaskId")
+        or live.get("done") is True
+        or live.get("archived") is True
+    ):
+        return False
+    fields = operation.after.model_fields_set
+    if operation.target.type == "task":
+        return bool(fields) and fields <= _TASK_BATCH_EDIT_FIELDS
+    if operation.target.type == "project":
+        return bool(fields) and fields <= _PROJECT_BATCH_EDIT_FIELDS
+    return False
+
+
+def _parent_references(checked: PreflightOperation) -> set[str]:
+    operation = checked.operation
+    result: set[str] = set()
+    current = (checked.live_document or {}).get("parentId")
+    if isinstance(current, str) and current not in {"", "root", "unassigned"}:
+        result.add(current)
+    for side in (getattr(operation, "before", None), getattr(operation, "after", None)):
+        parent = getattr(side, "parent", None)
+        if parent is not None:
+            result.add(parent.id)
+    return result
+
+
+def _edit_conflict(left: PreflightOperation, right: PreflightOperation) -> bool:
+    a, b = left.operation, right.operation
+    return (
+        a.target.id == b.target.id
+        or a.operationId in b.dependsOnOperations
+        or b.operationId in a.dependsOnOperations
+        or a.target.id in _parent_references(right)
+        or b.target.id in _parent_references(left)
+    )
+
+
+def _bucket_edits(window: list[PreflightOperation]) -> list[PreflightOperation]:
+    # Earliest legal batch wave for a bounded, plain-edit-only window. Keep the
+    # input order among edits in the same wave, and preserve every edge to an
+    # earlier target, explicit dependency, or parent reference.
+    waves: list[int] = []
+    for index, edit in enumerate(window):
+        waves.append(
+            max(
+                (waves[other] + 1 for other in range(index) if _edit_conflict(window[other], edit)),
+                default=0,
+            )
+        )
+    return [window[index] for index in sorted(range(len(window)), key=waves.__getitem__)]
+
+
+def _execution_order(operations, *, optimize: bool):
+    window: list[PreflightOperation] = []
+    for checked in operations:
+        if optimize and _plain_update(checked):
+            window.append(checked)
+            if len(window) < 200:
+                continue
+            yield from _bucket_edits(window)
+            window.clear()
+            continue
+        yield from _bucket_edits(window)
+        window.clear()
+        yield checked
+    yield from _bucket_edits(window)
 
 
 def _estimated_write_bytes(checked):
@@ -38,38 +126,75 @@ def _estimated_write_bytes(checked):
     return len(json.dumps(image, ensure_ascii=False).encode("utf-8")) + 64
 
 
-def independent_batches(operations, *, maximum=200, maximum_bytes=MAX_DATABASE_WRITE_BYTES):
+def database_batch_schedule(
+    operations,
+    *,
+    maximum=200,
+    maximum_bytes=MAX_DATABASE_WRITE_BYTES,
+    optimize=True,
+):
     batch = []
     targets = set()
     operation_ids = set()
+    references: set[str] = set()
+    plain_only = True
     creates = 0
     size = 16
-    for checked in operations:
+    reason = "start"
+    for checked in _execution_order(operations, optimize=optimize):
         op = checked.operation
-        isolated = op.target.type in {"category", "project"} or not database_eligible(checked)
+        plain = optimize and _plain_update(checked)
+        eligible = database_eligible(checked)
+        isolated = not eligible or (op.target.type in {"category", "project"} and not plain)
+        parents = _parent_references(checked) if optimize else set()
         added_bytes = 0 if isolated else _estimated_write_bytes(checked)
-        if batch and (
-            isolated
-            or len(batch) >= maximum
-            or size + added_bytes > maximum_bytes
-            or op.target.id in targets
-            or operation_ids.intersection(op.dependsOnOperations)
-            or (isinstance(op, CreateOperation) and creates)
+        split = None
+        if isolated:
+            split = "api-compatibility" if not eligible else "container-operation"
+        elif len(batch) >= maximum:
+            split = "document-limit"
+        elif size + added_bytes > maximum_bytes:
+            split = "byte-limit"
+        elif op.target.id in targets:
+            split = "same-target"
+        elif operation_ids.intersection(op.dependsOnOperations):
+            split = "explicit-dependency"
+        elif op.target.id in references or targets.intersection(parents):
+            split = "parent-reference"
+        elif (op.target.type == "project" and not plain_only) or (
+            not plain and any(item.operation.target.type == "project" for item in batch)
         ):
-            yield batch
-            batch, targets, operation_ids, creates = [], set(), set(), 0
+            # Only combine a simple project edit with other proven plain edits.
+            split = "project-edit-boundary"
+        elif isinstance(op, CreateOperation) and creates:
+            split = "create-limit"
+        if batch and split:
+            yield DatabaseBatch(tuple(batch), reason)
+            batch, targets, operation_ids, references, creates = [], set(), set(), set(), 0
+            plain_only = True
             size = 16
+        if split:
+            reason = split
         batch.append(checked)
         targets.add(op.target.id)
         operation_ids.add(op.operationId)
+        references.update(parents)
+        plain_only = plain_only and plain
         creates += isinstance(op, CreateOperation)
         size += added_bytes
         if isolated:
-            yield batch
-            batch, targets, operation_ids, creates = [], set(), set(), 0
+            yield DatabaseBatch(tuple(batch), reason)
+            batch, targets, operation_ids, references, creates = [], set(), set(), set(), 0
+            plain_only = True
             size = 16
+            reason = "after-isolated-operation"
     if batch:
-        yield batch
+        yield DatabaseBatch(tuple(batch), reason)
+
+
+def independent_batches(operations, **kwargs):
+    for batch in database_batch_schedule(operations, **kwargs):
+        yield batch.operations
 
 
 def reconciled_database_match(document, expected, deleted_revision):

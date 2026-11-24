@@ -287,20 +287,29 @@ def find_latest_plan_set_revert(
 
 
 class ProjectedReader:
-    """Share one read cache and projected state across plan-set phase validation."""
+    """Share one account and snapshot within a single read-only review."""
 
-    def __init__(self, reader: Any) -> None:
+    def __init__(self, reader: Any, *, verified_account: Any = None) -> None:
         self.reader = reader
+        self.account = verified_account
         self.documents: dict[str, dict[str, Any] | None] = {}
         self.labels: list[dict[str, Any]] | None = None
+        self._prefetched = False
+        self._projected: set[str] = set()
 
     def check_connection(self) -> Any:
-        return self.reader.check_connection()
+        if self.account is None:
+            preverified = getattr(self.reader, "check_preflight_account", None)
+            self.account = (
+                preverified() if callable(preverified) else self.reader.check_connection()
+            )
+        return self.account
 
     def prefetch_operations(self, operations) -> None:
         prefetch = getattr(self.reader, "prefetch_operations", None)
-        if callable(prefetch):
+        if not self._prefetched and callable(prefetch):
             prefetch(operations)
+            self._prefetched = True
 
     @property
     def api_base_host(self) -> str:
@@ -317,12 +326,40 @@ class ProjectedReader:
             self.labels = self.reader.get_labels()
         return deepcopy(self.labels)
 
+    def get_children(self, parent_id: str) -> list[dict[str, Any]]:
+        get_children = getattr(self.reader, "get_children", None)
+        if callable(get_children):
+            children = get_children(parent_id)
+        else:
+            documents = getattr(self.reader, "documents", None)
+            if not isinstance(documents, dict):
+                raise LivePreconditionError("cannot verify the container's real children")
+            children = [
+                document
+                for document in documents.values()
+                if document is not None and document.get("parentId") == parent_id
+            ]
+        current = {document["_id"]: document for document in children}
+        for identifier in self._projected:
+            projected = self.documents[identifier]
+            if projected is not None and projected.get("parentId") == parent_id:
+                current[identifier] = projected
+            else:
+                current.pop(identifier, None)
+        return deepcopy(list(current.values()))
+
     def project(self, target_id: str, document: dict[str, Any] | None) -> None:
         self.documents[target_id] = deepcopy(document)
+        self._projected.add(target_id)
 
 
-def verify_manifest_account(loaded: LoadedPlanSet, reader: Any) -> Any:
-    account = reader.check_connection()
+def verify_manifest_account(
+    loaded: LoadedPlanSet, reader: Any, *, initial_preflight: bool = False
+) -> Any:
+    preverified = getattr(reader, "check_preflight_account", None)
+    account = (
+        preverified() if initial_preflight and callable(preverified) else reader.check_connection()
+    )
     expected = loaded.manifest.expectedAccount
     if (
         account.account_user_id != expected.userId
