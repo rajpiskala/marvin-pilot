@@ -75,6 +75,27 @@ def test_get_doc_returns_none_for_404() -> None:
         assert client.get_doc("missing") is None
 
 
+def test_categories_are_read_only_in_one_full_access_request() -> None:
+    def handle(request):
+        assert request.method == "GET" and request.url.path == "/api/categories"
+        assert request.headers["X-Full-Access-Token"] == "full-secret-token"
+        return json_response(200, [{"_id": "area", "type": "category", "title": "Area"}])
+
+    with client_for(handle) as client:
+        assert client.get_categories()[0]["_id"] == "area"
+
+
+@pytest.mark.parametrize(
+    "value", [{}, [None], [{"_id": ""}], [{"_id": "x", "title": "X", "type": []}]]
+)
+def test_categories_reject_malformed_collection(value):
+    with (
+        client_for(lambda _: json_response(200, value)) as client,
+        pytest.raises(RemoteError, match="category/project"),
+    ):
+        client.get_categories()
+
+
 def test_get_doc_returns_none_for_marvin_200_missing_document() -> None:
     response = json_response(200, {"error": "not_found", "reason": "missing"})
     with client_for(lambda _request: response) as client:

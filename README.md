@@ -122,6 +122,7 @@ The full guide covers [compact draft preparation](https://github.com/rajpiskala/
 | --- | --- |
 | `marvin-pilot doctor` | Verify the configured account and full-token health |
 | `marvin-pilot context …` | Read bounded live or backup-powered Marvin context |
+| `marvin-pilot context search "Project title" --live` | Find current categories/projects and their paths without a backup |
 | `marvin-pilot prepare INPUT …` | Compile a compact draft or safely refresh plan locks |
 | `marvin-pilot visualize PLAN --edit` | Edit After text; autosave and sync exact-ID feedback across tabs for AI reconciliation |
 | `marvin-pilot validate PLAN [--live]` | Validate offline or collect read-only live diagnostics |
