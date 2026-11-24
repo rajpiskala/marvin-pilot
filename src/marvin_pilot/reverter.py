@@ -248,6 +248,10 @@ def preflight_revert(
 ) -> RevertPreflight:
     """Resolve a selection and verify every inverse before any write or approval."""
 
+    if getattr(client, "experimental_database", False) and (
+        source.accountUserId is None or source.accountEmail is None
+    ):
+        raise PlanSemanticError("experimental database revert requires an account-pinned receipt")
     if source.accountUserId is not None:
         account = client.check_connection()
         if account.account_user_id != source.accountUserId or (
@@ -266,6 +270,9 @@ def preflight_revert(
             f"{client.api_base_host}"
         )
     selected = _selected_source_operations(source, only)
+    prefetch = getattr(client, "prefetch_revert_operations", None)
+    if callable(prefetch):
+        prefetch(selected)
     operation_ids = {operation.operationId for operation in selected}
     claims = history.find_revert_claims(
         source_apply_receipt_id=source.receiptId,
@@ -287,6 +294,8 @@ def preflight_revert(
         if target_id not in projected_documents:
             projected_documents[target_id] = client.get_doc(target_id)
         live = projected_documents[target_id]
+        if live is not None and live.get("_conflicts"):
+            raise LivePreconditionError("revert target has unresolved database conflict revisions")
         identity_document = live
         if source_operation.action == "trash":
             if source_operation.beforeDocument is None:
@@ -637,6 +646,9 @@ def execute_revert(
                     f"revision produced by prior same-target revert "
                     f"{checked_operation.prior_same_target_operation_id!r}"
                 )
+            clear_cache = getattr(client, "clear_read_cache", None)
+            if callable(clear_cache):
+                clear_cache()
             recheck_revert_operation(
                 checked_operation,
                 client,

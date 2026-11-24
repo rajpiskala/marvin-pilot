@@ -6,6 +6,7 @@ import json
 import sys
 import time
 import webbrowser
+from contextvars import ContextVar
 from datetime import UTC, date, datetime
 from http import HTTPStatus
 from pathlib import Path
@@ -69,6 +70,14 @@ from marvin_pilot.credentials import (
     load_full_access_token,
     store_keyring_token,
 )
+from marvin_pilot.database import (
+    CouchDatabase,
+    DatabaseCredentials,
+    DatabaseMarvinClient,
+    forget_database_credentials,
+    load_database_credentials,
+    store_database_credentials,
+)
 from marvin_pilot.describe import (
     plan_description_payload,
     render_live_preflight,
@@ -92,7 +101,7 @@ from marvin_pilot.history_status import (
     plan_history_status,
 )
 from marvin_pilot.live_context import build_live_search_context, build_live_today_context
-from marvin_pilot.marvin_client import MarvinClient
+from marvin_pilot.marvin_client import MarvinClient, RequestPacer
 from marvin_pilot.models.plan_v1 import ChangePlanV1
 from marvin_pilot.models.receipt_v1 import ReceiptV1
 from marvin_pilot.plan_io import (
@@ -232,14 +241,31 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+_experimental_database_requested: ContextVar[bool] = ContextVar(
+    "experimental_database", default=False
+)
+
+
 @app.callback()
 def root(
+    experimental_use_db: Annotated[
+        bool,
+        typer.Option(
+            "--experimental-use-db",
+            help=(
+                "EXPERIMENTAL: use account-bound CouchDB credentials for bulk reads/writes. "
+                "Place this global flag before the command. API remains the default."
+            ),
+        ),
+    ] = False,
     version: Annotated[
         bool | None,
         typer.Option("--version", callback=_version_callback, is_eager=True, help="Show version."),
     ] = None,
 ) -> None:
     """Safe, reviewed task and project changes for Amazing Marvin."""
+
+    _experimental_database_requested.set(experimental_use_db)
 
 
 def _fail(error: MarvinPilotError) -> None:
@@ -717,7 +743,9 @@ def context_cache_clear_command() -> None:
 
 def _load_config_or_fail() -> AppConfig:
     try:
-        return load_config()
+        config = load_config()
+        config._experimental_use_db = _experimental_database_requested.get()
+        return config
     except MarvinPilotError as exc:
         _fail(exc)
 
@@ -745,21 +773,97 @@ def _credential_warning(message: str) -> None:
     error_console.print(f"Warning: {message}", markup=False)
 
 
-def _build_client(config: AppConfig, key_file: Path | None) -> MarvinClient:
+def _build_client(config: AppConfig, key_file: Path | None) -> MarvinClient | DatabaseMarvinClient:
     token = load_full_access_token(
         config,
         key_file_override=key_file,
         warn=_credential_warning,
     )
-    return MarvinClient(
+    client = MarvinClient(
         token,
         api_base_url=config.api_base_url,
         timeout_seconds=float(config.request_timeout_seconds),
         minimum_request_interval_ms=config.minimum_request_interval_ms,
     )
+    if not config._experimental_use_db:
+        return client
+    try:
+        pacer = RequestPacer(max(3000, config.minimum_request_interval_ms))
+        client._pacer = pacer
+        account = client.check_connection()
+        credentials = load_database_credentials(account)
+        database = CouchDatabase(
+            credentials, pacer=pacer, timeout=float(config.request_timeout_seconds)
+        )
+        return DatabaseMarvinClient(client, database, verified_account=account)
+    except BaseException:
+        client.close()
+        raise
 
 
-def _client_from_config(config: AppConfig, key_file: Path | None) -> MarvinClient:
+@config_app.command("set-database-access")
+def set_database_access_command() -> None:
+    """Store powerful DB credentials in the OS keyring, pinned to the verified API account."""
+
+    config = _load_config_or_fail()
+    config._experimental_use_db = False
+    client = _client_from_config(config, None)
+    try:
+        account = client.check_connection()
+        typer.echo(f"Account: {account.account_email} ({account.account_user_id})")
+        typer.confirm(
+            "DB credentials can read/write almost the whole account. Store experimental access?",
+            default=False,
+            abort=True,
+        )
+        credentials = DatabaseCredentials(
+            account_user_id=account.account_user_id,
+            account_email=account.account_email,
+            server=typer.prompt("Sync Server URL (from Marvin API settings)").strip(),
+            database=typer.prompt("Sync Database").strip(),
+            username=typer.prompt("Sync User").strip(),
+            password=typer.prompt("Sync Password", hide_input=True),
+        )
+        database = CouchDatabase(credentials)
+        try:
+            info = database.request("GET")
+            if not isinstance(info, dict) or info.get("db_name") != credentials.database:
+                _fail(PlanSemanticError("database identity did not match the requested database"))
+        finally:
+            database.close()
+        store_database_credentials(credentials)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        client.close()
+    typer.echo(
+        "Stored account-bound database access in the OS keyring. Default API mode is unchanged."
+    )
+
+
+@config_app.command("forget-database-access")
+def forget_database_access_command() -> None:
+    """Remove this verified account's DB credential only; leave its API token unchanged."""
+
+    config = _load_config_or_fail()
+    config._experimental_use_db = False
+    client = _client_from_config(config, None)
+    try:
+        account = client.check_connection()
+        typer.confirm(
+            f"Remove stored DB access for {account.account_email}?", default=False, abort=True
+        )
+        forget_database_credentials(account)
+    except MarvinPilotError as exc:
+        _fail(exc)
+    finally:
+        client.close()
+    typer.echo("Removed database access. API credentials, plans and receipts are unchanged.")
+
+
+def _client_from_config(
+    config: AppConfig, key_file: Path | None
+) -> MarvinClient | DatabaseMarvinClient:
     try:
         return _build_client(config, key_file)
     except MarvinPilotError as exc:
@@ -907,6 +1011,7 @@ def doctor_command(
         raise typer.Exit(exc.exit_code) from exc
 
     rows.append(("ok", "Configuration", f"{config.credential_mode} credential mode"))
+    config._experimental_use_db = _experimental_database_requested.get()
     try:
         client = _build_client(config, full_access_key_file)
     except MarvinPilotError as exc:
@@ -924,6 +1029,9 @@ def doctor_command(
     try:
         with console.status("[cyan]Contacting Amazing Marvin…[/cyan]", spinner="dots"):
             check = client.check_connection()
+            if getattr(client, "experimental_database", False):
+                client.check_database_connection()
+                rows.append(("ok", "Experimental DB", "Authenticated read-only database check"))
     except MarvinPilotError as exc:
         elapsed = time.perf_counter() - started
         rows.extend(
@@ -1461,7 +1569,10 @@ def visualize_command(
     """Preview locally; --edit captures text feedback, --allow-apply separately enables apply."""
 
     started = time.perf_counter()
-    key = session_key(plan_path, backup, context_plan or [], receipt, allow_apply, edit)
+    experimental_database = _experimental_database_requested.get()
+    key = session_key(
+        plan_path, backup, context_plan or [], receipt, allow_apply, edit, experimental_database
+    )
     if key is not None:
         reusable = find_reusable_server(key)
         if reusable is not None:
@@ -1517,6 +1628,7 @@ def visualize_command(
 
     def checked_config(plan: ChangePlanV1) -> AppConfig:
         config = load_config()
+        config._experimental_use_db = experimental_database
         if len(plan.operations) > config.max_operations:
             raise PlanSemanticError(
                 f"plan has {len(plan.operations)} operations; configured maximum is "
@@ -2079,21 +2191,35 @@ def apply_command(
                 f"(impact {assessment.impact}/{config.unattended_max_impact})\n"
             )
         execution_notes.append("Network path  ", style="bold bright_cyan")
+        database_mode = getattr(client, "experimental_database", False)
+        minimum_interval = (
+            max(3000, config.minimum_request_interval_ms)
+            if database_mode
+            else config.minimum_request_interval_ms
+        )
         execution_notes.append(
-            "live recheck -> mutation/response verification "
-            f"(minimum {config.minimum_request_interval_ms} ms between requests)"
+            (
+                "CouchDB batched recheck, write and readback"
+                if database_mode
+                else "live recheck -> mutation/response verification"
+            )
+            + f" (minimum {minimum_interval} ms between requests)"
         )
         has_trash = any(operation.operation.action == "trash" for operation in result.operations)
         if has_trash:
             execution_notes.append("\nTRASH safety  ", style="bold bright_red")
             execution_notes.append(
-                "Trash recovery: Pilot will delete each document through Marvin's API after "
+                "Trash recovery: Pilot will delete the reviewed documents after "
                 "durably storing its full recovery snapshot. It will not appear in Marvin's "
                 "native Trash; keep the receipt to revert it."
             )
         if len(result.operations) >= config.large_plan_warning_operations:
             execution_notes.append("\nLarge plan  ", style="bold bright_yellow")
-            execution_notes.append(f"{len(result.operations)} operations will run sequentially.")
+            execution_notes.append(
+                f"{len(result.operations)} operations will run in bounded batches."
+                if database_mode
+                else f"{len(result.operations)} operations will run sequentially."
+            )
         if (
             not unattended
             and not config.unattended_enabled

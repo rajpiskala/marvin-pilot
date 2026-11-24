@@ -306,6 +306,8 @@ def validate_plan_semantics(plan: ChangePlanV1) -> None:
                     fields = getattr(operation, side, None)
                     if fields is not None and "parent" in fields.model_fields_set:
                         expected_parent = fields.parent.id if fields.parent is not None else None
+                        if parent_id is None and expected_parent in {"", "root", "unassigned"}:
+                            expected_parent = None
                         if parent_id != expected_parent:
                             raise PlanSemanticError(
                                 f"operation {operation.operationId!r} display.{path_field} does "

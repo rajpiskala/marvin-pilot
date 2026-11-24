@@ -23,3 +23,9 @@ The intended deployment gives a read/discovery integration only Marvin's limited
 Marvin Pilot keeps `FULL_ACCESS_TOKEN` on the human-controlled side, preferably in the operating
 system credential store. Never place the full-access token in a change plan, prompt, issue,
 environment variable, shell history, or MCP configuration.
+
+The experimental database engine uses a separate account-bound OS-keyring profile for
+powerful sync credentials. API mode stays the default. Never put sync credentials in
+plans, receipts, command arguments, environment variables or issue reports. Database
+access does not provide Marvin's device-local Trash; retain private recovery receipts.
+See [the experimental engine's limits](docs/experimental-database.md).

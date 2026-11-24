@@ -29,7 +29,8 @@ def build_live_search_context(reader: Any, query: str) -> dict[str, Any]:
     result = search_backup_context(documents, query)
     result["kind"] = "search-live"
     result["collectionCount"] = len(documents)
-    result["collectionMayBeTruncated"] = len(documents) >= 200
+    possibly_capped = len(documents) >= 200 and not getattr(reader, "categories_complete", False)
+    result["collectionMayBeTruncated"] = possibly_capped
     result["warnings"] = (
         [
             {
@@ -41,7 +42,7 @@ def build_live_search_context(reader: Any, query: str) -> dict[str, Any]:
                 ),
             }
         ]
-        if len(documents) >= 200
+        if possibly_capped
         else []
     )
     result["account"] = {"userId": account.account_user_id, "email": account.account_email}
@@ -68,8 +69,13 @@ def build_live_search_context(reader: Any, query: str) -> dict[str, Any]:
             cursor = by_id[parent_id]
         candidate["hierarchyComplete"] = not warnings
         candidate["hierarchyWarnings"] = warnings
+    source_note = (
+        "a paginated database query"
+        if getattr(reader, "categories_complete", False)
+        else "one documented categories request"
+    )
     result["accuracyNote"] = (
-        "Live categories/projects only, from one documented categories request after account "
+        f"Live categories/projects only, from {source_note} after account "
         "verification. Paths use that collection, not cached backups or individual lookups. "
         "No task search, writes, or persistent cache. Multiple matches are not auto-selected. "
         "Collection completeness depends on the server; no match is not proof of absence."
